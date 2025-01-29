@@ -12,6 +12,7 @@ add_library(pondhouse_common
     src/common/append_only_fs.cpp
     src/common/memory_append_only_fs.cpp
     src/common/log.cpp
+    src/kv/kv_entry.cpp
 )
 
 # Add include directories for common library
@@ -47,6 +48,7 @@ add_executable(
     tests/common/data_chunk_test.cpp
     tests/common/uuid_test.cpp
     tests/common/append_only_fs_test.cpp
+    tests/common/wal_test.cpp
 )
 
 # Add include directories for tests

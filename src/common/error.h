@@ -107,9 +107,10 @@ public:
     const std::string& message() const { return message_; }
     const char* c_str() const { return message_.c_str(); }
 
-    friend std::ostream& operator<<(std::ostream& os, const Error& error) {
-        os << "Error: " << static_cast<int>(error.code_) << " " << error.message_;
-        return os;
+    std::string to_string() const {
+        std::ostringstream ss;
+        ss << "Error: " << static_cast<int>(code_) << " " << message_;
+        return ss.str();
     }
 
 private:

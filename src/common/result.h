@@ -7,6 +7,7 @@
 #include <utility>
 #include <variant>
 #include <functional>
+#include <sstream>
 
 #include "error.h"
 
@@ -70,6 +71,10 @@ public:
 
     [[nodiscard]] static Result<T> failure(ErrorCode code) {
         return Result<T>(Error(code));
+    }
+
+    [[nodiscard]] static Result<T> failure(const Error& error) {
+        return Result<T>(error);
     }
 
 private:
