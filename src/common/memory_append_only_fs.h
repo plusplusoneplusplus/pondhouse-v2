@@ -25,7 +25,7 @@ public:
     // Set whether the next append should create a duplicate block (for testing)
     void setNextAppendDuplicate(bool should_duplicate);
 
-    [[nodiscard]] Result<FileHandle> openFile(const std::string& path) override;
+    [[nodiscard]] Result<FileHandle> openFile(const std::string& path, bool createIfNotExists = false) override;
     Result<bool> closeFile(FileHandle handle) override;
     [[nodiscard]] Result<PositionRecord> append(FileHandle handle, const DataChunk& data) override;
     [[nodiscard]] Result<DataChunk> read(FileHandle handle, size_t offset, size_t length) override;

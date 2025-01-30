@@ -27,7 +27,23 @@ public:
         }
     }
 
-    Result<FileHandle> openFile(const std::string& path) {
+    Result<FileHandle> openFile(const std::string& path, bool createIfNotExists) {
+        std::lock_guard<std::mutex> lock(mutex);
+        
+        // Check if file exists
+        if (!std::filesystem::exists(path)) {
+            if (!createIfNotExists) {
+                return Result<FileHandle>::failure(common::ErrorCode::FileNotFound, "File not found: " + path);
+            }
+            
+            // Create parent directories if they don't exist
+            std::filesystem::path fs_path(path);
+            auto parent_path = fs_path.parent_path();
+            if (!parent_path.empty()) {
+                std::filesystem::create_directories(parent_path);
+            }
+        }
+
         auto stream = std::make_unique<std::fstream>();
         stream->open(path, std::ios::in | std::ios::out | std::ios::binary | std::ios::app);
 
@@ -200,14 +216,15 @@ private:
     };
 
     std::unordered_map<FileHandle, FileInfo> files_;
+    std::mutex mutex;
 };
 
 // LocalAppendOnlyFileSystem implementation
 LocalAppendOnlyFileSystem::LocalAppendOnlyFileSystem() : impl_(std::make_unique<Impl>()) {}
 LocalAppendOnlyFileSystem::~LocalAppendOnlyFileSystem() = default;
 
-Result<FileHandle> LocalAppendOnlyFileSystem::openFile(const std::string& path) {
-    return impl_->openFile(path);
+Result<FileHandle> LocalAppendOnlyFileSystem::openFile(const std::string& path, bool createIfNotExists) {
+    return impl_->openFile(path, createIfNotExists);
 }
 
 Result<bool> LocalAppendOnlyFileSystem::closeFile(FileHandle handle) {

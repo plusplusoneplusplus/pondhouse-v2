@@ -30,7 +30,9 @@ protected:
             "test_rename2_new.dat",
             "test_dir/file1.txt",
             "test_dir/file2.txt",
-            "test_dir/subdir/file3.txt"
+            "test_dir/subdir/file3.txt",
+            "nonexistent.txt",
+            "test.txt"
         };
 
         for (const auto& file : testFiles) {
@@ -85,7 +87,7 @@ TEST_P(AppendOnlyFSTypeTest, BasicFileOperations) {
     ASSERT_NE(fs, nullptr);
 
     // Test file creation
-    auto result = fs->openFile("test.dat");
+    auto result = fs->openFile("test.dat", true);
     VERIFY_RESULT_MSG(result, "Failed to create file");
     auto handle = result.value();
     ASSERT_NE(handle, INVALID_HANDLE);
@@ -107,7 +109,7 @@ TEST_P(AppendOnlyFSTypeTest, DataOperations) {
     auto fs = createFS();
     ASSERT_NE(fs, nullptr);
 
-    auto result = fs->openFile("test_append.dat");
+    auto result = fs->openFile("test_append.dat", true);
     VERIFY_RESULT_MSG(result, "Failed to open file");
     auto handle = result.value();
 
@@ -150,7 +152,7 @@ TEST_P(AppendOnlyFSTypeTest, DirectoryOperations) {
     ASSERT_TRUE(fs->isDirectory("test_dir/subdir")) << "Created nested path should be a directory";
 
     // Test file creation in directory
-    auto result = fs->openFile("test_dir/file1.txt");
+    auto result = fs->openFile("test_dir/file1.txt", true);
     VERIFY_RESULT_MSG(result, "Failed to create file in directory");
     auto handle = result.value();
     VERIFY_RESULT_MSG(fs->append(handle, DataChunk::fromString("test content")), "Failed to write to file in directory");
@@ -162,7 +164,7 @@ TEST_P(AppendOnlyFSTypeTest, DirectoryOperations) {
     ASSERT_EQ(listResult.value().size(), 1) << "Directory should contain 1 file";
 
     // create a file in the subdir
-    result = fs->openFile("test_dir/subdir/file3.txt");
+    result = fs->openFile("test_dir/subdir/file3.txt", true);
     VERIFY_RESULT_MSG(result, "Failed to create file in subdirectory");
     handle = result.value();
     VERIFY_RESULT_MSG(fs->append(handle, DataChunk::fromString("test content")), "Failed to write to file in subdirectory");
@@ -196,8 +198,8 @@ TEST_P(AppendOnlyFSTypeTest, RenameOperations) {
     ASSERT_NE(fs, nullptr);
 
     // Create test files
-    auto handle1 = fs->openFile("test_rename1.dat").value();
-    auto handle2 = fs->openFile("test_rename2.dat").value();
+    auto handle1 = fs->openFile("test_rename1.dat", true).value();
+    auto handle2 = fs->openFile("test_rename2.dat", true).value();
     
     VERIFY_RESULT_MSG(fs->append(handle1, DataChunk::fromString("file1")), "Failed to write to first file");
     VERIFY_RESULT_MSG(fs->append(handle2, DataChunk::fromString("file2")), "Failed to write to second file");
@@ -254,7 +256,7 @@ TEST_F(AppendOnlyFSTest, MemorySpecificBehavior_DuplicateBlock) {
     auto fs_explicit = MemoryAppendOnlyFileSystem::createWithExplicitControl(true);
     ASSERT_NE(fs_explicit, nullptr);
 
-    auto result = fs_explicit->openFile("test.dat");
+    auto result = fs_explicit->openFile("test.dat", true);
     VERIFY_RESULT_MSG(result, "Failed to open file");
     auto handle = result.value();
     auto data = DataChunk::fromString("test data");
@@ -273,6 +275,46 @@ TEST_F(AppendOnlyFSTest, MemorySpecificBehavior_DuplicateBlock) {
     ASSERT_EQ(sizeResult.value(), data.size() * (2 + 1)) << "Size should reflect duplicated data, additional block for duplicate flag";
 
     VERIFY_RESULT_MSG(fs_explicit->closeFile(handle), "Failed to close file");
+}
+
+TEST_P(AppendOnlyFSTypeTest, OpenNonExistentFile) {
+    const std::string path = "nonexistent.txt";
+
+    auto fs = createFS();
+    ASSERT_NE(fs, nullptr);
+
+    // Try to open non-existent file without create flag
+    auto result = fs->openFile(path, false);
+    ASSERT_FALSE(result.ok());
+    ASSERT_EQ(result.error().code(), ErrorCode::FileNotFound);
+
+    // Try to open non-existent file with create flag
+    result = fs->openFile(path, true);
+    ASSERT_TRUE(result.ok());
+    
+    // Close the file
+    auto close_result = fs->closeFile(result.value());
+    ASSERT_TRUE(close_result.ok());
+}
+
+TEST_P(AppendOnlyFSTypeTest, OpenExistingFile) {
+    const std::string path = "test.txt";
+
+    auto fs = createFS();
+    ASSERT_NE(fs, nullptr);
+    
+    // Create file first
+    auto create_result = fs->openFile(path, true);
+    ASSERT_TRUE(create_result.ok());
+    fs->closeFile(create_result.value());
+
+    // Open existing file without create flag
+    auto result = fs->openFile(path, false);
+    ASSERT_TRUE(result.ok());
+    
+    // Close the file
+    auto close_result = fs->closeFile(result.value());
+    ASSERT_TRUE(close_result.ok());
 }
 
 INSTANTIATE_TEST_SUITE_P(

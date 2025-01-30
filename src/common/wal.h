@@ -41,7 +41,7 @@ public:
         LOG_STATUS("Opening WAL file: %s", path.c_str());
 
         path_ = path;
-        auto result = fs_->openFile(path);
+        auto result = fs_->openFile(path, true);
         if (!result.ok()) {
             return common::Result<bool>::failure(result.error());
         }

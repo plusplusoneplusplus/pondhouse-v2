@@ -19,14 +19,14 @@ ParquetReader::~ParquetReader() {
 Result<std::unique_ptr<ParquetReader>> ParquetReader::create(
     std::shared_ptr<IAppendOnlyFileSystem> fs,
     const std::string& path) {
-    // Open the file
-    auto result = fs->openFile(path);
-    if (!result.ok()) {
-        return Result<std::unique_ptr<ParquetReader>>::failure(result.error());
+    // Open the file for reading
+    auto file_result = fs->openFile(path, false);
+    if (!file_result.ok()) {
+        return Result<std::unique_ptr<ParquetReader>>::failure(file_result.error());
     }
 
     // Create input stream
-    auto input = std::make_shared<AppendOnlyInputStream>(fs, result.value());
+    auto input = std::make_shared<AppendOnlyInputStream>(fs, file_result.value());
 
     // Create Parquet reader
     std::unique_ptr<parquet::arrow::FileReader> reader;

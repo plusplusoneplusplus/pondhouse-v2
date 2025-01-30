@@ -223,19 +223,19 @@ TEST_F(ParquetTest, RowGroupOperations) {
     ASSERT_EQ(large_table->num_rows(), total_rows);
 }
 
-// TEST_F(ParquetTest, ErrorHandling) {
-//     const std::string path = "nonexistent.parquet";
-//     auto _ = fs_->deleteFiles({path});
+TEST_F(ParquetTest, ErrorHandling) {
+    const std::string path = "nonexistent.parquet";
+    auto _ = fs_->deleteFiles({path});
 
-//     // Try to read non-existent file
-//     auto reader_result = ParquetReader::create(fs_, path);
-//     ASSERT_FALSE(reader_result.ok());
-//     ASSERT_EQ(reader_result.error().code(), ErrorCode::FileNotFound);
+    // Try to read non-existent file
+    auto reader_result = ParquetReader::create(fs_, path);
+    ASSERT_FALSE(reader_result.ok());
+    ASSERT_EQ(reader_result.error().code(), ErrorCode::FileNotFound);
 
-//     // Try to write with invalid schema
-//     auto invalid_schema = arrow::schema({});
-//     auto writer_result = ParquetWriter::create(fs_, path, invalid_schema);
-//     ASSERT_FALSE(writer_result.ok());
-// }
+    // Try to write with invalid schema
+    auto invalid_schema = arrow::schema({});
+    auto writer_result = ParquetWriter::create(fs_, path, invalid_schema);
+    ASSERT_FALSE(writer_result.ok());
+}
 
 } // namespace pond::test

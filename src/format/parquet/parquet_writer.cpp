@@ -25,14 +25,20 @@ Result<std::unique_ptr<ParquetWriter>> ParquetWriter::create(
     const std::string& path,
     const std::shared_ptr<arrow::Schema>& schema,
     parquet::WriterProperties::Builder properties) {
-    // Open the file
-    auto result = fs->openFile(path);
-    if (!result.ok()) {
-        return Result<std::unique_ptr<ParquetWriter>>::failure(result.error());
+    // Open the file for writing
+    auto file_result = fs->openFile(path, true);
+    if (!file_result.ok()) {
+        return Result<std::unique_ptr<ParquetWriter>>::failure(file_result.error());
+    }
+
+    // verify schema
+    if (schema->num_fields() == 0) {
+        return Result<std::unique_ptr<ParquetWriter>>::failure(
+            ErrorCode::InvalidArgument, "Schema must not be empty");
     }
 
     // Create output stream
-    auto output = std::make_shared<AppendOnlyOutputStream>(fs, result.value());
+    auto output = std::make_shared<AppendOnlyOutputStream>(fs, file_result.value());
 
     // Create Parquet writer
     auto writer_props = properties.build();

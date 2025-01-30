@@ -91,16 +91,20 @@ MemoryAppendOnlyFileSystem::FileData* MemoryAppendOnlyFileSystem::getFile(const 
     return it != dir->files.end() ? it->second.get() : nullptr;
 }
 
-Result<FileHandle> MemoryAppendOnlyFileSystem::openFile(const std::string& path) {
+Result<FileHandle> MemoryAppendOnlyFileSystem::openFile(const std::string& path, bool createIfNotExists) {
     std::lock_guard lock(mutex_);
 
-    auto [dir, name] = getDirectoryAndName(path, true);
+    auto [dir, name] = getDirectoryAndName(path, createIfNotExists);
     if (!dir || name.empty()) {
         return Result<FileHandle>::failure(common::ErrorCode::FileOpenFailed, "Invalid path: " + path);
     }
 
     auto it = dir->files.find(name);
     if (it == dir->files.end()) {
+        if (!createIfNotExists) {
+            return Result<FileHandle>::failure(common::ErrorCode::FileNotFound, "File not found: " + path);
+        }
+        // Create new file
         auto file = std::make_unique<FileData>();
         file->open_count.fetch_add(1);
         it = dir->files.emplace(name, std::move(file)).first;

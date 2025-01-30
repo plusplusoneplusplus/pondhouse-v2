@@ -62,9 +62,10 @@ concept FileSystem = requires(T fs,
                               const std::vector<RenameOperation>& renames,
                               const std::vector<std::string>& paths,
                               bool recursive,
+                              bool createIfNotExists,
                               const std::string& source_path,
                               const std::string& target_path) {
-    { fs.openFile(path) } -> std::same_as<Result<FileHandle>>;
+    { fs.openFile(path, createIfNotExists) } -> std::same_as<Result<FileHandle>>;
     { fs.closeFile(handle) } -> std::same_as<Result<bool>>;
     { fs.append(handle, data) } -> std::same_as<Result<PositionRecord>>;
     { fs.read(handle, offset, length) } -> std::same_as<Result<DataChunk>>;
@@ -84,8 +85,13 @@ class IAppendOnlyFileSystem {
 public:
     virtual ~IAppendOnlyFileSystem() = default;
 
-    // Open or create a file for append-only operations
-    [[nodiscard]] virtual Result<FileHandle> openFile(const std::string& path) = 0;
+    /**
+     * Opens a file for reading.
+     * @param path The path to the file
+     * @param createIfNotExists If true, creates the file if it doesn't exist
+     * @return A Result containing either a FileHandle or an Error
+     */
+    virtual Result<FileHandle> openFile(const std::string& path, bool createIfNotExists = false) = 0;
 
     // Close the file associated with the handle
     virtual Result<bool> closeFile(FileHandle handle) = 0;
@@ -137,7 +143,7 @@ public:
     LocalAppendOnlyFileSystem();
     ~LocalAppendOnlyFileSystem() override;
 
-    [[nodiscard]] Result<FileHandle> openFile(const std::string& path) override;
+    [[nodiscard]] Result<FileHandle> openFile(const std::string& path, bool createIfNotExists = false) override;
     Result<bool> closeFile(FileHandle handle) override;
     [[nodiscard]] Result<PositionRecord> append(FileHandle handle, const DataChunk& data) override;
     [[nodiscard]] Result<DataChunk> read(FileHandle handle, size_t offset, size_t length) override;
