@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find Arrow package
 find_package(Arrow REQUIRED)
+find_package(Parquet REQUIRED)
 
 # Add common library
 add_library(pondhouse_common
@@ -13,6 +14,10 @@ add_library(pondhouse_common
     src/common/memory_append_only_fs.cpp
     src/common/log.cpp
     src/kv/kv_entry.cpp
+    src/format/parquet/append_only_input_stream.cpp
+    src/format/parquet/append_only_output_stream.cpp
+    src/format/parquet/parquet_reader.cpp
+    src/format/parquet/parquet_writer.cpp
 )
 
 # Add include directories for common library
@@ -49,18 +54,22 @@ add_executable(
     tests/common/uuid_test.cpp
     tests/common/append_only_fs_test.cpp
     tests/common/wal_test.cpp
+    tests/format/parquet/parquet_test.cpp
 )
 
 # Add include directories for tests
-target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(unit_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
+)
 
 # Link test executable against gtest & your project libraries
-target_link_libraries(
-    unit_tests
-    PRIVATE
-    GTest::gtest
-    GTest::gtest_main
+target_link_libraries(unit_tests
+    gtest
+    gtest_main
     pondhouse_common
+    Arrow::arrow_shared
+    Parquet::parquet_shared
 )
 
 # Add tests to CTest
