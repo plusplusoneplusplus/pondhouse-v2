@@ -1,4 +1,5 @@
 #include "kv/memtable.h"
+
 #include <stdexcept>
 
 namespace pond::kv {
@@ -11,7 +12,8 @@ MemTable::MemTable(std::shared_ptr<Schema> schema, size_t max_size)
 
 common::Result<void> MemTable::Put(const Key& key, const std::unique_ptr<Record>& record) {
     if (key.size() > MAX_KEY_SIZE) {
-        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Key size exceeds maximum allowed size");
+        return common::Result<void>::failure(common::ErrorCode::InvalidArgument,
+                                             "Key size exceeds maximum allowed size");
     }
     if (record->schema() != schema_) {
         return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "Schema mismatch");
@@ -22,7 +24,7 @@ common::Result<void> MemTable::Put(const Key& key, const std::unique_ptr<Record>
     }
 
     size_t entry_size = CalculateEntrySize(key, *record);
-    
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
         // Check if we're replacing an existing entry
@@ -63,7 +65,7 @@ common::Result<std::unique_ptr<Record>> MemTable::Get(const Key& key) const {
 }
 
 common::Result<void> MemTable::Delete(const Key& key) {
-    auto tombstone = std::make_unique<Record>(schema_); // Empty record represents a tombstone
+    auto tombstone = std::make_unique<Record>(schema_);  // Empty record represents a tombstone
     size_t entry_size = CalculateEntrySize(key, *tombstone);
 
     {
@@ -86,10 +88,11 @@ common::Result<void> MemTable::Delete(const Key& key) {
     return common::Result<void>::success();
 }
 
-common::Result<void> MemTable::UpdateColumn(const Key& key, const std::string& column_name, 
-                                  const common::DataChunk& value) {
+common::Result<void> MemTable::UpdateColumn(const Key& key,
+                                            const std::string& column_name,
+                                            const common::DataChunk& value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     int col_idx = schema_->GetColumnIndex(column_name);
     if (col_idx == -1) {
         return common::Result<void>::failure(common::ErrorCode::NotFound, "Column not found");
@@ -174,18 +177,17 @@ size_t MemTable::CalculateEntrySize(const Key& key, const Record& record) const 
     // 2. Serialized record size
     // 3. Skip list node overhead (pointers + height)
     // 4. Memory allocator overhead
-    constexpr size_t kStringOverhead = 24;  // std::string overhead on 64-bit systems
-    constexpr size_t kNodeOverhead = 64;    // Skip list node overhead (approximate)
-    constexpr size_t kAllocatorOverhead = 16; // Typical memory allocator overhead
-    
+    constexpr size_t kStringOverhead = 24;     // std::string overhead on 64-bit systems
+    constexpr size_t kNodeOverhead = 64;       // Skip list node overhead (approximate)
+    constexpr size_t kAllocatorOverhead = 16;  // Typical memory allocator overhead
+
     return key.size() + kStringOverhead + record.Serialize().size() + kNodeOverhead + kAllocatorOverhead;
 }
 
 // Iterator implementation
 
-
 std::unique_ptr<MemTable::Iterator> MemTable::NewIterator() const {
-    return std::make_unique<Iterator>(table_->NewIterator());
+    return std::make_unique<Iterator>(table_->NewIterator(), mutex_);
 }
 
-} // namespace pond::kv
+}  // namespace pond::kv

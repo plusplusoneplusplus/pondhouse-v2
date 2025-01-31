@@ -107,7 +107,7 @@ TEST_F(MemTableTest, MemoryUsage) {
     }
 }
 
-TEST_F(MemTableTest, Iterator) {
+TEST_F(MemTableTest, IteratorBasicOperations) {
     // Insert some entries
     std::vector<std::string> keys = {"key1", "key2", "key3", "key4", "key5"};
 
@@ -120,22 +120,113 @@ TEST_F(MemTableTest, Iterator) {
     auto it = table->NewIterator();
     size_t count = 0;
 
-    for (; it->Valid(); it->Next(), count++) {
-        EXPECT_EQ(it->key(), keys[count]);
-        const Record& record = it->record();
+    for (; it->Valid();) {
+        auto key_result = it->key();
+        EXPECT_TRUE(key_result.ok());
+        EXPECT_EQ(key_result.value(), keys[count]);
+
+        auto record_result = it->record();
+        EXPECT_TRUE(record_result.ok());
+        const Record& record = record_result.value().get();
+
         EXPECT_EQ(record.Get<int32_t>(0).value(), count);
         EXPECT_EQ(record.Get<std::string>(1).value(), "name" + std::to_string(count));
         auto value_result = record.Get<common::DataChunk>(2);
         EXPECT_TRUE(value_result.ok());
         EXPECT_EQ(std::string(reinterpret_cast<const char*>(value_result.value().data()), value_result.value().size()),
                   "value" + std::to_string(count));
+
+        EXPECT_TRUE(it->Next().ok());
+        count++;
     }
     EXPECT_EQ(count, keys.size());
 
     // Test seek
-    it->Seek("key3");
+    auto seek_result = it->Seek("key3");
+    EXPECT_TRUE(seek_result.ok());
     EXPECT_TRUE(it->Valid());
-    EXPECT_EQ(it->key(), "key3");
+    auto key_result = it->key();
+    EXPECT_TRUE(key_result.ok());
+    EXPECT_EQ(key_result.value(), "key3");
+}
+
+TEST_F(MemTableTest, IteratorErrorHandling) {
+    // Test operations on invalid iterator
+    auto it = table->NewIterator();
+    EXPECT_FALSE(it->Valid());
+
+    // Test Next() on invalid iterator
+    auto next_result = it->Next();
+    EXPECT_FALSE(next_result.ok());
+    EXPECT_EQ(next_result.error().code(), common::ErrorCode::InvalidOperation);
+
+    // Test key() on invalid iterator
+    auto key_result = it->key();
+    EXPECT_FALSE(key_result.ok());
+    EXPECT_EQ(key_result.error().code(), common::ErrorCode::InvalidOperation);
+
+    // Test record() on invalid iterator
+    auto record_result = it->record();
+    EXPECT_FALSE(record_result.ok());
+    EXPECT_EQ(record_result.error().code(), common::ErrorCode::InvalidOperation);
+
+    // Test Seek with empty key
+    auto seek_result = it->Seek("");
+    EXPECT_FALSE(seek_result.ok());
+    EXPECT_EQ(seek_result.error().code(), common::ErrorCode::InvalidArgument);
+}
+
+TEST_F(MemTableTest, IteratorConcurrency) {
+    // Insert some entries
+    std::vector<std::string> keys = {"key1", "key2", "key3", "key4", "key5"};
+    for (size_t i = 0; i < keys.size(); i++) {
+        auto record = CreateTestRecord(i, "name" + std::to_string(i), "value" + std::to_string(i));
+        EXPECT_TRUE(table->Put(keys[i], record).ok());
+    }
+
+    // Create multiple threads that use the same iterator
+    auto it = table->NewIterator();
+    std::vector<std::thread> threads;
+    std::atomic<int> successful_operations(0);
+
+    for (int i = 0; i < 4; i++) {
+        threads.emplace_back([&]() {
+            for (int j = 0; j < 100; j++) {
+                // Randomly choose between Next, Seek, and reading operations
+                int op = j % 3;
+                switch (op) {
+                    case 0: {
+                        auto next_result = it->Next();
+                        if (next_result.ok())
+                            successful_operations++;
+                        break;
+                    }
+                    case 1: {
+                        auto seek_result = it->Seek(keys[j % keys.size()]);
+                        if (seek_result.ok())
+                            successful_operations++;
+                        break;
+                    }
+                    case 2: {
+                        if (it->Valid()) {
+                            auto key_result = it->key();
+                            auto record_result = it->record();
+                            if (key_result.ok() && record_result.ok())
+                                successful_operations++;
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Verify that some operations were successful
+    EXPECT_GT(successful_operations.load(), 0);
 }
 
 TEST_F(MemTableTest, ConcurrentOperations) {
