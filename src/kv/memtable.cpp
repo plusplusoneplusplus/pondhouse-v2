@@ -2,13 +2,76 @@
 
 #include <stdexcept>
 
+#include "common/time.h"
+
+using namespace pond::common;
+
 namespace pond::kv {
 
-MemTable::MemTable(std::shared_ptr<Schema> schema, size_t max_size)
+MemTable::MemTable(std::shared_ptr<Schema> schema, std::shared_ptr<common::WAL<KvEntry>> wal, size_t max_size)
     : schema_(std::move(schema)),
       table_(std::make_unique<common::SkipList<Key, std::unique_ptr<Record>>>()),
       approximate_memory_usage_(0),
-      max_size_(max_size) {}
+      max_size_(max_size),
+      wal_(std::move(wal)) {}
+
+common::Result<void> MemTable::WriteToWAL(KvEntry& entry) {
+    if (!wal_) {
+        return common::Result<void>::success();
+    }
+    auto result = wal_->append(entry);
+    if (!result.ok()) {
+        return common::Result<void>::failure(result.error().code(), result.error().message());
+    }
+
+    return common::Result<void>::success();
+}
+
+common::Result<bool> MemTable::Recover() {
+    if (!wal_) {
+        return Result<bool>::success(false);
+    }
+
+    // Read all entries from WAL
+    auto entries = wal_->read(0);
+    if (!entries.ok()) {
+        return Result<bool>::failure(entries.error().code(), entries.error().message());
+    }
+
+    if (entries.value().empty()) {
+        return Result<bool>::success(false);
+    }
+
+    // Replay all entries
+    for (const auto& entry : entries.value()) {
+        switch (entry.type) {
+            case EntryType::Put: {
+                // Create a record from the entry value
+                auto record_result = Record::Deserialize(entry.value, schema_);
+                if (!record_result.ok()) {
+                    return Result<bool>::failure(record_result.error().code(), record_result.error().message());
+                }
+
+                auto result = Put(entry.key, record_result.value());
+                if (!result.ok()) {
+                    return Result<bool>::failure(result.error().code(), result.error().message());
+                }
+                break;
+            }
+            case EntryType::Delete: {
+                auto result = Delete(entry.key);
+                if (!result.ok()) {
+                    return Result<bool>::failure(result.error().code(), result.error().message());
+                }
+                break;
+            }
+            default:
+                return Result<bool>::failure(ErrorCode::InvalidOperation, "Unknown WAL entry type");
+        }
+    }
+
+    return Result<bool>::success(true);
+}
 
 common::Result<void> MemTable::Put(const Key& key, const std::unique_ptr<Record>& record) {
     if (key.size() > MAX_KEY_SIZE) {
@@ -21,6 +84,12 @@ common::Result<void> MemTable::Put(const Key& key, const std::unique_ptr<Record>
 
     if (approximate_memory_usage_ > max_size_) {
         return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "MemTable is full");
+    }
+
+    // Create and write WAL entry first
+    if (wal_) {
+        KvEntry entry(key, record->Serialize(), INVALID_LSN, common::now(), EntryType::Put);
+        RETURN_IF_ERROR(WriteToWAL(entry));
     }
 
     size_t entry_size = CalculateEntrySize(key, *record);
@@ -68,6 +137,12 @@ common::Result<void> MemTable::Delete(const Key& key) {
     auto tombstone = std::make_unique<Record>(schema_);  // Empty record represents a tombstone
     size_t entry_size = CalculateEntrySize(key, *tombstone);
 
+    // Create and write WAL entry first
+    if (wal_) {
+        KvEntry entry(key, common::DataChunk(), INVALID_LSN, common::now(), EntryType::Delete);
+        RETURN_IF_ERROR(WriteToWAL(entry));
+    }
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
         // Check if we're replacing an existing entry
@@ -91,6 +166,12 @@ common::Result<void> MemTable::Delete(const Key& key) {
 common::Result<void> MemTable::UpdateColumn(const Key& key,
                                             const std::string& column_name,
                                             const common::DataChunk& value) {
+    // Create and write WAL entry first
+    if (wal_) {
+        KvEntry entry(key, value, INVALID_LSN, common::now(), EntryType::Put);
+        RETURN_IF_ERROR(WriteToWAL(entry));
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
 
     int col_idx = schema_->GetColumnIndex(column_name);

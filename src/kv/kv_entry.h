@@ -3,9 +3,10 @@
 #include <cstdint>
 #include <string>
 
-#include "common/types.h"
 #include "common/data_chunk.h"
 #include "common/result.h"
+#include "common/time.h"
+#include "common/types.h"
 #include "common/wal_entry.h"
 
 namespace pond::kv {
@@ -13,9 +14,8 @@ namespace pond::kv {
 using Key = std::string;
 
 // Size limits
-constexpr size_t MAX_KEY_SIZE = 4 * 1024;                   // 4KB
-constexpr size_t MAX_VALUE_SIZE = 4 * 1024 * 1024;          // 4MB
-constexpr size_t DEFAULT_MEMTABLE_SIZE = 64 * 1024 * 1024;  // 64MB
+constexpr size_t MAX_KEY_SIZE = 4 * 1024;           // 4KB
+constexpr size_t MAX_VALUE_SIZE = 4 * 1024 * 1024;  // 4MB
 
 enum class EntryType : uint32_t { Unknown, Put, Delete };
 

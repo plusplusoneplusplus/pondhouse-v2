@@ -2,14 +2,22 @@
 
 #include <concepts>
 #include <format>
+#include <functional>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
-#include <functional>
-#include <sstream>
 
 #include "error.h"
+
+#define RETURN_IF_ERROR(expr)    \
+    do {                         \
+        auto result = (expr);    \
+        if (result.hasError()) { \
+            return result;       \
+        }                        \
+    } while (false)
 
 namespace pond::common {
 
@@ -31,16 +39,16 @@ public:
     // Access value
     [[nodiscard]] const T& value() const& {
         if (!ok()) {
-            throw std::runtime_error(std::format("Attempting to access value of failed Result. Error: {}", 
-                                               std::get<Error>(data_).message()));
+            throw std::runtime_error(std::format("Attempting to access value of failed Result. Error: {}",
+                                                 std::get<Error>(data_).message()));
         }
         return std::get<T>(data_);
     }
 
     [[nodiscard]] T&& value() && {
         if (!ok()) {
-            throw std::runtime_error(std::format("Attempting to access value of failed Result. Error: {}", 
-                                               std::get<Error>(data_).message()));
+            throw std::runtime_error(std::format("Attempting to access value of failed Result. Error: {}",
+                                                 std::get<Error>(data_).message()));
         }
         return std::move(std::get<T>(data_));
     }
@@ -61,21 +69,15 @@ public:
     }
 
     // Static constructors
-    [[nodiscard]] static Result<T> success(T value) {
-        return Result<T>(std::move(value));
-    }
+    [[nodiscard]] static Result<T> success(T value) { return Result<T>(std::move(value)); }
 
     [[nodiscard]] static Result<T> failure(ErrorCode code, std::string error_message) {
         return Result<T>(Error(code, std::move(error_message)));
     }
 
-    [[nodiscard]] static Result<T> failure(ErrorCode code) {
-        return Result<T>(Error(code));
-    }
+    [[nodiscard]] static Result<T> failure(ErrorCode code) { return Result<T>(Error(code)); }
 
-    [[nodiscard]] static Result<T> failure(const Error& error) {
-        return Result<T>(error);
-    }
+    [[nodiscard]] static Result<T> failure(const Error& error) { return Result<T>(error); }
 
 private:
     std::variant<T, Error> data_;
@@ -110,20 +112,14 @@ public:
         return Result<void>(Error(code, std::move(error_message)));
     }
 
-    [[nodiscard]] static Result<void> failure(ErrorCode code) {
-        return Result<void>(Error(code));
-    }
+    [[nodiscard]] static Result<void> failure(ErrorCode code) { return Result<void>(Error(code)); }
 
-    [[nodiscard]] static Result<void> failure(const Error& error) {
-        return Result<void>(error);
-    }
+    [[nodiscard]] static Result<void> failure(const Error& error) { return Result<void>(error); }
 
-    [[nodiscard]] static Result<void> success() {
-        return Result<void>();
-    }
+    [[nodiscard]] static Result<void> success() { return Result<void>(); }
 
 private:
     std::variant<std::monostate, Error> data_;
 };
 
-} // namespace pond::common
+}  // namespace pond::common

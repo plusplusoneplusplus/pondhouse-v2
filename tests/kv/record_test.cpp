@@ -1,20 +1,20 @@
 #include "kv/record.h"
-#include <gtest/gtest.h>
+
 #include <memory>
+
+#include <gtest/gtest.h>
 
 namespace pond::kv {
 
 class RecordTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        std::vector<ColumnSchema> columns = {
-            {"id", ColumnType::INT32, false},
-            {"name", ColumnType::STRING, true},
-            {"age", ColumnType::INT32, true},
-            {"salary", ColumnType::DOUBLE, true},
-            {"is_active", ColumnType::BOOLEAN, true},
-            {"data", ColumnType::BINARY, true}
-        };
+        std::vector<ColumnSchema> columns = {{"id", ColumnType::INT32, false},
+                                             {"name", ColumnType::STRING, true},
+                                             {"age", ColumnType::INT32, true},
+                                             {"salary", ColumnType::DOUBLE, true},
+                                             {"is_active", ColumnType::BOOLEAN, true},
+                                             {"data", ColumnType::BINARY, true}};
         schema = std::make_shared<Schema>(columns);
     }
 
@@ -38,7 +38,7 @@ TEST_F(RecordTest, BasicOperations) {
     EXPECT_EQ(record.Get<int32_t>(2).value(), 30);
     EXPECT_EQ(record.Get<double>(3).value(), 75000.50);
     EXPECT_EQ(record.Get<bool>(4).value(), true);
-    
+
     auto binary_result = record.Get<common::DataChunk>(5);
     EXPECT_TRUE(binary_result.ok());
     EXPECT_EQ(binary_result.value().size(), 10);
@@ -133,12 +133,12 @@ TEST_F(RecordTest, LargeValues) {
     Record record(schema);
 
     // Test with large string
-    std::string large_string(1024 * 1024, 'x'); // 1MB string
+    std::string large_string(1024 * 1024, 'x');  // 1MB string
     record.Set(1, large_string);
     EXPECT_EQ(record.Get<std::string>(1).value(), large_string);
 
     // Test with large binary data
-    std::vector<uint8_t> large_binary(1024 * 1024, 0xFF); // 1MB binary
+    std::vector<uint8_t> large_binary(1024 * 1024, 0xFF);  // 1MB binary
     record.Set(5, common::DataChunk(large_binary.data(), large_binary.size()));
     auto binary_result = record.Get<common::DataChunk>(5);
     EXPECT_TRUE(binary_result.ok());
@@ -146,4 +146,4 @@ TEST_F(RecordTest, LargeValues) {
     EXPECT_EQ(std::memcmp(binary_result.value().data(), large_binary.data(), large_binary.size()), 0);
 }
 
-} // namespace pond::kv
+}  // namespace pond::kv

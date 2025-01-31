@@ -64,12 +64,13 @@ add_executable(
     tests/format/parquet/parquet_test.cpp
     tests/kv/record_test.cpp
     tests/kv/memtable_test.cpp
+    tests/kv/wal_test.cpp
 )
 
 # Add include directories for tests
 target_include_directories(unit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/tests
 )
 
 # Link test executable against gtest & your project libraries

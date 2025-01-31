@@ -7,22 +7,27 @@
 #include "common/data_chunk.h"
 #include "common/result.h"
 #include "common/skip_list.h"
+#include "common/types.h"
+#include "common/wal.h"
+#include "kv/kv_entry.h"
 #include "kv/record.h"
 
 namespace pond::kv {
 
 // Constants
 static constexpr size_t DEFAULT_MEMTABLE_SIZE = 64 * 1024 * 1024;  // 64MB
-static constexpr size_t MAX_KEY_SIZE = 1024;                       // 1KB
 
 class MemTable {
 public:
     using Key = std::string;
 
-    explicit MemTable(std::shared_ptr<Schema> schema, size_t max_size = DEFAULT_MEMTABLE_SIZE);
+    explicit MemTable(std::shared_ptr<Schema> schema,
+                      std::shared_ptr<common::WAL<KvEntry>> wal = nullptr,
+                      size_t max_size = DEFAULT_MEMTABLE_SIZE);
     ~MemTable() = default;
 
     // Core operations
+    common::Result<bool> Recover();
     common::Result<void> Put(const Key& key, const std::unique_ptr<Record>& record);
     common::Result<std::unique_ptr<Record>> Get(const Key& key) const;
     common::Result<void> Delete(const Key& key);
@@ -41,8 +46,7 @@ public:
     // Iterator interface
     class Iterator {
     public:
-        explicit Iterator(common::SkipList<Key, std::unique_ptr<Record>>::Iterator* it,
-                          std::mutex& mutex)
+        explicit Iterator(common::SkipList<Key, std::unique_ptr<Record>>::Iterator* it, std::mutex& mutex)
             : iter_(it), mutex_(mutex) {}
         ~Iterator() = default;
 
@@ -100,8 +104,10 @@ private:
     std::atomic<size_t> approximate_memory_usage_;
     const size_t max_size_;
     mutable std::mutex mutex_;  // Mutable to allow locking in const member functions
+    std::shared_ptr<common::WAL<KvEntry>> wal_;
 
     size_t CalculateEntrySize(const Key& key, const Record& record) const;
+    common::Result<void> WriteToWAL(KvEntry& entry);
 };
 
 }  // namespace pond::kv

@@ -1,13 +1,13 @@
-#include <gtest/gtest.h>
 #include <arrow/api.h>
 #include <arrow/io/api.h>
 #include <arrow/testing/gtest_util.h>
+#include <gtest/gtest.h>
 #include <parquet/arrow/writer.h>
 
 #include "common/memory_append_only_fs.h"
 #include "format/parquet/parquet_reader.h"
 #include "format/parquet/parquet_writer.h"
-#include "tests/common/test_helper.h"
+#include "test_helper.h"
 
 namespace pond::test {
 
@@ -18,7 +18,7 @@ class ParquetTest : public ::testing::Test {
 protected:
     void SetUp() override {
         fs_ = std::make_shared<MemoryAppendOnlyFileSystem>();
-        
+
         // Create a sample schema
         auto id_field = arrow::field("id", arrow::int64());
         auto name_field = arrow::field("name", arrow::utf8());
@@ -35,10 +35,7 @@ protected:
         ASSERT_OK(value_builder.AppendValues({1.1, 2.2, 3.3, 4.4, 5.5}));
 
         std::vector<std::shared_ptr<arrow::Array>> arrays = {
-            id_builder.Finish().ValueOrDie(),
-            name_builder.Finish().ValueOrDie(),
-            value_builder.Finish().ValueOrDie()
-        };
+            id_builder.Finish().ValueOrDie(), name_builder.Finish().ValueOrDie(), value_builder.Finish().ValueOrDie()};
 
         table_ = arrow::Table::Make(schema_, arrays);
     }
@@ -65,7 +62,7 @@ TEST_F(ParquetTest, BasicWriteRead) {
 
     auto write_result = writer->write(table_);
     VERIFY_RESULT_MSG(write_result, "Failed to write table");
-    
+
     auto close_result = writer->close();
     VERIFY_RESULT_MSG(close_result, "Failed to close writer");
 
@@ -81,7 +78,7 @@ TEST_F(ParquetTest, BasicWriteRead) {
     // Verify the data
     ASSERT_EQ(table_->num_rows(), read_table->num_rows());
     ASSERT_EQ(table_->num_columns(), read_table->num_columns());
-    
+
     // Compare schemas
     ASSERT_TRUE(table_->schema()->Equals(read_table->schema()));
 
@@ -117,7 +114,7 @@ TEST_F(ParquetTest, ColumnSelection) {
     // Verify the data
     ASSERT_EQ(table_->num_rows(), read_table->num_rows());
     ASSERT_EQ(column_indices.size(), read_table->num_columns());
-    
+
     // Compare selected columns
     ASSERT_TRUE(table_->column(0)->Equals(read_table->column(0)));  // id
     ASSERT_TRUE(table_->column(2)->Equals(read_table->column(1)));  // value
@@ -180,18 +177,15 @@ TEST_F(ParquetTest, RowGroupOperations) {
     ASSERT_OK(value_builder.AppendValues(values));
 
     std::vector<std::shared_ptr<arrow::Array>> arrays = {
-        id_builder.Finish().ValueOrDie(),
-        name_builder.Finish().ValueOrDie(),
-        value_builder.Finish().ValueOrDie()
-    };
+        id_builder.Finish().ValueOrDie(), name_builder.Finish().ValueOrDie(), value_builder.Finish().ValueOrDie()};
 
     auto large_table = arrow::Table::Make(schema_, arrays);
 
     // Write with custom row group size
     parquet::WriterProperties::Builder builder;
-    builder.write_batch_size(2);  // Create multiple row groups
+    builder.write_batch_size(2);      // Create multiple row groups
     builder.max_row_group_length(2);  // Ensure each row group has at most 2 rows
-    
+
     auto writer_result = ParquetWriter::create(fs_, path, schema_, builder);
     VERIFY_RESULT_MSG(writer_result, "Failed to create writer");
     auto writer = std::move(writer_result).value();
@@ -215,7 +209,7 @@ TEST_F(ParquetTest, RowGroupOperations) {
         auto group_result = reader->read_row_group(i);
         VERIFY_RESULT_MSG(group_result, "Failed to read row group");
         auto group_table = group_result.value();
-        
+
         ASSERT_EQ(large_table->num_columns(), group_table->num_columns());
         total_rows += group_table->num_rows();
     }
@@ -238,4 +232,4 @@ TEST_F(ParquetTest, ErrorHandling) {
     ASSERT_FALSE(writer_result.ok());
 }
 
-} // namespace pond::test
+}  // namespace pond::test
