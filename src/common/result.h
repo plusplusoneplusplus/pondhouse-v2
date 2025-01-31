@@ -106,6 +106,22 @@ public:
         return std::move(std::get<Error>(data_));
     }
 
+    [[nodiscard]] static Result<void> failure(ErrorCode code, std::string error_message) {
+        return Result<void>(Error(code, std::move(error_message)));
+    }
+
+    [[nodiscard]] static Result<void> failure(ErrorCode code) {
+        return Result<void>(Error(code));
+    }
+
+    [[nodiscard]] static Result<void> failure(const Error& error) {
+        return Result<void>(error);
+    }
+
+    [[nodiscard]] static Result<void> success() {
+        return Result<void>();
+    }
+
 private:
     std::variant<std::monostate, Error> data_;
 };

@@ -13,6 +13,7 @@ enum class ErrorCode {
     InvalidOperation = 4,
     UnsupportedOperation = 5,
     NotImplemented = 6,
+    NotFound = 7,
 
     // File system errors
     FileNotFound = 100,

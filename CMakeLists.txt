@@ -4,16 +4,22 @@ project(pondhouse-v2)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find Arrow package
+# Find required packages
 find_package(Arrow REQUIRED)
 find_package(Parquet REQUIRED)
+
+# Find xxHash library
+find_library(XXHASH_LIBRARY xxhash REQUIRED)
 
 # Add common library
 add_library(pondhouse_common
     src/common/append_only_fs.cpp
     src/common/memory_append_only_fs.cpp
     src/common/log.cpp
+    src/common/bloom_filter.cpp
     src/kv/kv_entry.cpp
+    src/kv/record.cpp
+    src/kv/memtable.cpp
     src/format/parquet/append_only_input_stream.cpp
     src/format/parquet/append_only_output_stream.cpp
     src/format/parquet/parquet_reader.cpp
@@ -23,8 +29,8 @@ add_library(pondhouse_common
 # Add include directories for common library
 target_include_directories(pondhouse_common PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
-# Link common library with Arrow
-target_link_libraries(pondhouse_common PUBLIC Arrow::arrow_shared)
+# Link common library with dependencies
+target_link_libraries(pondhouse_common PUBLIC Arrow::arrow_shared ${XXHASH_LIBRARY})
 
 # Add main executable
 add_executable(${PROJECT_NAME} src/main.cpp)
@@ -49,12 +55,15 @@ add_executable(
     unit_tests
     tests/main.cpp
     tests/common/error_test.cpp
+    tests/common/bloom_filter_test.cpp
     tests/common/result_test.cpp
     tests/common/data_chunk_test.cpp
     tests/common/uuid_test.cpp
     tests/common/append_only_fs_test.cpp
     tests/common/wal_test.cpp
     tests/format/parquet/parquet_test.cpp
+    tests/kv/record_test.cpp
+    tests/kv/memtable_test.cpp
 )
 
 # Add include directories for tests
