@@ -20,6 +20,7 @@ add_library(pondhouse_common
     src/kv/kv_entry.cpp
     src/kv/record.cpp
     src/kv/memtable.cpp
+    src/kv/table.cpp
     src/format/parquet/append_only_input_stream.cpp
     src/format/parquet/append_only_output_stream.cpp
     src/format/parquet/parquet_reader.cpp
@@ -64,7 +65,8 @@ add_executable(
     tests/format/parquet/parquet_test.cpp
     tests/kv/record_test.cpp
     tests/kv/memtable_test.cpp
-    tests/kv/wal_test.cpp
+    tests/kv/kv_wal_test.cpp
+    tests/kv/table_test.cpp
 )
 
 # Add include directories for tests

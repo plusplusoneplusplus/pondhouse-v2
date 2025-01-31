@@ -21,9 +21,7 @@ class MemTable {
 public:
     using Key = std::string;
 
-    explicit MemTable(std::shared_ptr<Schema> schema,
-                      std::shared_ptr<common::WAL<KvEntry>> wal = nullptr,
-                      size_t max_size = DEFAULT_MEMTABLE_SIZE);
+    explicit MemTable(std::shared_ptr<Schema> schema, size_t max_size = DEFAULT_MEMTABLE_SIZE);
     ~MemTable() = default;
 
     // Core operations
@@ -104,10 +102,7 @@ private:
     std::atomic<size_t> approximate_memory_usage_;
     const size_t max_size_;
     mutable std::mutex mutex_;  // Mutable to allow locking in const member functions
-    std::shared_ptr<common::WAL<KvEntry>> wal_;
-
     size_t CalculateEntrySize(const Key& key, const Record& record) const;
-    common::Result<void> WriteToWAL(KvEntry& entry);
 };
 
 }  // namespace pond::kv
