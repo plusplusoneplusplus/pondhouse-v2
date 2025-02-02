@@ -23,11 +23,11 @@ private:
 };
 
 // Helper function to directly calculate CRC32
-inline uint32_t crc32(const uint8_t* data, size_t length) {
+inline uint32_t Crc32(const uint8_t* data, size_t length) {
     return CRC32::Calculate(data, length);
 }
 
-inline uint32_t crc32(const std::string& data) {
+inline uint32_t Crc32(const std::string& data) {
     return CRC32::Calculate(data);
 }
 
