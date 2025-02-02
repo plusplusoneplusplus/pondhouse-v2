@@ -6,6 +6,39 @@
 
 namespace pond::kv {
 
+std::vector<uint8_t> FilterBlockFooter::Serialize() const {
+    std::vector<uint8_t> result(kFooterSize);
+    uint8_t* ptr = result.data();
+
+    // Write all fields in little-endian order
+    *reinterpret_cast<uint32_t*>(ptr) = util::HostToLittleEndian32(filter_size);
+    ptr += sizeof(uint32_t);
+    *reinterpret_cast<uint32_t*>(ptr) = util::HostToLittleEndian32(num_keys);
+    ptr += sizeof(uint32_t);
+    *reinterpret_cast<uint32_t*>(ptr) = util::HostToLittleEndian32(checksum);
+    ptr += sizeof(uint32_t);
+    *reinterpret_cast<uint32_t*>(ptr) = util::HostToLittleEndian32(reserved);
+
+    return result;
+}
+
+bool FilterBlockFooter::Deserialize(const uint8_t* data, size_t size) {
+    if (size < kFooterSize) {
+        return false;
+    }
+
+    // Read all fields in little-endian order
+    filter_size = util::LittleEndianToHost32(*reinterpret_cast<const uint32_t*>(data));
+    data += sizeof(uint32_t);
+    num_keys = util::LittleEndianToHost32(*reinterpret_cast<const uint32_t*>(data));
+    data += sizeof(uint32_t);
+    checksum = util::LittleEndianToHost32(*reinterpret_cast<const uint32_t*>(data));
+    data += sizeof(uint32_t);
+    reserved = util::LittleEndianToHost32(*reinterpret_cast<const uint32_t*>(data));
+
+    return true;
+}
+
 std::vector<uint8_t> FileHeader::Serialize() const {
     std::vector<uint8_t> buffer(kHeaderSize);
     uint8_t* ptr = buffer.data();

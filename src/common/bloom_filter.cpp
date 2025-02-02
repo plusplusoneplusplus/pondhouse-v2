@@ -186,4 +186,4 @@ size_t BloomFilter::getNthHash(size_t n, size_t hash1, size_t hash2) const {
     return hash1 + n * hash2;
 }
 
-}  // namespace pond::utils
+}  // namespace pond::common

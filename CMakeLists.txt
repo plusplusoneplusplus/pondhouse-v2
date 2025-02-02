@@ -76,6 +76,7 @@ add_executable(
     tests/kv/sstable_test.cpp
     tests/kv/sstable_cache_test.cpp
     tests/kv/sstable_format_test.cpp
+    tests/kv/sstable_filter_test.cpp
     tests/common/lru_cache_test.cpp
 )
 

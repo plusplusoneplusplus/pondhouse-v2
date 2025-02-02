@@ -43,6 +43,8 @@ public:
     [[nodiscard]] size_t getBitSize() const { return bits_.size(); }
     [[nodiscard]] size_t getHashFunctionCount() const { return num_hash_functions_; }
 
+    [[nodiscard]] size_t getItemsCount() const { return items_count_; }
+
 private:
     // Calculate optimal size and hash functions
     static std::pair<size_t, size_t> calculateOptimalParameters(size_t expected_items, double false_positive_prob);
@@ -60,4 +62,4 @@ private:
     static constexpr uint32_t VERSION = 1;
 };
 
-}  // namespace pond::utils
+}  // namespace pond::common
