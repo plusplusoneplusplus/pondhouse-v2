@@ -17,6 +17,7 @@ add_library(pondhouse_common
     src/common/memory_append_only_fs.cpp
     src/common/log.cpp
     src/common/bloom_filter.cpp
+    src/common/crc.cpp
     src/kv/kv_entry.cpp
     src/kv/record.cpp
     src/kv/memtable.cpp
@@ -58,15 +59,18 @@ add_executable(
     tests/common/error_test.cpp
     tests/common/bloom_filter_test.cpp
     tests/common/result_test.cpp
+    tests/common/crc_test.cpp
     tests/common/data_chunk_test.cpp
     tests/common/uuid_test.cpp
     tests/common/append_only_fs_test.cpp
     tests/common/wal_test.cpp
+    tests/common/bplus_tree_test.cpp
     tests/format/parquet/parquet_test.cpp
     tests/kv/record_test.cpp
     tests/kv/memtable_test.cpp
     tests/kv/kv_wal_test.cpp
     tests/kv/table_test.cpp
+    tests/kv/sstable_test.cpp
 )
 
 # Add include directories for tests

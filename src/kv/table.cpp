@@ -111,7 +111,7 @@ common::Result<bool> Table::Recover() {
 
 common::Result<void> Table::Flush() {
     // TODO: Implement flushing memtable to SSTable
-    return common::Result<void>::success();
+    return common::Result<void>::failure(common::ErrorCode::NotImplemented, "Not implemented");
 }
 
 common::Result<common::LSN> Table::WriteToWAL(KvEntry& entry) {
