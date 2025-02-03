@@ -25,6 +25,7 @@ add_library(pondhouse_common
     src/kv/sstable.cpp
     src/kv/sstable_cache.cpp
     src/kv/sstable_format.cpp
+    src/kv/sstable_writer.cpp
     src/format/parquet/append_only_input_stream.cpp
     src/format/parquet/append_only_output_stream.cpp
     src/format/parquet/parquet_reader.cpp
@@ -77,6 +78,7 @@ add_executable(
     tests/kv/sstable_cache_test.cpp
     tests/kv/sstable_format_test.cpp
     tests/kv/sstable_filter_test.cpp
+    tests/kv/sstable_writer_test.cpp
     tests/common/lru_cache_test.cpp
 )
 
