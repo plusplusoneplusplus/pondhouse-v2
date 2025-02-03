@@ -58,3 +58,6 @@ Testing/
 DartConfiguration.tcl
 install_manifest.txt
 CTestTestfile.cmake
+
+# cursor
+.cursor/
