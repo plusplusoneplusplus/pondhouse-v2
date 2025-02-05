@@ -58,29 +58,75 @@ public:
             return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid footer");
         }
 
-        // Read index block
-        auto index_size = file_size_ - footer_.index_block_offset - Footer::kFooterSize;
-        auto index_result = fs_->read(file_handle_, footer_.index_block_offset, index_size);
-        if (!index_result.ok()) {
-            return common::Result<bool>::failure(index_result.error());
+        // Read metadata block if present
+        if (footer_.metadata_block_offset > 0) {
+            // Read metadata block
+            auto metadata_size = footer_.metadata_block_size;
+            auto read_result = fs_->read(file_handle_, footer_.metadata_block_offset, metadata_size);
+            if (!read_result.ok()) {
+                return common::Result<bool>::failure(read_result.error());
+            }
+            auto metadata_data = read_result.value();
+
+            MetadataBlockFooter metadata_footer;
+            // Parse metadata block
+            if (!metadata_footer.Deserialize(
+                    metadata_data.data() + metadata_data.size() - MetadataBlockFooter::kFooterSize,
+                    MetadataBlockFooter::kFooterSize)) {
+                return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid metadata block");
+            }
+
+            // Verify metadata block checksum
+            if (common::Crc32(metadata_data.data(), metadata_data.size() - MetadataBlockFooter::kFooterSize)
+                != metadata_footer.checksum) {
+                return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid metadata block");
+            }
+
+            // Parse metadata sections
+
+            if (!stats_.Deserialize(metadata_data.data(), metadata_footer.stats_size)) {
+                return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid metadata stats");
+            }
+
+            if (!properties_.Deserialize(metadata_data.data() + metadata_footer.stats_size,
+                                         metadata_footer.props_size)) {
+                return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid metadata props");
+            }
         }
 
+        // Read filter block if present
+        if (footer_.filter_block_offset > 0) {
+            auto filter_size = footer_.filter_block_size;
+            auto read_result = fs_->read(file_handle_, footer_.filter_block_offset, filter_size);
+            if (!read_result.ok()) {
+                return common::Result<bool>::failure(read_result.error());
+            }
+            filter_data_ = read_result.value();
+        }
+
+        // Read index block
+        auto index_size = footer_.index_block_size;
+        auto read_result = fs_->read(file_handle_, footer_.index_block_offset, index_size);
+        if (!read_result.ok()) {
+            return common::Result<bool>::failure(read_result.error());
+        }
+        index_data_ = read_result.value();
+
         // Parse index entries
-        auto index_data = index_result.value();
         size_t pos = 0;
-        while (pos + IndexBlockEntry::kHeaderSize <= index_data.size() - BlockFooter::kFooterSize) {
+        while (pos + IndexBlockEntry::kHeaderSize <= index_data_.size() - BlockFooter::kFooterSize) {
             IndexBlockEntry entry;
-            if (!entry.DeserializeHeader(index_data.data() + pos, IndexBlockEntry::kHeaderSize)) {
+            if (!entry.DeserializeHeader(index_data_.data() + pos, IndexBlockEntry::kHeaderSize)) {
                 return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid index entry");
             }
 
-            if (pos + IndexBlockEntry::kHeaderSize + entry.key_length > index_data.size() - BlockFooter::kFooterSize) {
+            if (pos + IndexBlockEntry::kHeaderSize + entry.key_length > index_data_.size() - BlockFooter::kFooterSize) {
                 return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid,
                                                      "Invalid index entry key length");
             }
 
             std::string largest_key(
-                reinterpret_cast<const char*>(index_data.data() + pos + IndexBlockEntry::kHeaderSize),
+                reinterpret_cast<const char*>(index_data_.data() + pos + IndexBlockEntry::kHeaderSize),
                 entry.key_length);
             index_entries_.push_back({largest_key, entry.block_offset, entry.block_size, entry.entry_count});
             num_entries_ += entry.entry_count;
@@ -228,6 +274,21 @@ public:
     const std::string& GetSmallestKey() const { return smallest_key_; }
     const std::string& GetLargestKey() const { return largest_key_; }
 
+    common::Result<Metadata> GetMetadata() const {
+        if (file_handle_ == common::INVALID_HANDLE) {
+            return common::Result<Metadata>::failure(common::ErrorCode::InvalidOperation, "Reader not opened");
+        }
+
+        if (footer_.metadata_block_offset == 0) {
+            return common::Result<Metadata>::failure(common::ErrorCode::NotFound, "No metadata block present");
+        }
+
+        Metadata metadata;
+        metadata.stats = stats_;
+        metadata.props = properties_;
+        return common::Result<Metadata>::success(metadata);
+    }
+
 private:
     struct IndexEntry {
         std::string largest_key;
@@ -251,6 +312,14 @@ private:
     // Key range
     std::string smallest_key_;
     std::string largest_key_;
+
+    // Add metadata members
+    MetadataStats stats_;
+    MetadataProperties properties_;
+
+    // Metadata block data
+    common::DataChunk filter_data_;
+    common::DataChunk index_data_;
 };
 
 SSTableReader::SSTableReader(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& path)
@@ -284,6 +353,10 @@ const std::string& SSTableReader::GetSmallestKey() const {
 
 const std::string& SSTableReader::GetLargestKey() const {
     return impl_->GetLargestKey();
+}
+
+common::Result<SSTableReader::Metadata> SSTableReader::GetMetadata() const {
+    return impl_->GetMetadata();
 }
 
 }  // namespace pond::kv

@@ -126,10 +126,11 @@ The SSTable implementation follows a block-based design with the following compo
 | - Size Stats       | - Index Type      |                                               |
 
 +----------------------------------------------------------------------------------------+
-| Footer (64 bytes)                                                                      |
+| Footer (128 bytes)                                                                      |
 +----------------------------------------------------------------------------------------+
 | Index Block    | Filter Block   | Metadata Block  | Padding     | Magic      |         |
-| Offset (8B)    | Offset (8B)    | Offset (8B)     | (32B)       | Number (8B)|         |
+| Offset (8B)    | Offset (8B)    | Offset (8B)     | (72B)       | Number (8B)|         |
+| Size (8B)      | Size (8B)      | Size (8B)       |             |            |         |
 ```
 
 ### Key Components
@@ -166,19 +167,25 @@ The SSTable implementation follows a block-based design with the following compo
 
 #### 5. Metadata Block
 - Contains table statistics and properties
-- Includes:
+- Stats section includes:
   - Total key count
   - Min/Max keys
-  - Size statistics
-  - Creation time
+  - Total key size
+  - Total value size
+- Properties section includes:
+  - Creation timestamp
   - Compression settings
+  - Index type
+  - Filter configuration
+- CRC32 checksum validation
 
 #### 6. Footer
-- 64-byte footer with offsets to:
-  - Index block
-  - Filter block
-  - Metadata block
-- Magic number for integrity verification
+- 128-byte footer containing:
+  - Index block offset and size
+  - Filter block offset and size
+  - Metadata block offset and size
+  - 72-byte padding for future extensions
+  - Magic number for integrity verification
 
 ### Features
 
@@ -201,6 +208,12 @@ The SSTable implementation follows a block-based design with the following compo
    - Block caching
    - Prefix compression
    - Efficient binary search in index blocks
+
+5. **Future Enhancements** [PLANNED]
+   - Block compression
+   - Advanced caching strategies
+   - Performance optimizations
+   - Additional filter types
 
 ## Usage
 
@@ -226,6 +239,110 @@ index_builder.AddEntry(largest_key, block_offset, block_size, entry_count);
 2. String lengths are stored as fixed-size 32-bit integers
 3. Block sizes are optimized for common storage block sizes
 4. The implementation supports future extensions through reserved fields
+
+### SSTableReader Implementation Details
+
+The `SSTableReader` class provides efficient read access to SSTable files with the following features:
+
+#### Key Components
+- File header and footer validation
+- Index block for efficient key lookup
+- Optional bloom filter support for fast key existence checks
+- Data block parsing and validation
+
+#### Key Features
+1. **Random Access**
+   - O(log n) key lookup using index block
+   - Binary search within data blocks
+   - Bloom filter optimization for non-existent keys
+
+2. **Data Integrity**
+   - CRC32 checksum validation
+   - Block size verification
+   - File format validation
+
+3. **Memory Efficiency**
+   - On-demand block loading
+   - No unnecessary data caching
+   - Minimal memory footprint
+
+4. **Performance Optimizations**
+   - Bloom filter for fast negative lookups
+   - Binary search in index and data blocks
+   - Efficient key range filtering
+
+#### Usage Example
+```cpp
+// Create reader
+SSTableReader reader(fs, "data.sst");
+ASSERT_TRUE(reader.Open().ok());
+
+// Get value by key
+auto result = reader.Get("key1");
+if (result.ok()) {
+    // Process value
+    auto value = result.value();
+}
+
+// Check key existence (with bloom filter)
+auto may_contain = reader.MayContain("key2");
+if (may_contain.ok() && may_contain.value()) {
+    // Key might exist
+}
+
+// Get metadata
+size_t num_entries = reader.GetEntryCount();
+size_t file_size = reader.GetFileSize();
+std::string smallest = reader.GetSmallestKey();
+std::string largest = reader.GetLargestKey();
+```
+
+### SSTableWriter Implementation Details
+
+The `SSTableWriter` class handles the creation of SSTable files with the following features:
+
+#### Key Components
+- Block-based writing with size limits
+- Index generation during writes
+- Optional bloom filter construction
+- Metadata collection and statistics
+
+#### Key Features
+1. **Sequential Writing**
+   - Ordered key insertion
+   - Automatic block splitting
+   - Footer generation on completion
+
+2. **Block Management**
+   - Target block size (4MB default)
+   - Block footer with checksums
+   - Entry count tracking
+
+3. **Memory Efficiency**
+   - Streaming write approach
+   - Minimal memory footprint
+   - Immediate block flushing
+
+4. **Metadata Generation**
+   - Statistics collection during writes
+   - Property tracking
+   - Filter block construction
+
+#### Usage Example
+```cpp
+// Create writer
+SSTableWriter writer(fs, "data.sst");
+
+// Enable bloom filter (optional)
+writer.EnableFilter(1000);  // Expect ~1000 keys
+
+// Add data in sorted order
+writer.Add("key1", value1);
+writer.Add("key2", value2);
+
+// Finalize SSTable
+writer.Finish();
+```
 
 ## Table
 
@@ -325,63 +442,6 @@ The implementation includes comprehensive tests covering:
   - [x] Sequential scan patterns
   - [x] Cache hit/miss scenarios
   - [x] Concurrent access tests
-
-### SSTableReader Implementation Details
-
-The `SSTableReader` class provides efficient read access to SSTable files with the following features:
-
-#### Key Components
-- File header and footer validation
-- Index block for efficient key lookup
-- Optional bloom filter support for fast key existence checks
-- Data block parsing and validation
-
-#### Key Features
-1. **Random Access**
-   - O(log n) key lookup using index block
-   - Binary search within data blocks
-   - Bloom filter optimization for non-existent keys
-
-2. **Data Integrity**
-   - CRC32 checksum validation
-   - Block size verification
-   - File format validation
-
-3. **Memory Efficiency**
-   - On-demand block loading
-   - No unnecessary data caching
-   - Minimal memory footprint
-
-4. **Performance Optimizations**
-   - Bloom filter for fast negative lookups
-   - Binary search in index and data blocks
-   - Efficient key range filtering
-
-#### Usage Example
-```cpp
-// Create reader
-SSTableReader reader(fs, "data.sst");
-ASSERT_TRUE(reader.Open().ok());
-
-// Get value by key
-auto result = reader.Get("key1");
-if (result.ok()) {
-    // Process value
-    auto value = result.value();
-}
-
-// Check key existence (with bloom filter)
-auto may_contain = reader.MayContain("key2");
-if (may_contain.ok() && may_contain.value()) {
-    // Key might exist
-}
-
-// Get metadata
-size_t num_entries = reader.GetEntryCount();
-size_t file_size = reader.GetFileSize();
-std::string smallest = reader.GetSmallestKey();
-std::string largest = reader.GetLargestKey();
-```
 
 ### 2. Compaction Manager [MEDIUM PRIORITY]
 - [ ] Design compaction strategies

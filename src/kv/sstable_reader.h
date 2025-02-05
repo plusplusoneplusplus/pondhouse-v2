@@ -16,6 +16,12 @@ namespace pond::kv {
  */
 class SSTableReader {
 public:
+    // Metadata structure to expose to clients
+    struct Metadata {
+        MetadataStats stats;
+        MetadataProperties props;
+    };
+
     // Constructor takes filesystem and path
     SSTableReader(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& path);
     ~SSTableReader();
@@ -74,6 +80,13 @@ public:
      * @return The largest key
      */
     [[nodiscard]] const std::string& GetLargestKey() const;
+
+    /**
+     * Get the metadata information from the SSTable.
+     * Must be called after Open().
+     * @return Result<Metadata> containing the metadata if present
+     */
+    [[nodiscard]] common::Result<Metadata> GetMetadata() const;
 
 private:
     class Impl;

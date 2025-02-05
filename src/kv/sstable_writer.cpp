@@ -11,7 +11,7 @@ namespace pond::kv {
 class SSTableWriter::Impl {
 public:
     Impl(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& path)
-        : fs_(std::move(fs)), path_(path), data_builder_(), index_builder_() {
+        : fs_(std::move(fs)), path_(path), data_builder_(), index_builder_(), metadata_builder_() {
         // Initialize file header
         header_.version = 1;
         header_.flags = 0;
@@ -68,6 +68,9 @@ public:
             }
         }
 
+        // Update metadata
+        metadata_builder_.UpdateStats(key, value);
+
         // Update state
         last_key_ = key;
         if (smallest_key_.empty()) {
@@ -79,6 +82,7 @@ public:
         // Add to bloom filter if enabled
         if (filter_builder_) {
             filter_builder_->AddKeys({key});
+            metadata_builder_.SetFilterType(1, filter_builder_->GetFalsePositiveRate());
         }
 
         return common::Result<bool>::success(true);
@@ -103,9 +107,11 @@ public:
 
         // Write filter block if enabled
         uint64_t filter_offset = 0;
+        uint64_t filter_size = 0;
         if (filter_builder_) {
             filter_offset = current_offset_;
             auto filter_data = filter_builder_->Finish();
+            filter_size = filter_data.size();
             auto append_result = fs_->append(file_handle_, common::DataChunk(filter_data.data(), filter_data.size()));
             if (!append_result.ok()) {
                 return common::Result<bool>::failure(append_result.error());
@@ -116,17 +122,31 @@ public:
         // Write index block
         uint64_t index_offset = current_offset_;
         auto index_data = index_builder_.Finish();
+        uint64_t index_size = index_data.size();
         auto append_result = fs_->append(file_handle_, common::DataChunk(index_data.data(), index_data.size()));
         if (!append_result.ok()) {
             return common::Result<bool>::failure(append_result.error());
         }
         current_offset_ += index_data.size();
 
+        // Write metadata block
+        uint64_t metadata_offset = current_offset_;
+        auto metadata_data = metadata_builder_.Finish();
+        uint64_t metadata_size = metadata_data.size();
+        append_result = fs_->append(file_handle_, common::DataChunk(metadata_data.data(), metadata_data.size()));
+        if (!append_result.ok()) {
+            return common::Result<bool>::failure(append_result.error());
+        }
+        current_offset_ += metadata_data.size();
+
         // Write footer
         Footer footer;
         footer.index_block_offset = index_offset;
         footer.filter_block_offset = filter_offset;
-        footer.metadata_block_offset = 0;  // No metadata block for now
+        footer.metadata_block_offset = metadata_offset;
+        footer.index_block_size = index_size;
+        footer.filter_block_size = filter_size;
+        footer.metadata_block_size = metadata_size;
         auto footer_data = footer.Serialize();
         append_result = fs_->append(file_handle_, common::DataChunk(footer_data.data(), footer_data.size()));
         if (!append_result.ok()) {
@@ -147,6 +167,7 @@ public:
     void EnableFilter(size_t expected_keys, double false_positive_rate) {
         if (!filter_builder_ && !finished_ && num_entries_ == 0) {
             filter_builder_ = std::make_unique<FilterBlockBuilder>(expected_keys, false_positive_rate);
+            metadata_builder_.SetFilterType(1, false_positive_rate);
         }
     }
 
@@ -184,6 +205,7 @@ private:
     DataBlockBuilder data_builder_;
     IndexBlockBuilder index_builder_;
     std::unique_ptr<FilterBlockBuilder> filter_builder_;
+    MetadataBlockBuilder metadata_builder_;
 
     // State tracking
     std::string last_key_;

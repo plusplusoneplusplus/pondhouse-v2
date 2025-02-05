@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -38,13 +39,16 @@ struct FileHeader {
 static_assert(sizeof(FileHeader) == FileHeader::kHeaderSize, "FileHeader size mismatch");
 
 struct Footer {
-    static constexpr size_t kFooterSize = 64;
+    static constexpr size_t kFooterSize = 128;
     static constexpr uint64_t kMagicNumber = FileHeader::kMagicNumber;
 
     uint64_t index_block_offset{0};       // 8 bytes
-    uint64_t filter_block_offset{0};      // 8 bytes, 0 if no filter
+    uint64_t filter_block_offset{0};      // 8 bytes
     uint64_t metadata_block_offset{0};    // 8 bytes
-    uint8_t padding[32]{0};               // 32 bytes reserved
+    uint64_t index_block_size{0};         // 8 bytes
+    uint64_t filter_block_size{0};        // 8 bytes
+    uint64_t metadata_block_size{0};      // 8 bytes
+    uint8_t padding[72]{0};               // 72 bytes reserved
     uint64_t magic_number{kMagicNumber};  // 8 bytes, same as header
 
     // Serialization
@@ -221,6 +225,8 @@ public:
 
     void Reset() { filter_.clear(); }
 
+    double GetFalsePositiveRate() const { return filter_.getFalsePositiveProbability(); }
+
 private:
     common::BloomFilter filter_;
 };
@@ -251,5 +257,106 @@ inline uint32_t LittleEndianToHost32(uint32_t value) {
     return HostToLittleEndian32(value);
 }
 }  // namespace util
+
+// Metadata block structures
+struct MetadataStats {
+    uint64_t key_count{0};         // Total number of keys
+    std::string smallest_key;      // Smallest key in the SSTable
+    std::string largest_key;       // Largest key in the SSTable
+    uint64_t total_key_size{0};    // Total size of all keys
+    uint64_t total_value_size{0};  // Total size of all values
+
+    // Serialization
+    std::vector<uint8_t> Serialize() const;
+    bool Deserialize(const uint8_t* data, size_t size);
+};
+
+struct MetadataProperties {
+    uint64_t creation_time{0};     // Unix timestamp of creation
+    uint32_t compression_type{0};  // 0=None, 1=Snappy
+    uint32_t index_type{0};        // 0=Binary search
+    uint32_t filter_type{0};       // 0=None, 1=Bloom
+    double filter_fp_rate{0.0};    // Bloom filter false positive rate
+
+    // Serialization
+    std::vector<uint8_t> Serialize() const;
+    bool Deserialize(const uint8_t* data, size_t size);
+};
+
+struct MetadataBlockFooter {
+    static constexpr size_t kFooterSize = 16;
+
+    uint32_t stats_size{0};  // Size of stats section
+    uint32_t props_size{0};  // Size of properties section
+    uint32_t checksum{0};    // CRC32 of block data
+    uint32_t reserved{0};    // Reserved for future use
+
+    std::vector<uint8_t> Serialize() const;
+    bool Deserialize(const uint8_t* data, size_t size);
+};
+
+// Builder for metadata blocks
+class MetadataBlockBuilder {
+public:
+    MetadataBlockBuilder() = default;
+
+    void UpdateStats(const std::string& key, const common::DataChunk& value) {
+        stats_.key_count++;
+        stats_.total_key_size += key.size();
+        stats_.total_value_size += value.size();
+
+        if (stats_.smallest_key.empty() || key < stats_.smallest_key) {
+            stats_.smallest_key = key;
+        }
+        if (stats_.largest_key.empty() || key > stats_.largest_key) {
+            stats_.largest_key = key;
+        }
+    }
+
+    void SetCompressionType(uint32_t type) { props_.compression_type = type; }
+    void SetFilterType(uint32_t type, double fp_rate = 0.0) {
+        props_.filter_type = type;
+        props_.filter_fp_rate = fp_rate;
+    }
+
+    std::vector<uint8_t> Finish() {
+        // Set creation time if not already set
+        if (props_.creation_time == 0) {
+            props_.creation_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        }
+
+        // Serialize components
+        auto stats_data = stats_.Serialize();
+        auto props_data = props_.Serialize();
+
+        // Calculate total size and prepare buffer
+        std::vector<uint8_t> buffer;
+        buffer.reserve(stats_data.size() + props_data.size() + MetadataBlockFooter::kFooterSize);
+
+        // Add stats and properties data
+        buffer.insert(buffer.end(), stats_data.begin(), stats_data.end());
+        buffer.insert(buffer.end(), props_data.begin(), props_data.end());
+
+        // Create and add footer
+        MetadataBlockFooter footer;
+        footer.stats_size = stats_data.size();
+        footer.props_size = props_data.size();
+        footer.checksum = common::Crc32(buffer.data(), buffer.size());
+
+        auto footer_data = footer.Serialize();
+        buffer.insert(buffer.end(), footer_data.begin(), footer_data.end());
+
+        return buffer;
+    }
+
+    void Reset() {
+        stats_ = MetadataStats();
+        props_ = MetadataProperties();
+    }
+
+private:
+    MetadataStats stats_;
+    MetadataProperties props_;
+};
 
 }  // namespace pond::kv

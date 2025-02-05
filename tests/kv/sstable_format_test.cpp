@@ -17,7 +17,7 @@ TEST_F(SSTableFormatTest, FileHeaderSize) {
 }
 
 TEST_F(SSTableFormatTest, FooterSize) {
-    EXPECT_EQ(Footer::kFooterSize, 64);
+    EXPECT_EQ(Footer::kFooterSize, 128);
 }
 
 TEST_F(SSTableFormatTest, FileHeaderSerialization) {
@@ -328,6 +328,108 @@ TEST_F(SSTableFormatTest, DataBlockBuilderTargetSize) {
     const size_t total_expected_size = expected_data_size + BlockFooter::kFooterSize;
     EXPECT_EQ(block.size(), total_expected_size);
     EXPECT_LT(block.size(), DataBlockBuilder::kTargetBlockSize);
+}
+
+TEST_F(SSTableFormatTest, MetadataStatsSerialization) {
+    MetadataStats stats;
+    stats.key_count = 42;
+    stats.smallest_key = "aaa";
+    stats.largest_key = "zzz";
+    stats.total_key_size = 1000;
+    stats.total_value_size = 5000;
+
+    auto serialized = stats.Serialize();
+    MetadataStats new_stats;
+    ASSERT_TRUE(new_stats.Deserialize(serialized.data(), serialized.size()));
+
+    EXPECT_EQ(new_stats.key_count, 42);
+    EXPECT_EQ(new_stats.smallest_key, "aaa");
+    EXPECT_EQ(new_stats.largest_key, "zzz");
+    EXPECT_EQ(new_stats.total_key_size, 1000);
+    EXPECT_EQ(new_stats.total_value_size, 5000);
+}
+
+TEST_F(SSTableFormatTest, MetadataPropertiesSerialization) {
+    MetadataProperties props;
+    props.creation_time = 123456789;
+    props.compression_type = 1;
+    props.index_type = 0;
+    props.filter_type = 1;
+    props.filter_fp_rate = 0.01;
+
+    auto serialized = props.Serialize();
+    MetadataProperties new_props;
+    ASSERT_TRUE(new_props.Deserialize(serialized.data(), serialized.size()));
+
+    EXPECT_EQ(new_props.creation_time, 123456789);
+    EXPECT_EQ(new_props.compression_type, 1);
+    EXPECT_EQ(new_props.index_type, 0);
+    EXPECT_EQ(new_props.filter_type, 1);
+    EXPECT_DOUBLE_EQ(new_props.filter_fp_rate, 0.01);
+}
+
+TEST_F(SSTableFormatTest, MetadataBlockFooterSerialization) {
+    MetadataBlockFooter footer;
+    footer.stats_size = 100;
+    footer.props_size = 50;
+    footer.checksum = 0x12345678;
+    footer.reserved = 0;
+
+    auto serialized = footer.Serialize();
+    ASSERT_EQ(serialized.size(), MetadataBlockFooter::kFooterSize);
+
+    MetadataBlockFooter new_footer;
+    ASSERT_TRUE(new_footer.Deserialize(serialized.data(), serialized.size()));
+
+    EXPECT_EQ(new_footer.stats_size, 100);
+    EXPECT_EQ(new_footer.props_size, 50);
+    EXPECT_EQ(new_footer.checksum, 0x12345678);
+    EXPECT_EQ(new_footer.reserved, 0);
+}
+
+TEST_F(SSTableFormatTest, MetadataBlockBuilder) {
+    MetadataBlockBuilder builder;
+
+    // Add some entries
+    DataChunk value1(reinterpret_cast<const uint8_t*>("value1"), 6);
+    DataChunk value2(reinterpret_cast<const uint8_t*>("value2"), 6);
+    builder.UpdateStats("key1", value1);
+    builder.UpdateStats("key2", value2);
+
+    // Set properties
+    builder.SetCompressionType(1);
+    builder.SetFilterType(1, 0.01);
+
+    // Build block
+    auto block = builder.Finish();
+    ASSERT_FALSE(block.empty());
+
+    // Parse the block
+    MetadataBlockFooter footer;
+    ASSERT_TRUE(footer.Deserialize(block.data() + block.size() - MetadataBlockFooter::kFooterSize,
+                                   MetadataBlockFooter::kFooterSize));
+
+    // Verify stats section
+    MetadataStats stats;
+    ASSERT_TRUE(stats.Deserialize(block.data(), footer.stats_size));
+    EXPECT_EQ(stats.key_count, 2);
+    EXPECT_EQ(stats.smallest_key, "key1");
+    EXPECT_EQ(stats.largest_key, "key2");
+    EXPECT_EQ(stats.total_key_size, 8);
+    EXPECT_EQ(stats.total_value_size, 12);
+
+    // Verify properties section
+    MetadataProperties props;
+    ASSERT_TRUE(props.Deserialize(block.data() + footer.stats_size, footer.props_size));
+    EXPECT_GT(props.creation_time, 0);
+    EXPECT_EQ(props.compression_type, 1);
+    EXPECT_EQ(props.filter_type, 1);
+    EXPECT_DOUBLE_EQ(props.filter_fp_rate, 0.01);
+
+    // Reset and verify
+    builder.Reset();
+    auto empty_block = builder.Finish();
+    ASSERT_FALSE(empty_block.empty());  // Should still contain empty stats and props
 }
 
 }  // namespace
