@@ -22,7 +22,7 @@ add_library(pondhouse_common
     src/kv/record.cpp
     src/kv/memtable.cpp
     src/kv/table.cpp
-    src/kv/sstable.cpp
+    src/kv/sstable_manager.cpp
     src/kv/sstable_cache.cpp
     src/kv/sstable_format.cpp
     src/kv/sstable_writer.cpp
@@ -76,7 +76,7 @@ add_executable(
     tests/kv/memtable_test.cpp
     tests/kv/kv_wal_test.cpp
     tests/kv/table_test.cpp
-    tests/kv/sstable_test.cpp
+    tests/kv/sstable_manager_test.cpp
     tests/kv/sstable_cache_test.cpp
     tests/kv/sstable_format_test.cpp
     tests/kv/sstable_filter_test.cpp

@@ -297,53 +297,6 @@ std::string smallest = reader.GetSmallestKey();
 std::string largest = reader.GetLargestKey();
 ```
 
-### SSTableWriter Implementation Details
-
-The `SSTableWriter` class handles the creation of SSTable files with the following features:
-
-#### Key Components
-- Block-based writing with size limits
-- Index generation during writes
-- Optional bloom filter construction
-- Metadata collection and statistics
-
-#### Key Features
-1. **Sequential Writing**
-   - Ordered key insertion
-   - Automatic block splitting
-   - Footer generation on completion
-
-2. **Block Management**
-   - Target block size (4MB default)
-   - Block footer with checksums
-   - Entry count tracking
-
-3. **Memory Efficiency**
-   - Streaming write approach
-   - Minimal memory footprint
-   - Immediate block flushing
-
-4. **Metadata Generation**
-   - Statistics collection during writes
-   - Property tracking
-   - Filter block construction
-
-#### Usage Example
-```cpp
-// Create writer
-SSTableWriter writer(fs, "data.sst");
-
-// Enable bloom filter (optional)
-writer.EnableFilter(1000);  // Expect ~1000 keys
-
-// Add data in sorted order
-writer.Add("key1", value1);
-writer.Add("key2", value2);
-
-// Finalize SSTable
-writer.Finish();
-```
-
 ## Table
 
 The `Table` class is the main entry point for the key-value store, managing the lifecycle of MemTables and SSTables while providing a simple interface for data operations.
@@ -429,10 +382,6 @@ The implementation includes comprehensive tests covering:
   - [x] Index block loading and caching
   - [x] Filter block loading and caching
   - [x] Data block reading with decompression support
-- [ ] Implement block cache
-  - [ ] LRU cache policy
-  - [ ] Cache size management
-  - [ ] Thread-safe operations
 - [x] Add iterator support
   - [x] Block-level iteration
   - [x] Key seeking functionality
@@ -443,25 +392,7 @@ The implementation includes comprehensive tests covering:
   - [x] Cache hit/miss scenarios
   - [x] Concurrent access tests
 
-### 2. Compaction Manager [MEDIUM PRIORITY]
-- [ ] Design compaction strategies
-  - [ ] Leveled compaction
-  - [ ] Size-tiered compaction
-  - [ ] Custom policies support
-- [ ] Implement background compaction
-  - [ ] Compaction worker threads
-  - [ ] I/O throttling
-  - [ ] Progress tracking
-- [ ] Handle overlapping ranges
-  - [ ] Key range calculation
-  - [ ] Merge strategy
-  - [ ] Tombstone cleanup
-- [ ] Add monitoring and metrics
-  - [ ] Compaction statistics
-  - [ ] Performance metrics
-  - [ ] Space amplification tracking
-
-### 3. Version Management [MEDIUM PRIORITY]
+### 2. Version Management [MEDIUM PRIORITY]
 - [ ] Implement version tracking
   - [ ] SSTable versioning
   - [ ] Level management
@@ -474,6 +405,33 @@ The implementation includes comprehensive tests covering:
   - [ ] Version changes during reads
   - [ ] Garbage collection
   - [ ] File cleanup
+
+### 3. Implement SSTable Manager Class [HIGH PRIORITY]
+- [ ] SSTable level organization
+    - [ ] SSTable metadata management
+    - [ ] Read-only access to SSTables
+    - [ ] Flush MemTable to SSTable
+    - [ ] Block cache
+        - [ ] LRU cache policy
+        - [ ] Cache size management
+        - [ ] Thread-safe operations
+- [ ] Implement background compaction
+    - [ ] Design compaction strategies
+        - [ ] Leveled compaction
+        - [ ] Size-tiered compaction
+        - [ ] Custom policies support
+    - [ ] Implement background compaction
+        - [ ] Compaction worker threads
+        - [ ] I/O throttling
+        - [ ] Progress tracking
+    - [ ] Handle overlapping ranges
+        - [ ] Key range calculation
+        - [ ] Merge strategy
+        - [ ] Tombstone cleanup
+    - [ ] Add monitoring and metrics
+        - [ ] Compaction statistics
+        - [ ] Performance metrics
+        - [ ] Space amplification tracking
 
 ### 4. Write Path Integration [HIGH PRIORITY]
 - [ ] Implement MemTable flushing
