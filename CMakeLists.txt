@@ -26,6 +26,7 @@ add_library(pondhouse_common
     src/kv/sstable_cache.cpp
     src/kv/sstable_format.cpp
     src/kv/sstable_writer.cpp
+    src/kv/sstable_reader.cpp
     src/format/parquet/append_only_input_stream.cpp
     src/format/parquet/append_only_output_stream.cpp
     src/format/parquet/parquet_reader.cpp
@@ -60,6 +61,7 @@ FetchContent_MakeAvailable(googletest)
 add_executable(
     unit_tests
     tests/main.cpp
+    tests/test_helper.cpp
     tests/common/error_test.cpp
     tests/common/bloom_filter_test.cpp
     tests/common/result_test.cpp
@@ -79,6 +81,7 @@ add_executable(
     tests/kv/sstable_format_test.cpp
     tests/kv/sstable_filter_test.cpp
     tests/kv/sstable_writer_test.cpp
+    tests/kv/sstable_reader_test.cpp
     tests/common/lru_cache_test.cpp
 )
 
