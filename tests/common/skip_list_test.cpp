@@ -1,9 +1,11 @@
 #include "common/skip_list.h"
-#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <random>
 #include <thread>
 #include <vector>
-#include <random>
-#include <algorithm>
+
+#include <gtest/gtest.h>
 
 namespace pond::common {
 
@@ -13,10 +15,16 @@ protected:
 };
 
 TEST_F(SkipListTest, BasicOperations) {
+    // Test initial size
+    EXPECT_EQ(list_.Size(), 0);
+
     // Test insertion
     list_.Insert(1, "one");
+    EXPECT_EQ(list_.Size(), 1);
     list_.Insert(2, "two");
+    EXPECT_EQ(list_.Size(), 2);
     list_.Insert(3, "three");
+    EXPECT_EQ(list_.Size(), 3);
 
     // Test contains
     EXPECT_TRUE(list_.Contains(1));
@@ -36,8 +44,13 @@ TEST_F(SkipListTest, BasicOperations) {
 }
 
 TEST_F(SkipListTest, DuplicateInsertion) {
+    EXPECT_EQ(list_.Size(), 0);
+
     list_.Insert(1, "one");
-    list_.Insert(1, "ONE");
+    EXPECT_EQ(list_.Size(), 1);
+
+    list_.Insert(1, "ONE");      // Duplicate key
+    EXPECT_EQ(list_.Size(), 1);  // Size should not change for duplicate keys
 
     std::string value;
     EXPECT_TRUE(list_.Get(1, value));
@@ -51,7 +64,7 @@ TEST_F(SkipListTest, Iterator) {
     }
 
     auto it = std::unique_ptr<SkipList<int, std::string>::Iterator>(list_.NewIterator());
-    
+
     // Test sequential iteration
     int index = 0;
     for (; it->Valid(); it->Next(), index++) {
@@ -142,4 +155,27 @@ TEST_F(SkipListTest, StressTest) {
     }
 }
 
-} // namespace pond::common
+TEST_F(SkipListTest, SizeTracking) {
+    EXPECT_EQ(list_.Size(), 0) << "Initial size should be 0";
+
+    // Test size increases with insertions
+    for (int i = 0; i < 100; i++) {
+        list_.Insert(i, std::to_string(i));
+        EXPECT_EQ(list_.Size(), i + 1) << "Size should increase after insertion";
+    }
+
+    // Test size doesn't change with duplicate keys
+    for (int i = 0; i < 100; i++) {
+        list_.Insert(i, std::to_string(i * 2));
+        EXPECT_EQ(list_.Size(), 100) << "Size should not change for duplicate keys";
+    }
+
+    // Verify all elements are still accessible
+    std::string value;
+    for (int i = 0; i < 100; i++) {
+        EXPECT_TRUE(list_.Get(i, value));
+        EXPECT_EQ(value, std::to_string(i * 2));
+    }
+}
+
+}  // namespace pond::common

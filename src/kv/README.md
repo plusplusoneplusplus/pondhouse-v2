@@ -406,32 +406,73 @@ The implementation includes comprehensive tests covering:
   - [ ] Garbage collection
   - [ ] File cleanup
 
-### 3. Implement SSTable Manager Class [HIGH PRIORITY]
-- [ ] SSTable level organization
-    - [ ] SSTable metadata management
-    - [ ] Read-only access to SSTables
-    - [ ] Flush MemTable to SSTable
-    - [ ] Block cache
-        - [ ] LRU cache policy
-        - [ ] Cache size management
-        - [ ] Thread-safe operations
-- [ ] Implement background compaction
-    - [ ] Design compaction strategies
-        - [ ] Leveled compaction
-        - [ ] Size-tiered compaction
-        - [ ] Custom policies support
-    - [ ] Implement background compaction
-        - [ ] Compaction worker threads
-        - [ ] I/O throttling
-        - [ ] Progress tracking
-    - [ ] Handle overlapping ranges
-        - [ ] Key range calculation
-        - [ ] Merge strategy
-        - [ ] Tombstone cleanup
-    - [ ] Add monitoring and metrics
-        - [ ] Compaction statistics
-        - [ ] Performance metrics
-        - [ ] Space amplification tracking
+### 3. SSTableManager Implementation [IN PROGRESS]
+
+The `SSTableManager` class manages the lifecycle and organization of SSTables with the following features:
+
+#### Core Components
+- Level-based SSTable organization
+- Thread-safe operations with shared mutex protection
+- Block cache management
+- File system abstraction via `IAppendOnlyFileSystem`
+
+#### Key Features
+
+1. **Thread Safety**
+   - Shared mutex for concurrent read operations
+   - Exclusive locks for write operations
+   - Safe concurrent access to SSTable metadata
+   - Protected statistics updates
+
+2. **Level Management**
+   - L0 tables with potential key range overlap
+   - Leveled organization for L1+ with non-overlapping ranges
+   - Atomic file number generation
+   - Safe level creation and expansion
+
+3. **Read Path**
+   - Concurrent read support via shared locks
+   - L0 search from newest to oldest
+   - Level-based search with range filtering
+   - Block cache integration
+
+4. **Write Path**
+   - Atomic MemTable to SSTable conversion
+   - Protected file number allocation
+   - Safe L0 table addition
+   - Automatic statistics update
+
+5. **Statistics Tracking**
+   - Per-level file count and size tracking
+   - Total SSTable statistics
+   - Cache performance metrics
+   - Thread-safe stats updates
+
+#### Implementation Status
+- [x] Basic SSTable organization
+- [x] Thread-safe read operations
+- [x] Thread-safe write operations
+- [x] Statistics tracking
+- [x] Directory recovery
+- [ ] Background compaction
+- [ ] Level size limits
+- [ ] Automatic compaction triggering
+
+#### Usage Example
+```cpp
+// Create manager with configuration
+SSTableManager manager(fs, "db_path", config);
+
+// Thread-safe read operations
+auto result = manager.Get(key);
+
+// Thread-safe write operations
+auto memtable = CreateMemTable();
+manager.CreateSSTableFromMemTable(memtable);
+
+// Get current statistics
+auto stats = manager.GetStats();
+```
 
 ### 4. Write Path Integration [HIGH PRIORITY]
 - [ ] Implement MemTable flushing

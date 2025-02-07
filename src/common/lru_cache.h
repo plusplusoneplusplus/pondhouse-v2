@@ -11,21 +11,21 @@
 
 namespace pond::common {
 
+struct LRUCacheStats {
+    uint64_t hits{0};
+    uint64_t misses{0};
+    uint64_t evictions{0};
+    size_t current_memory_bytes{0};
+
+    double hit_rate() const {
+        const uint64_t total = hits + misses;
+        return total == 0 ? 0.0 : static_cast<double>(hits) / total;
+    }
+};
+
 template <typename K, typename V, typename Hash = std::hash<K>>
 class LRUCache {
 public:
-    struct Stats {
-        uint64_t hits{0};
-        uint64_t misses{0};
-        uint64_t evictions{0};
-        size_t current_memory_bytes{0};
-
-        double hit_rate() const {
-            const uint64_t total = hits + misses;
-            return total == 0 ? 0.0 : static_cast<double>(hits) / total;
-        }
-    };
-
     struct CacheEntry {
         V value;
         Timestamp last_access;
@@ -112,12 +112,12 @@ public:
 
         lru_list_.clear();
         cache_.clear();
-        stats_ = Stats{};
+        stats_ = LRUCacheStats{};
 
         return Result<void>();
     }
 
-    Stats GetStats() const {
+    LRUCacheStats GetStats() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return stats_;
     }
@@ -144,7 +144,7 @@ private:
     std::unordered_map<K, std::pair<typename std::list<K>::iterator, CacheEntry>, Hash> cache_;
 
     mutable std::mutex mutex_;
-    Stats stats_;
+    LRUCacheStats stats_;
 };
 
 }  // namespace pond::common

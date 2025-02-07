@@ -14,8 +14,6 @@ MemTable::MemTable(std::shared_ptr<Schema> schema, size_t max_size)
       approximate_memory_usage_(0),
       max_size_(max_size) {}
 
-
-
 common::Result<void> MemTable::Put(const Key& key, const std::unique_ptr<Record>& record) {
     if (key.size() > MAX_KEY_SIZE) {
         return common::Result<void>::failure(common::ErrorCode::InvalidArgument,
@@ -28,8 +26,6 @@ common::Result<void> MemTable::Put(const Key& key, const std::unique_ptr<Record>
     if (approximate_memory_usage_ > max_size_) {
         return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "MemTable is full");
     }
-
-
 
     size_t entry_size = CalculateEntrySize(key, *record);
 
@@ -76,8 +72,6 @@ common::Result<void> MemTable::Delete(const Key& key) {
     auto tombstone = std::make_unique<Record>(schema_);  // Empty record represents a tombstone
     size_t entry_size = CalculateEntrySize(key, *tombstone);
 
-
-
     {
         std::lock_guard<std::mutex> lock(mutex_);
         // Check if we're replacing an existing entry
@@ -101,8 +95,6 @@ common::Result<void> MemTable::Delete(const Key& key) {
 common::Result<void> MemTable::UpdateColumn(const Key& key,
                                             const std::string& column_name,
                                             const common::DataChunk& value) {
-
-
     std::lock_guard<std::mutex> lock(mutex_);
 
     int col_idx = schema_->GetColumnIndex(column_name);
@@ -177,6 +169,11 @@ common::Result<common::DataChunk> MemTable::GetColumn(const Key& key, const std:
 
 size_t MemTable::ApproximateMemoryUsage() const {
     return approximate_memory_usage_.load(std::memory_order_relaxed);
+}
+
+size_t MemTable::GetEntryCount() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return table_->Size();
 }
 
 bool MemTable::ShouldFlush() const {

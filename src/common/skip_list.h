@@ -1,14 +1,15 @@
 #pragma once
 
-#include <memory>
-#include <random>
 #include <atomic>
 #include <cassert>
+#include <memory>
+#include <random>
+
 #include "common/data_chunk.h"
 
 namespace pond::common {
 
-template<typename K, typename V>
+template <typename K, typename V>
 class SkipList {
 private:
     struct Node;
@@ -20,8 +21,7 @@ private:
         const int height;
         std::unique_ptr<NodePtr[]> next;
 
-        Node(const K& k, V&& v, int h)
-            : key(k), value(std::move(v)), height(h), next(new NodePtr[h]) {
+        Node(const K& k, V&& v, int h) : key(k), value(std::move(v)), height(h), next(new NodePtr[h]) {
             for (int i = 0; i < h; i++) {
                 next[i] = nullptr;
             }
@@ -36,6 +36,7 @@ private:
     std::random_device rd_;
     std::mt19937 gen_;
     std::uniform_real_distribution<> dis_;
+    std::atomic<size_t> size_{0};  // Track number of elements
 
     int getRandomHeight() {
         int height = 1;
@@ -48,7 +49,7 @@ private:
     Node* findGreaterOrEqual(const K& key, Node** prev) const {
         Node* x = head_;
         int level = max_height_.load(std::memory_order_relaxed) - 1;
-        
+
         while (true) {
             Node* next = x->next[level].load(std::memory_order_acquire);
             if (next && next->key < key) {
@@ -66,12 +67,10 @@ private:
     }
 
 public:
-    explicit SkipList(int max_level = 12)
-        : max_level_(max_level),
-          gen_(rd_()),
-          dis_(0, 1) {
+    explicit SkipList(int max_level = 12) : max_level_(max_level), gen_(rd_()), dis_(0, 1) {
         head_ = new Node(K(), V(), max_level_);
         max_height_.store(1, std::memory_order_relaxed);
+        size_.store(0, std::memory_order_relaxed);
     }
 
     ~SkipList() {
@@ -95,7 +94,7 @@ public:
 
         int height = getRandomHeight();
         int max_height = max_height_.load(std::memory_order_relaxed);
-        
+
         if (height > max_height) {
             for (int i = max_height; i < height; i++) {
                 prev[i] = head_;
@@ -105,10 +104,10 @@ public:
 
         x = new Node(key, std::move(value), height);
         for (int i = 0; i < height; i++) {
-            x->next[i].store(prev[i]->next[i].load(std::memory_order_relaxed),
-                           std::memory_order_relaxed);
+            x->next[i].store(prev[i]->next[i].load(std::memory_order_relaxed), std::memory_order_relaxed);
             prev[i]->next[i].store(x, std::memory_order_release);
         }
+        size_.fetch_add(1, std::memory_order_relaxed);
     }
 
     bool Contains(const K& key) const {
@@ -125,6 +124,12 @@ public:
         return false;
     }
 
+    /**
+     * Returns the number of elements in the skip list.
+     * @return The number of elements in the skip list.
+     */
+    [[nodiscard]] size_t Size() const { return size_.load(std::memory_order_relaxed); }
+
     class Iterator {
     private:
         const SkipList* list_;
@@ -138,20 +143,16 @@ public:
         const K& key() const { return node_->key; }
         const V& value() const { return node_->value; }
         V& value() { return node_->value; }
-        
+
         void Next() {
             assert(Valid());
             node_ = node_->next[0].load(std::memory_order_acquire);
         }
 
-        void Seek(const K& target) {
-            node_ = list_->findGreaterOrEqual(target, nullptr);
-        }
+        void Seek(const K& target) { node_ = list_->findGreaterOrEqual(target, nullptr); }
     };
 
-    Iterator* NewIterator() const {
-        return new Iterator(this);
-    }
+    Iterator* NewIterator() const { return new Iterator(this); }
 };
 
-} // namespace pond::common
+}  // namespace pond::common

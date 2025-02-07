@@ -41,6 +41,8 @@ public:
     // Schema access
     const std::shared_ptr<Schema>& schema() const { return schema_; }
 
+    size_t GetEntryCount() const;
+
     // Iterator interface
     class Iterator {
     public:
