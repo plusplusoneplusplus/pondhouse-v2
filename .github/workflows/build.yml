@@ -20,7 +20,6 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y cmake build-essential
-        sudo apt-get install -y libboost-all-dev
         sudo apt-get install -y libxxhash-dev
         sudo apt-get install -y libarrow-dev
         sudo apt-get install -y libparquet-dev
