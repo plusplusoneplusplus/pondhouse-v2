@@ -248,7 +248,75 @@ The `SSTableReader` class provides efficient read access to SSTable files with t
 - File header and footer validation
 - Index block for efficient key lookup
 - Optional bloom filter support for fast key existence checks
-- Data block parsing and validation
+
+## Metadata Tracking
+
+The metadata tracking system maintains a consistent view of the table's state, including SSTable files and their sizes. This is implemented through a Write-Ahead Log (WAL) based state machine.
+
+### TableMetadataEntry
+
+The `TableMetadataEntry` class represents metadata operations:
+
+- **Operation Types**
+  - CreateSSTable: Track new SSTable files
+  - DeleteSSTable: Remove SSTable files
+  - UpdateStats: Update size statistics
+  - FlushMemTable: Track memtable flushes
+  - RotateWAL: Track WAL rotations
+
+- **Features**
+  - Multi-file operation support
+  - Atomic tracking of related file changes
+  - Serialization/deserialization for durability
+
+### TableMetadataStateMachine
+
+The `TableMetadataStateMachine` class manages the table's metadata state:
+
+- **State Management**
+  - Tracks active SSTable files
+  - Maintains total size statistics
+  - Supports checkpointing for recovery
+
+- **Key Features**
+  - WAL-based durability
+  - Crash recovery support
+  - Atomic multi-file operations
+  - Checkpoint-based state recovery
+
+### Usage
+
+```cpp
+// Create metadata state machine
+TableMetadataStateMachine state_machine(fs, "table_metadata");
+state_machine.Open();
+
+// Track SSTable creation
+std::vector<FileInfo> files = {{"file1.sst", 1000}, {"file2.sst", 2000}};
+TableMetadataEntry entry(MetadataOpType::CreateSSTable, files);
+state_machine.Apply(entry.Serialize());
+
+// Get current state
+auto files = state_machine.GetSSTableFiles();
+auto total_size = state_machine.GetTotalSize();
+```
+
+### Benefits
+
+1. **Durability**
+   - WAL-based operation logging
+   - Checkpoint-based state persistence
+   - Crash recovery support
+
+2. **Consistency**
+   - Atomic multi-file operations
+   - State machine approach ensures consistency
+   - Safe concurrent access
+
+3. **Extensibility**
+   - Support for future operation types
+   - Foundation for compaction tracking
+   - Flexible state management
 
 #### Key Features
 1. **Random Access**
@@ -403,6 +471,14 @@ The implementation includes comprehensive tests covering:
 - Block builder operations
 - Error handling
 - Edge cases
+
+
+
+
+================================================================================
+
+
+
 
 ## TODO List
 

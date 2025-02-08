@@ -20,6 +20,16 @@ namespace pond::kv {
 // Constants
 static constexpr size_t DEFAULT_WAL_SIZE = 64 * 1024 * 1024;  // 64MB
 
+//
+// Table directory layout:
+// test_table/
+//   L<level>_<file_number>.sst # SSTables, there will be multiple files for each level
+//   test_table.wal.sequence_number # WAL, this is going to be a single file
+//   test_table_metadata/
+//     state.wal # Metadata WAL
+//     state.checkpoint.0 # Metadata checkpoint
+//
+
 class Table {
 public:
     explicit Table(std::shared_ptr<Schema> schema,

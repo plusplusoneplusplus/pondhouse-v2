@@ -269,4 +269,86 @@ TEST_F(TableTest, MetadataRecoveryAfterCrash) {
     }
 }
 
+TEST_F(TableTest, RecoveryFromWALAndSSTables) {
+    // Create a table with small WAL size to trigger rotations and flushes
+    auto table = std::make_unique<Table>(schema_, fs_, "test_table", 1024 * 1024);  // 1MB WAL
+
+    // Phase 1: Create some SSTable files through memtable flushes
+    std::vector<std::string> keys;
+    std::string large_value(100 * 1024, 'x');  // 100KB value to trigger flushes
+    for (int i = 0; i < 20; i++) {
+        std::string key = pond::test::GenerateKey(i);
+        auto record = CreateTestRecord(i, "name" + std::to_string(i), large_value);
+        VERIFY_RESULT(table->Put(key, std::move(record)));
+        keys.push_back(key);
+    }
+
+    // Force a flush to ensure some data is in SSTables
+    VERIFY_RESULT(table->Flush());
+
+    // Phase 2: Add more records that will stay in WAL/memtable
+    std::vector<std::string> recent_keys;
+    for (int i = 20; i < 30; i++) {
+        std::string key = pond::test::GenerateKey(i);
+        auto record = CreateTestRecord(i, "name" + std::to_string(i), "value" + std::to_string(i));
+        VERIFY_RESULT(table->Put(key, std::move(record)));
+        recent_keys.push_back(key);
+    }
+
+    // Verify metadata files were created
+    EXPECT_TRUE(fs_->exists("test_table_metadata"));
+    EXPECT_TRUE(fs_->exists("test_table_metadata/state.wal"));
+
+    // Create a new table instance and recover
+    auto recovered_table = std::make_unique<Table>(schema_, fs_, "test_table", 1024 * 1024);
+    VERIFY_RESULT(recovered_table->Recover());
+
+    // Verify all records from SSTables are accessible
+    for (const auto& key : keys) {
+        auto result = recovered_table->Get(key);
+        VERIFY_RESULT(result);
+        auto& record = result.value();
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+    }
+
+    // Verify all records from WAL/memtable are accessible
+    for (const auto& key : recent_keys) {
+        auto result = recovered_table->Get(key);
+        VERIFY_RESULT(result);
+        auto& record = result.value();
+        int id = std::stoi(key.substr(3));
+        EXPECT_EQ(record->Get<int32_t>(0).value(), id);
+        EXPECT_EQ(record->Get<std::string>(1).value(), "name" + std::to_string(id));
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value(),
+                  common::DataChunk::fromString("value" + std::to_string(id)));
+    }
+
+    // Verify metadata state is correct
+    auto metadata_path = "test_table_metadata";
+    EXPECT_TRUE(fs_->exists(metadata_path));
+
+    auto data_path = "test_table";
+    // Verify SSTable files exist
+    auto list_result = fs_->list(data_path);
+    VERIFY_RESULT(list_result);
+    bool found_sstable = false;
+    for (const auto& file : list_result.value()) {
+        if (file.find("L0_") != std::string::npos && file.ends_with(".sst")) {
+            found_sstable = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_sstable) << "No SSTable files found after recovery";
+
+    // Verify we can still write after recovery
+    auto new_record = CreateTestRecord(100, "post_recovery", "value");
+    VERIFY_RESULT(recovered_table->Put("post_recovery_key", std::move(new_record)));
+
+    auto get_result = recovered_table->Get("post_recovery_key");
+    VERIFY_RESULT(get_result);
+    EXPECT_EQ(get_result.value()->Get<int32_t>(0).value(), 100);
+    EXPECT_EQ(get_result.value()->Get<std::string>(1).value(), "post_recovery");
+    EXPECT_EQ(get_result.value()->Get<common::DataChunk>(2).value(), common::DataChunk::fromString("value"));
+}
+
 }  // namespace pond::kv

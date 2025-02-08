@@ -53,7 +53,10 @@ protected:
 TEST_F(SSTableManagerTest, BasicOperations) {
     // Create and flush a MemTable
     auto memtable = CreateTestMemTable(0, 100);
-    VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    auto result = manager_->CreateSSTableFromMemTable(*memtable);
+    VERIFY_RESULT(result);
+    EXPECT_FALSE(result.value().name.empty());
+    EXPECT_GT(result.value().size, 0);
 
     // Verify stats
     auto stats = manager_->GetStats();
@@ -70,16 +73,19 @@ TEST_F(SSTableManagerTest, BasicOperations) {
     }
 
     // Try non-existent key
-    auto result = manager_->Get(pond::test::GenerateKey(100));
-    ASSERT_FALSE(result.ok());
-    EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+    auto get_result = manager_->Get(pond::test::GenerateKey(100));
+    ASSERT_FALSE(get_result.ok());
+    EXPECT_EQ(get_result.error().code(), ErrorCode::NotFound);
 }
 
 TEST_F(SSTableManagerTest, MultipleL0Files) {
     // Create multiple L0 files
     for (size_t i = 0; i < 3; i++) {
         auto memtable = CreateTestMemTable(i * 100, 100);
-        ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
+        auto result = manager_->CreateSSTableFromMemTable(*memtable);
+        VERIFY_RESULT(result);
+        EXPECT_FALSE(result.value().name.empty());
+        EXPECT_GT(result.value().size, 0);
     }
 
     // Verify stats
@@ -113,9 +119,12 @@ TEST_F(SSTableManagerTest, EmptyDirectory) {
 
 TEST_F(SSTableManagerTest, DirectoryRecovery) {
     // Create some initial files
+    std::vector<FileInfo> created_files;
     for (size_t i = 0; i < 2; i++) {
         auto memtable = CreateTestMemTable(i * 100, 100);
-        ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
+        auto result = manager_->CreateSSTableFromMemTable(*memtable);
+        VERIFY_RESULT(result);
+        created_files.push_back(result.value());
     }
 
     // Create new manager instance pointing to same directory

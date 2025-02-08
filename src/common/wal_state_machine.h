@@ -292,6 +292,12 @@ private:
             return Result<void>::failure(close_result.error());
         }
 
+        // Delete the old WAL file since we're rotating to a new one
+        auto delete_result = fs_->deleteFiles({GetWALPath()});
+        if (!delete_result.ok()) {
+            return Result<void>::failure(delete_result.error());
+        }
+
         auto open_result = wal_.open(GetWALPath(), false);
         if (!open_result.ok()) {
             return Result<void>::failure(open_result.error());

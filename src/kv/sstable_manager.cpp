@@ -83,7 +83,7 @@ public:
         return common::Result<common::DataChunk>::failure(common::ErrorCode::NotFound, "Key not found");
     }
 
-    common::Result<bool> CreateSSTableFromMemTable(const MemTable& memtable) {
+    common::Result<FileInfo> CreateSSTableFromMemTable(const MemTable& memtable) {
         std::unique_lock<std::shared_mutex> lock(mutex_);
 
         // Get next file number for L0
@@ -104,7 +104,7 @@ public:
             auto value = record.get().Serialize();
             auto result = writer.Add(key, value);
             if (!result.ok()) {
-                return common::Result<bool>::failure(result.error());
+                return common::Result<FileInfo>::failure(result.error());
             }
             iter->Next();
         }
@@ -112,7 +112,13 @@ public:
         // Finish writing
         auto result = writer.Finish();
         if (!result.ok()) {
-            return result;
+            return common::Result<FileInfo>::failure(result.error());
+        }
+
+        // Get file size
+        auto size_result = fs_->size(fs_->openFile(file_path).value());
+        if (!size_result.ok()) {
+            return common::Result<FileInfo>::failure(size_result.error());
         }
 
         // Add to L0 tables
@@ -122,7 +128,9 @@ public:
         // Update statistics
         UpdateStats();
 
-        return common::Result<bool>::success(true);
+        // Return file info
+        FileInfo file_info{MakeSSTableFileName(0, file_number), size_result.value()};
+        return common::Result<FileInfo>::success(file_info);
     }
 
     Stats GetStats() const {
@@ -234,7 +242,7 @@ common::Result<common::DataChunk> SSTableManager::Get(const std::string& key) {
     return impl_->Get(key);
 }
 
-common::Result<bool> SSTableManager::CreateSSTableFromMemTable(const MemTable& memtable) {
+common::Result<FileInfo> SSTableManager::CreateSSTableFromMemTable(const MemTable& memtable) {
     return impl_->CreateSSTableFromMemTable(memtable);
 }
 

@@ -12,6 +12,7 @@
 #include "kv/sstable_cache.h"
 #include "kv/sstable_reader.h"
 #include "kv/sstable_writer.h"
+#include "kv/table_metadata.h"
 
 namespace pond::kv {
 
@@ -75,9 +76,9 @@ public:
     /**
      * Create a new SSTable from a MemTable.
      * @param memtable The MemTable to flush
-     * @return Result<bool> indicating success
+     * @return Result<FileInfo> containing the created SSTable's information
      */
-    [[nodiscard]] common::Result<bool> CreateSSTableFromMemTable(const MemTable& memtable);
+    [[nodiscard]] common::Result<FileInfo> CreateSSTableFromMemTable(const MemTable& memtable);
 
     /**
      * Get current statistics about the SSTable organization.
