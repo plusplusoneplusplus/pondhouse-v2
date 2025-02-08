@@ -61,8 +61,8 @@ public:
         }
     };
 
-    static constexpr std::string WAL_FILE_NAME = "state.wal";
-    static constexpr std::string CHECKPOINT_FILE_PREFIX = "state.checkpoint.";
+    static constexpr const char* WAL_FILE_NAME = "state.wal";
+    static constexpr const char* CHECKPOINT_FILE_PREFIX = "state.checkpoint.";
 
     WalStateMachine(std::shared_ptr<IAppendOnlyFileSystem> fs,
                     const std::string& dir_path,
