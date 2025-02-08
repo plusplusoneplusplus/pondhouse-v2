@@ -200,7 +200,7 @@ public:
 
     // Finalize and get filter block with footer
     std::vector<uint8_t> Finish() {
-        auto result = filter_.serialize();
+        auto result = filter_.Serialize();
         if (!result.ok()) {
             // Return empty block on error
             return {};

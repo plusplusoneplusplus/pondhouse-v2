@@ -171,7 +171,7 @@ public:
             }
 
             auto filter_result_2 =
-                common::BloomFilter::deserialize(common::DataChunk(filter_data.data(), filter_footer.filter_size));
+                common::BloomFilter::Deserialize(common::DataChunk(filter_data.data(), filter_footer.filter_size));
             if (!filter_result_2.ok()) {
                 return common::Result<bool>::failure(filter_result_2.error());
             }
@@ -289,6 +289,29 @@ public:
         return common::Result<Metadata>::success(metadata);
     }
 
+    common::Result<std::unique_ptr<common::BloomFilter>> GetBloomFilter() const {
+        if (!header_.HasFilter()) {
+            return common::Result<std::unique_ptr<common::BloomFilter>>::failure(
+                common::ErrorCode::NotFound, "SSTable does not have a bloom filter");
+        }
+
+        // Read filter block
+        auto filter_data = fs_->read(file_handle_, footer_.filter_block_offset, footer_.filter_block_size);
+        if (!filter_data.ok()) {
+            return common::Result<std::unique_ptr<common::BloomFilter>>::failure(filter_data.error());
+        }
+
+        // Deserialize filter
+        auto filter_result = common::BloomFilter::Deserialize(filter_data.value());
+        if (!filter_result.ok()) {
+            return common::Result<std::unique_ptr<common::BloomFilter>>::failure(common::ErrorCode::InvalidArgument,
+                                                                                 "Failed to deserialize bloom filter");
+        }
+
+        return common::Result<std::unique_ptr<common::BloomFilter>>::success(
+            std::make_unique<common::BloomFilter>(std::move(filter_result).value()));
+    }
+
     struct IndexEntry {
         std::string largest_key;
         uint64_t offset;
@@ -356,6 +379,14 @@ const std::string& SSTableReader::GetLargestKey() const {
 
 common::Result<SSTableReader::Metadata> SSTableReader::GetMetadata() const {
     return impl_->GetMetadata();
+}
+
+common::Result<std::unique_ptr<common::BloomFilter>> SSTableReader::GetBloomFilter() const {
+    if (!impl_) {
+        return common::Result<std::unique_ptr<common::BloomFilter>>::failure(common::ErrorCode::InvalidOperation,
+                                                                             "Reader not initialized");
+    }
+    return impl_->GetBloomFilter();
 }
 
 class SSTableReader::Iterator::Impl {

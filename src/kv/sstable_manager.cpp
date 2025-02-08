@@ -41,6 +41,11 @@ public:
 
         // Search L0 tables first (newest to oldest)
         for (auto it = sstables_[0].rbegin(); it != sstables_[0].rend(); ++it) {
+            // Check metadata cache first
+            if (!metadata_cache_.MayContainKey(0, *it, key)) {
+                continue;  // Skip this file if metadata indicates key cannot exist
+            }
+
             auto reader = std::make_shared<SSTableReader>(fs_, GetTablePath(0, *it));
             auto open_result = reader->Open();
             if (!open_result.ok()) {
@@ -59,14 +64,14 @@ public:
         // Search other levels (each level has non-overlapping ranges)
         for (size_t level = 1; level < sstables_.size(); level++) {
             for (const auto& file_number : sstables_[level]) {
+                // Check metadata cache first
+                if (!metadata_cache_.MayContainKey(level, file_number, key)) {
+                    continue;  // Skip this file if metadata indicates key cannot exist
+                }
+
                 auto reader = std::make_shared<SSTableReader>(fs_, GetTablePath(level, file_number));
                 auto open_result = reader->Open();
                 if (!open_result.ok()) {
-                    continue;
-                }
-
-                // Check key range first
-                if (key < reader->GetSmallestKey() || key > reader->GetLargestKey()) {
                     continue;
                 }
 
@@ -96,16 +101,27 @@ public:
         // Enable bloom filter with estimated number of entries
         writer.EnableFilter(memtable.GetEntryCount());
 
+        // Track smallest and largest keys
+        std::string smallest_key;
+        std::string largest_key;
+        size_t entry_count = 0;
+
         // Write entries from MemTable
         auto iter = memtable.NewIterator();
         while (iter->Valid()) {
             auto key = iter->key().value();
+            if (smallest_key.empty()) {
+                smallest_key = key;
+            }
+            largest_key = key;
+
             auto record = iter->record().value();
             auto value = record.get().Serialize();
             auto result = writer.Add(key, value);
             if (!result.ok()) {
                 return common::Result<FileInfo>::failure(result.error());
             }
+            entry_count++;
             iter->Next();
         }
 
@@ -119,6 +135,23 @@ public:
         auto size_result = fs_->size(fs_->openFile(file_path).value());
         if (!size_result.ok()) {
             return common::Result<FileInfo>::failure(size_result.error());
+        }
+
+        // Create metadata for the new SSTable
+        auto reader = std::make_shared<SSTableReader>(fs_, file_path);
+        auto open_result = reader->Open();
+        if (open_result.ok()) {
+            auto filter_result = reader->GetBloomFilter();
+            if (filter_result.ok()) {
+                metadata_cache_.AddTable(0,
+                                         file_number,
+                                         SSTableMetadata(file_path,
+                                                         smallest_key,
+                                                         largest_key,
+                                                         size_result.value(),
+                                                         std::move(filter_result).value(),
+                                                         entry_count));
+            }
         }
 
         // Add to L0 tables
@@ -223,6 +256,7 @@ private:
     std::string base_dir_;
     Config config_;
     SSTableCache cache_;
+    MetadataCache metadata_cache_;
 
     // Protected by mutex_
     mutable std::shared_mutex mutex_;

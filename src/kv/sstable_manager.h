@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -108,6 +109,96 @@ public:
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
+};
+
+// SSTable metadata for quick filtering
+struct SSTableMetadata {
+    std::string file_path;
+    std::string smallest_key;
+    std::string largest_key;
+    size_t file_size;
+    std::unique_ptr<common::BloomFilter> filter;
+    size_t entry_count;
+
+    SSTableMetadata() = default;
+    SSTableMetadata(const std::string& path,
+                    const std::string& min_key,
+                    const std::string& max_key,
+                    size_t size,
+                    std::unique_ptr<common::BloomFilter> f,
+                    size_t count)
+        : file_path(path),
+          smallest_key(min_key),
+          largest_key(max_key),
+          file_size(size),
+          filter(std::move(f)),
+          entry_count(count) {}
+};
+
+// Cache for SSTable metadata
+class MetadataCache {
+public:
+    MetadataCache() = default;
+
+    // Add metadata for a new SSTable
+    void AddTable(size_t level, size_t file_number, SSTableMetadata metadata) {
+        std::lock_guard<std::shared_mutex> lock(mutex_);
+        metadata_[level][file_number] = std::move(metadata);
+    }
+
+    // Remove metadata for a deleted SSTable
+    void RemoveTable(size_t level, size_t file_number) {
+        std::lock_guard<std::shared_mutex> lock(mutex_);
+        auto it = metadata_.find(level);
+        if (it != metadata_.end()) {
+            it->second.erase(file_number);
+        }
+    }
+
+    // Get metadata for a specific SSTable
+    std::optional<const SSTableMetadata*> GetMetadata(size_t level, size_t file_number) const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        auto level_it = metadata_.find(level);
+        if (level_it != metadata_.end()) {
+            auto file_it = level_it->second.find(file_number);
+            if (file_it != level_it->second.end()) {
+                return &file_it->second;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Check if a key might exist in a specific SSTable
+    bool MayContainKey(size_t level, size_t file_number, const std::string& key) const {
+        auto metadata = GetMetadata(level, file_number);
+        if (!metadata) {
+            return true;  // Conservative approach: if no metadata, assume it might contain the key
+        }
+
+        const auto& meta = *metadata.value();
+
+        // Check key range first (quick rejection)
+        if (key < meta.smallest_key || key > meta.largest_key) {
+            return false;
+        }
+
+        // Check bloom filter if available
+        if (meta.filter) {
+            return meta.filter->mightContain(common::DataChunk::fromString(key));
+        }
+
+        return true;
+    }
+
+    // Clear all cached metadata
+    void Clear() {
+        std::lock_guard<std::shared_mutex> lock(mutex_);
+        metadata_.clear();
+    }
+
+private:
+    mutable std::shared_mutex mutex_;
+    std::unordered_map<size_t, std::unordered_map<size_t, SSTableMetadata>> metadata_;
 };
 
 }  // namespace pond::kv

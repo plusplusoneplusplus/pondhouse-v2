@@ -80,7 +80,7 @@ size_t BloomFilter::getPopCount() const {
     return std::count(bits_.begin(), bits_.end(), true);
 }
 
-Result<DataChunk> BloomFilter::serialize() const {
+Result<DataChunk> BloomFilter::Serialize() const {
     // Calculate total size needed
     size_t header_size =
         sizeof(MAGIC_NUMBER) + sizeof(VERSION) + sizeof(size_t) * 3;  // bits size, num hash functions, items count
@@ -114,7 +114,7 @@ Result<DataChunk> BloomFilter::serialize() const {
     return Result<DataChunk>::success(std::move(chunk));
 }
 
-Result<BloomFilter> BloomFilter::deserialize(const DataChunk& data) {
+Result<BloomFilter> BloomFilter::Deserialize(const DataChunk& data) {
     if (data.size() < sizeof(MAGIC_NUMBER) + sizeof(VERSION) + sizeof(size_t) * 3) {
         return Result<BloomFilter>::failure(ErrorCode::BloomFilterInvalidDataSize,
                                             "Data too small for valid bloom filter");

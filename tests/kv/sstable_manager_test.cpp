@@ -242,4 +242,154 @@ TEST_F(SSTableManagerTest, StressTest) {
     EXPECT_GT(stats.total_bytes, 0);
 }
 
+TEST_F(SSTableManagerTest, MetadataCacheBasic) {
+    // Create a MemTable with test data
+    auto memtable = CreateTestMemTable(0, 100);
+
+    // Create SSTable
+    auto result = manager_->CreateSSTableFromMemTable(*memtable);
+    VERIFY_RESULT(result);
+
+    // Test key lookups that should be filtered by metadata cache
+    // Key before range
+    auto before_range = manager_->Get(pond::test::GenerateKey(-1));
+    ASSERT_FALSE(before_range.ok());
+    EXPECT_EQ(before_range.error().code(), ErrorCode::NotFound);
+
+    // Key after range
+    auto after_range = manager_->Get(pond::test::GenerateKey(100));
+    ASSERT_FALSE(after_range.ok());
+    EXPECT_EQ(after_range.error().code(), ErrorCode::NotFound);
+
+    // Key within range should be found
+    auto within_range = manager_->Get(pond::test::GenerateKey(50));
+    ASSERT_TRUE(within_range.ok());
+    EXPECT_EQ(ToRecord(within_range.value())->Get<std::string>(0).value(), "value50");
+}
+
+TEST_F(SSTableManagerTest, MetadataCacheMultipleLevels) {
+    // Create multiple SSTables at different levels with non-overlapping ranges
+    std::vector<std::pair<size_t, size_t>> ranges = {
+        {0, 100},    // First SSTable
+        {200, 300},  // Second SSTable
+        {400, 500}   // Third SSTable
+    };
+
+    for (const auto& range : ranges) {
+        auto memtable = CreateTestMemTable(range.first, range.second - range.first);
+        ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
+    }
+
+    // Test key lookups that should be filtered by metadata cache
+    // Keys in gaps between ranges should be quickly rejected
+    std::vector<size_t> gap_keys = {150, 350};
+    for (size_t key : gap_keys) {
+        auto result = manager_->Get(pond::test::GenerateKey(key));
+        ASSERT_FALSE(result.ok()) << "Key " << key << " should not be found";
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+    }
+
+    // Keys within ranges should be found
+    std::vector<size_t> existing_keys = {50, 250, 450};
+    for (size_t key : existing_keys) {
+        auto result = manager_->Get(pond::test::GenerateKey(key));
+        ASSERT_TRUE(result.ok()) << "Key " << key << " should be found";
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(key % 100));
+    }
+}
+
+TEST_F(SSTableManagerTest, MetadataCacheBloomFilter) {
+    // Create a MemTable with specific test data
+    auto memtable = std::make_unique<MemTable>(schema_);
+    std::vector<std::string> test_keys = {"apple", "banana", "cherry", "date"};
+
+    for (size_t i = 0; i < test_keys.size(); i++) {
+        auto record = std::make_unique<Record>(schema_);
+        record->Set(0, "value" + std::to_string(i));
+        ASSERT_TRUE(memtable->Put(test_keys[i], record).ok());
+    }
+
+    // Create SSTable with bloom filter
+    ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
+
+    // Test keys that should be filtered out by the bloom filter
+    std::vector<std::string> non_existent_keys = {"grape", "kiwi", "lemon", "mango"};
+    for (const auto& key : non_existent_keys) {
+        auto result = manager_->Get(key);
+        ASSERT_FALSE(result.ok()) << "Key " << key << " should not be found";
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+    }
+
+    // Verify existing keys are still accessible
+    for (size_t i = 0; i < test_keys.size(); i++) {
+        auto result = manager_->Get(test_keys[i]);
+        ASSERT_TRUE(result.ok()) << "Key " << test_keys[i] << " should be found";
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+    }
+}
+
+TEST_F(SSTableManagerTest, MetadataCacheConcurrentAccess) {
+    // Create initial SSTable
+    auto memtable = CreateTestMemTable(0, 1000);
+    ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
+
+    // Start multiple threads doing concurrent reads
+    std::vector<std::thread> threads;
+    std::atomic<size_t> cache_hits{0};
+    std::atomic<size_t> total_ops{0};
+
+    for (int i = 0; i < 4; i++) {
+        threads.emplace_back([this, &cache_hits, &total_ops]() {
+            for (int j = 0; j < 250; j++) {
+                total_ops++;
+
+                // Try to get a mix of existing and non-existing keys
+                size_t key_num = rand() % 2000;  // Half will be non-existent
+                auto result = manager_->Get(pond::test::GenerateKey(key_num));
+
+                if (key_num < 1000) {
+                    // Should exist
+                    ASSERT_TRUE(result.ok()) << "Key " << key_num << " should exist";
+                    cache_hits++;
+                } else {
+                    // Should not exist
+                    ASSERT_FALSE(result.ok()) << "Key " << key_num << " should not exist";
+                }
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Verify that we had a reasonable number of cache hits
+    EXPECT_GT(cache_hits, 0);
+    EXPECT_EQ(total_ops, 1000);  // 4 threads * 250 ops
+}
+
+TEST_F(SSTableManagerTest, MetadataCacheRecovery) {
+    // Create initial SSTable
+    {
+        auto memtable = CreateTestMemTable(0, 100);
+        ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
+    }
+
+    // Create new manager instance pointing to same directory
+    auto recovered_manager = std::make_unique<SSTableManager>(fs_, "test_db");
+
+    // Verify metadata cache is working in recovered instance
+    auto before_range = recovered_manager->Get(pond::test::GenerateKey(-1));
+    ASSERT_FALSE(before_range.ok());
+    EXPECT_EQ(before_range.error().code(), ErrorCode::NotFound);
+
+    auto within_range = recovered_manager->Get(pond::test::GenerateKey(50));
+    ASSERT_TRUE(within_range.ok());
+    EXPECT_EQ(ToRecord(within_range.value())->Get<std::string>(0).value(), "value50");
+
+    auto after_range = recovered_manager->Get(pond::test::GenerateKey(100));
+    ASSERT_FALSE(after_range.ok());
+    EXPECT_EQ(after_range.error().code(), ErrorCode::NotFound);
+}
+
 }  // namespace

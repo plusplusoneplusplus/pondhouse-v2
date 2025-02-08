@@ -73,8 +73,7 @@ TEST_F(BloomFilterTest, FalsePositiveRate) {
 
     double actual_fp_rate = static_cast<double>(false_positives) / static_cast<double>(num_tests);
 
-    EXPECT_LT(actual_fp_rate, target_fp_rate * 2)
-        << "False positive rate should be reasonably close to target";
+    EXPECT_LT(actual_fp_rate, target_fp_rate * 2) << "False positive rate should be reasonably close to target";
 }
 
 TEST_F(BloomFilterTest, Serialization) {
@@ -88,11 +87,11 @@ TEST_F(BloomFilterTest, Serialization) {
     }
 
     // Serialize
-    auto serialized_result = original.serialize();
+    auto serialized_result = original.Serialize();
     EXPECT_TRUE(serialized_result.ok()) << "Serialization should succeed";
 
     // Deserialize
-    auto deserialized_result = BloomFilter::deserialize(serialized_result.value());
+    auto deserialized_result = BloomFilter::Deserialize(serialized_result.value());
     EXPECT_TRUE(deserialized_result.ok()) << "Deserialization should succeed";
 
     auto& deserialized = deserialized_result.value();
@@ -104,13 +103,12 @@ TEST_F(BloomFilterTest, Serialization) {
 
     // Verify contents
     for (const auto& item : items) {
-        EXPECT_TRUE(deserialized.mightContain(item))
-            << "Deserialized filter should contain all original items";
+        EXPECT_TRUE(deserialized.mightContain(item)) << "Deserialized filter should contain all original items";
     }
 
     // Test invalid deserialization
     DataChunk invalid_data(10);  // Too small
-    auto invalid_result = BloomFilter::deserialize(invalid_data);
+    auto invalid_result = BloomFilter::Deserialize(invalid_data);
     EXPECT_FALSE(invalid_result.ok()) << "Should fail to deserialize invalid data";
 }
 
@@ -132,7 +130,6 @@ TEST_F(BloomFilterTest, OptimalParameters) {
         }
 
         double actual_fp_rate = filter.getFalsePositiveProbability();
-        EXPECT_LE(actual_fp_rate, test_case.fp_rate * 1.5)
-            << "Actual false positive rate should be close to target";
+        EXPECT_LE(actual_fp_rate, test_case.fp_rate * 1.5) << "Actual false positive rate should be close to target";
     }
 }

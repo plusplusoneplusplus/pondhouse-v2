@@ -63,7 +63,7 @@ TEST_F(SSTableFilterTest, FilterBlockWithFooter) {
     EXPECT_EQ(footer.checksum, computed_checksum);
 
     // Verify the filter data works
-    auto filter_result = BloomFilter::deserialize(DataChunk(block_data.data(), footer.filter_size));
+    auto filter_result = BloomFilter::Deserialize(DataChunk(block_data.data(), footer.filter_size));
     ASSERT_TRUE(filter_result.ok());
     auto filter = std::move(filter_result.value());
 
@@ -93,7 +93,7 @@ TEST_F(SSTableFilterTest, FilterBlockBasic) {
     ASSERT_TRUE(footer.Deserialize(footer_data, FilterBlockFooter::kFooterSize));
 
     // Deserialize and verify filter data (without footer)
-    auto result = BloomFilter::deserialize(DataChunk(filter_data.data(), footer.filter_size));
+    auto result = BloomFilter::Deserialize(DataChunk(filter_data.data(), footer.filter_size));
     ASSERT_TRUE(result.ok());
     auto filter = std::move(result.value());
 
@@ -128,7 +128,7 @@ TEST_F(SSTableFilterTest, FilterBlockMultipleBlocks) {
     ASSERT_TRUE(footer.Deserialize(footer_data, FilterBlockFooter::kFooterSize));
 
     // Deserialize and verify filter data (without footer)
-    auto result = BloomFilter::deserialize(DataChunk(filter_data.data(), footer.filter_size));
+    auto result = BloomFilter::Deserialize(DataChunk(filter_data.data(), footer.filter_size));
     ASSERT_TRUE(result.ok());
     auto filter = std::move(result.value());
 
@@ -180,7 +180,7 @@ TEST_F(SSTableFilterTest, FilterBlockReset) {
     ASSERT_TRUE(footer.Deserialize(footer_data, FilterBlockFooter::kFooterSize));
 
     // Deserialize and verify filter data (without footer)
-    auto result = BloomFilter::deserialize(DataChunk(filter_data.data(), footer.filter_size));
+    auto result = BloomFilter::Deserialize(DataChunk(filter_data.data(), footer.filter_size));
     ASSERT_TRUE(result.ok());
     auto filter = std::move(result.value());
 

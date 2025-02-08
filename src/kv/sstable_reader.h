@@ -85,6 +85,12 @@ public:
     [[nodiscard]] const std::string& GetLargestKey() const;
 
     /**
+     * Get the bloom filter from the SSTable if available.
+     * @return Result<unique_ptr<BloomFilter>> containing the filter if present
+     */
+    [[nodiscard]] common::Result<std::unique_ptr<common::BloomFilter>> GetBloomFilter() const;
+
+    /**
      * Get the metadata information from the SSTable.
      * Must be called after Open().
      * @return Result<Metadata> containing the metadata if present

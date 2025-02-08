@@ -36,8 +36,8 @@ public:
     [[nodiscard]] size_t getPopCount() const;
 
     // Serialization
-    [[nodiscard]] common::Result<common::DataChunk> serialize() const;
-    [[nodiscard]] static common::Result<BloomFilter> deserialize(const common::DataChunk& data);
+    [[nodiscard]] common::Result<common::DataChunk> Serialize() const;
+    [[nodiscard]] static common::Result<BloomFilter> Deserialize(const common::DataChunk& data);
 
     // Get filter parameters
     [[nodiscard]] size_t getBitSize() const { return bits_.size(); }
