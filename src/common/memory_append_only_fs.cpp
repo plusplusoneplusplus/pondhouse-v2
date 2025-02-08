@@ -71,8 +71,9 @@ std::pair<MemoryAppendOnlyFileSystem::DirectoryData*, std::string> MemoryAppendO
                 return {nullptr, ""};
             }
             auto new_dir = std::make_unique<DirectoryData>();
-            current = new_dir.get();
+            auto next = new_dir.get();
             current->subdirs[part] = std::move(new_dir);
+            current = next;
         } else {
             current = it->second.get();
         }
@@ -314,7 +315,7 @@ Result<std::vector<std::string>> MemoryAppendOnlyFileSystem::list(const std::str
         auto it = dir->subdirs.find(name);
         if (it == dir->subdirs.end()) {
             return Result<std::vector<std::string>>::failure(common::ErrorCode::DirectoryNotFound,
-                                                         "Directory not found: " + path);
+                                                             "Directory not found: " + path);
         }
         dir = it->second.get();
     }

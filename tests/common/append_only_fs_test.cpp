@@ -1,39 +1,35 @@
-#include <gtest/gtest.h>
+#include "common/append_only_fs.h"
+
 #include <filesystem>
 #include <string>
 #include <vector>
 
-#include "common/append_only_fs.h"
-#include "common/memory_append_only_fs.h"
+#include <gtest/gtest.h>
+
 #include "common/data_chunk.h"
+#include "common/memory_append_only_fs.h"
 #include "test_helper.h"
 
 using namespace pond::common;
 
 class AppendOnlyFSTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cleanupTestFiles();
-    }
+    void SetUp() override { cleanupTestFiles(); }
 
-    void TearDown() override {
-        cleanupTestFiles();
-    }
+    void TearDown() override { cleanupTestFiles(); }
 
     void cleanupTestFiles() {
-        const std::vector<std::string> testFiles = {
-            "test.dat",
-            "test_append.dat",
-            "test_rename1.dat",
-            "test_rename2.dat",
-            "test_rename1_new.dat",
-            "test_rename2_new.dat",
-            "test_dir/file1.txt",
-            "test_dir/file2.txt",
-            "test_dir/subdir/file3.txt",
-            "nonexistent.txt",
-            "test.txt"
-        };
+        const std::vector<std::string> testFiles = {"test.dat",
+                                                    "test_append.dat",
+                                                    "test_rename1.dat",
+                                                    "test_rename2.dat",
+                                                    "test_rename1_new.dat",
+                                                    "test_rename2_new.dat",
+                                                    "test_dir/file1.txt",
+                                                    "test_dir/file2.txt",
+                                                    "test_dir/subdir/file3.txt",
+                                                    "nonexistent.txt",
+                                                    "test.txt"};
 
         for (const auto& file : testFiles) {
             if (std::filesystem::exists(file)) {
@@ -41,11 +37,7 @@ protected:
             }
         }
 
-        const std::vector<std::string> testDirs = {
-            "test_dir/subdir",
-            "test_dir",
-            "empty_dir"
-        };
+        const std::vector<std::string> testDirs = {"test_dir/subdir", "test_dir", "empty_dir"};
 
         for (const auto& dir : testDirs) {
             if (std::filesystem::exists(dir)) {
@@ -67,8 +59,7 @@ protected:
     }
 };
 
-class AppendOnlyFSTypeTest : public AppendOnlyFSTest,
-                            public ::testing::WithParamInterface<std::string> {
+class AppendOnlyFSTypeTest : public AppendOnlyFSTest, public ::testing::WithParamInterface<std::string> {
 protected:
     std::unique_ptr<IAppendOnlyFileSystem> createFS() {
         const std::string& type = GetParam();
@@ -155,7 +146,8 @@ TEST_P(AppendOnlyFSTypeTest, DirectoryOperations) {
     auto result = fs->openFile("test_dir/file1.txt", true);
     VERIFY_RESULT_MSG(result, "Failed to create file in directory");
     auto handle = result.value();
-    VERIFY_RESULT_MSG(fs->append(handle, DataChunk::fromString("test content")), "Failed to write to file in directory");
+    VERIFY_RESULT_MSG(fs->append(handle, DataChunk::fromString("test content")),
+                      "Failed to write to file in directory");
     VERIFY_RESULT_MSG(fs->closeFile(handle), "Failed to close file in directory");
 
     // Test directory listing
@@ -167,7 +159,8 @@ TEST_P(AppendOnlyFSTypeTest, DirectoryOperations) {
     result = fs->openFile("test_dir/subdir/file3.txt", true);
     VERIFY_RESULT_MSG(result, "Failed to create file in subdirectory");
     handle = result.value();
-    VERIFY_RESULT_MSG(fs->append(handle, DataChunk::fromString("test content")), "Failed to write to file in subdirectory");
+    VERIFY_RESULT_MSG(fs->append(handle, DataChunk::fromString("test content")),
+                      "Failed to write to file in subdirectory");
     VERIFY_RESULT_MSG(fs->closeFile(handle), "Failed to close file in subdirectory");
 
     // Test recursive directory listing
@@ -192,6 +185,15 @@ TEST_P(AppendOnlyFSTypeTest, DirectoryOperations) {
     ASSERT_FALSE(fs->exists("test_dir_moved")) << "Directory should not exist after deletion";
 }
 
+TEST_P(AppendOnlyFSTypeTest, NestedDirectoryOperations) {
+    auto fs = createFS();
+    ASSERT_NE(fs, nullptr);
+
+    // Create nested directories
+    VERIFY_RESULT_MSG(fs->createDirectory("test_dir/subdir/subsubdir"), "Failed to create nested directory");
+    ASSERT_TRUE(fs->isDirectory("test_dir/subdir/subsubdir")) << "Created nested path should be a directory";
+}
+
 // File Rename Operations Tests
 TEST_P(AppendOnlyFSTypeTest, RenameOperations) {
     auto fs = createFS();
@@ -200,18 +202,16 @@ TEST_P(AppendOnlyFSTypeTest, RenameOperations) {
     // Create test files
     auto handle1 = fs->openFile("test_rename1.dat", true).value();
     auto handle2 = fs->openFile("test_rename2.dat", true).value();
-    
+
     VERIFY_RESULT_MSG(fs->append(handle1, DataChunk::fromString("file1")), "Failed to write to first file");
     VERIFY_RESULT_MSG(fs->append(handle2, DataChunk::fromString("file2")), "Failed to write to second file");
-    
+
     VERIFY_RESULT_MSG(fs->closeFile(handle1), "Failed to close first file");
     VERIFY_RESULT_MSG(fs->closeFile(handle2), "Failed to close second file");
 
     // Test atomic rename
-    std::vector<RenameOperation> renameOps = {
-        {"test_rename1.dat", "test_rename1_new.dat"},
-        {"test_rename2.dat", "test_rename2_new.dat"}
-    };
+    std::vector<RenameOperation> renameOps = {{"test_rename1.dat", "test_rename1_new.dat"},
+                                              {"test_rename2.dat", "test_rename2_new.dat"}};
 
     VERIFY_RESULT_MSG(fs->renameFiles(renameOps), "Atomic rename operation failed");
     ASSERT_FALSE(fs->exists("test_rename1.dat")) << "Original file 1 should not exist";
@@ -220,9 +220,7 @@ TEST_P(AppendOnlyFSTypeTest, RenameOperations) {
     ASSERT_TRUE(fs->exists("test_rename2_new.dat")) << "New file 2 should exist";
 
     // Test rename failure (source doesn't exist)
-    renameOps = {
-        {"nonexistent.dat", "target.dat"}
-    };
+    renameOps = {{"nonexistent.dat", "target.dat"}};
     auto result = fs->renameFiles(renameOps);
     ASSERT_FALSE(result.ok()) << "Rename of non-existent file should fail";
 }
@@ -272,7 +270,8 @@ TEST_F(AppendOnlyFSTest, MemorySpecificBehavior_DuplicateBlock) {
     // Verify total size
     auto sizeResult = fs_explicit->size(handle);
     VERIFY_RESULT_MSG(sizeResult, "Failed to get file size");
-    ASSERT_EQ(sizeResult.value(), data.size() * (2 + 1)) << "Size should reflect duplicated data, additional block for duplicate flag";
+    ASSERT_EQ(sizeResult.value(), data.size() * (2 + 1))
+        << "Size should reflect duplicated data, additional block for duplicate flag";
 
     VERIFY_RESULT_MSG(fs_explicit->closeFile(handle), "Failed to close file");
 }
@@ -291,7 +290,7 @@ TEST_P(AppendOnlyFSTypeTest, OpenNonExistentFile) {
     // Try to open non-existent file with create flag
     result = fs->openFile(path, true);
     ASSERT_TRUE(result.ok());
-    
+
     // Close the file
     auto close_result = fs->closeFile(result.value());
     ASSERT_TRUE(close_result.ok());
@@ -302,7 +301,7 @@ TEST_P(AppendOnlyFSTypeTest, OpenExistingFile) {
 
     auto fs = createFS();
     ASSERT_NE(fs, nullptr);
-    
+
     // Create file first
     auto create_result = fs->openFile(path, true);
     ASSERT_TRUE(create_result.ok());
@@ -311,14 +310,10 @@ TEST_P(AppendOnlyFSTypeTest, OpenExistingFile) {
     // Open existing file without create flag
     auto result = fs->openFile(path, false);
     ASSERT_TRUE(result.ok());
-    
+
     // Close the file
     auto close_result = fs->closeFile(result.value());
     ASSERT_TRUE(close_result.ok());
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    FSTypes,
-    AppendOnlyFSTypeTest,
-    ::testing::Values("local", "memory")
-);
+INSTANTIATE_TEST_SUITE_P(FSTypes, AppendOnlyFSTypeTest, ::testing::Values("local", "memory"));

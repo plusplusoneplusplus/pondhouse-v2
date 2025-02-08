@@ -82,7 +82,7 @@ public:
         }
 
         // Prepare entry data
-        auto entry_data = entry.serialize();
+        auto entry_data = entry.Serialize();
         size_t total_size = detail::HEADER_SIZE + entry_data.size();
 
         common::DataChunk data(total_size);
@@ -180,7 +180,7 @@ public:
             }
 
             T entry;
-            if (!entry.deserialize(entry_data_result.value())) {
+            if (!entry.Deserialize(entry_data_result.value())) {
                 LOG_ERROR("Failed to deserialize entry: LSN=%zu", lsn);
                 return common::Result<std::vector<T>>::failure(ErrorCode::FileCorrupted, "Failed to deserialize entry");
             }
@@ -220,7 +220,7 @@ public:
 
     FileHandle handle() const { return handle_; }
 
-private:
+protected:
     std::shared_ptr<IAppendOnlyFileSystem> fs_;
     FileHandle handle_{INVALID_HANDLE};
     std::atomic<LSN> current_lsn_{0};

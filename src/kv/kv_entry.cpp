@@ -1,6 +1,7 @@
+#include "kv_entry.h"
+
 #include <cstring>
 
-#include "kv_entry.h"
 #include "common/log.h"
 
 using namespace pond::common;
@@ -9,7 +10,7 @@ namespace pond::kv {
 
 // format:
 // | LSN (8B) | TS (8B) | Type (4B) | Key Size (4B) | Key (key_size) | Value Size (4B) | Value (value_size) |
-DataChunk KvEntry::serialize() const {
+DataChunk KvEntry::Serialize() const {
     DataChunk data;
     uint32_t key_size = static_cast<uint32_t>(key.size());
     uint32_t value_size = static_cast<uint32_t>(value.size());
@@ -17,11 +18,11 @@ DataChunk KvEntry::serialize() const {
     data.reserve(sizeof(lsn_) + sizeof(ts) + sizeof(type) + sizeof(key_size) + key_size + sizeof(value_size)
                  + value_size);
 
-    serialize(data);
+    Serialize(data);
     return data;
 }
 
-void KvEntry::serialize(DataChunk& data) const {
+void KvEntry::Serialize(DataChunk& data) const {
     uint32_t key_size = static_cast<uint32_t>(key.size());
     uint32_t value_size = static_cast<uint32_t>(value.size());
 
@@ -34,7 +35,7 @@ void KvEntry::serialize(DataChunk& data) const {
     data.append(value.data(), value_size);
 }
 
-bool KvEntry::deserialize(const DataChunk& data) {
+bool KvEntry::Deserialize(const DataChunk& data) {
     if (data.size() < sizeof(lsn_) + sizeof(ts) + sizeof(type) + sizeof(uint32_t) + sizeof(uint32_t)) {
         return false;
     }
@@ -62,9 +63,9 @@ bool KvEntry::deserialize(const DataChunk& data) {
     return true;
 }
 
-common::Result<std::unique_ptr<ISerializable>> KvEntry::deserializeAsUniquePtr(const DataChunk& data) const {
+common::Result<std::unique_ptr<ISerializable>> KvEntry::DeserializeAsUniquePtr(const DataChunk& data) const {
     std::unique_ptr<ISerializable> entry = std::make_unique<KvEntry>();
-    if (!entry->deserialize(data)) {
+    if (!entry->Deserialize(data)) {
         return common::Result<std::unique_ptr<ISerializable>>::failure(ErrorCode::InvalidArgument,
                                                                        "Failed to deserialize KvEntry");
     }

@@ -70,6 +70,7 @@ add_executable(
     tests/common/uuid_test.cpp
     tests/common/append_only_fs_test.cpp
     tests/common/wal_test.cpp
+    tests/common/wal_state_machine_test.cpp
     tests/common/bplus_tree_test.cpp
     tests/format/parquet/parquet_test.cpp
     tests/kv/record_test.cpp

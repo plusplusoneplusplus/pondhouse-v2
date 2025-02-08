@@ -34,10 +34,10 @@ public:
     KvEntry(key_type k, value_type v, common::LSN seq, common::Timestamp timestamp, EntryType t)
         : WalEntry(seq), key(std::move(k)), value(std::move(v)), ts(timestamp), type(t) {}
 
-    common::DataChunk serialize() const override;
-    void serialize(common::DataChunk& data) const override;
-    bool deserialize(const common::DataChunk& data) override;
-    common::Result<std::unique_ptr<common::ISerializable>> deserializeAsUniquePtr(
+    common::DataChunk Serialize() const override;
+    void Serialize(common::DataChunk& data) const override;
+    bool Deserialize(const common::DataChunk& data) override;
+    common::Result<std::unique_ptr<common::ISerializable>> DeserializeAsUniquePtr(
         const common::DataChunk& data) const override;
 };
 
