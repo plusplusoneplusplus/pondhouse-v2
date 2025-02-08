@@ -23,6 +23,13 @@ Table::Table(std::shared_ptr<Schema> schema,
 
     // Initialize SSTable manager
     sstable_manager_ = std::make_unique<SSTableManager>(fs_, table_name_);
+
+    // Initialize metadata state machine
+    metadata_state_machine_ = std::make_unique<TableMetadataStateMachine>(fs_, table_name_ + "_metadata");
+    auto open_result = metadata_state_machine_->Open();
+    if (!open_result.ok()) {
+        throw std::runtime_error("Failed to open metadata state machine: " + open_result.error().message());
+    }
 }
 
 common::Result<void> Table::Put(const Key& key, std::unique_ptr<Record> record, bool acquire_lock) {
@@ -235,6 +242,11 @@ common::Result<common::LSN> Table::WriteToWAL(KvEntry& entry) {
     return common::Result<common::LSN>::success(entry.lsn());
 }
 
+common::Result<void> Table::TrackMetadataOp(MetadataOpType op_type, const std::vector<FileInfo>& files) {
+    TableMetadataEntry entry(op_type, files);
+    return metadata_state_machine_->Apply(entry.Serialize());
+}
+
 common::Result<void> Table::SwitchMemTable() {
     // Create a new memtable
     auto new_memtable = std::make_unique<MemTable>(schema_);
@@ -245,6 +257,15 @@ common::Result<void> Table::SwitchMemTable() {
         return common::Result<void>::failure(flush_result.error());
     }
 
+    // Track the flush operation in metadata
+    std::vector<FileInfo> files;
+    // TODO: Get the actual file name and size from SSTableManager
+    files.emplace_back("sstable_" + std::to_string(current_wal_sequence_), active_memtable_->GetEntryCount());
+    auto track_result = TrackMetadataOp(MetadataOpType::FlushMemTable, files);
+    if (!track_result.ok()) {
+        return track_result;
+    }
+
     // Switch to new memtable
     active_memtable_ = std::move(new_memtable);
 
@@ -252,6 +273,12 @@ common::Result<void> Table::SwitchMemTable() {
 }
 
 common::Result<void> Table::RotateWAL() {
+    // Track the WAL rotation in metadata
+    auto track_result = TrackMetadataOp(MetadataOpType::RotateWAL);
+    if (!track_result.ok()) {
+        return track_result;
+    }
+
     // Close current WAL
     auto close_result = wal_->close();
     if (!close_result.ok()) {

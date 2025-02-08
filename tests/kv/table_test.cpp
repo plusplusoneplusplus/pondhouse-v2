@@ -199,4 +199,74 @@ TEST_F(TableTest, WALRotation) {
     }
 }
 
+TEST_F(TableTest, MetadataTracking) {
+    // Create a table with small WAL size to trigger rotations
+    auto table = std::make_unique<Table>(schema_, fs_, "test_table", 1024 * 1024);  // 1MB WAL
+
+    // Insert records with large values to trigger memtable flushes and WAL rotations
+    std::string large_value(100 * 1024, 'x');  // 100KB value
+    std::vector<std::string> keys;
+
+    for (int i = 0; i < 20; i++) {
+        std::string key = pond::test::GenerateKey(i);
+        auto record = CreateTestRecord(i, "test" + std::to_string(i), large_value);
+        VERIFY_RESULT(table->Put(key, std::move(record)));
+        keys.push_back(key);
+    }
+
+    // Force a flush
+    VERIFY_RESULT(table->Flush());
+
+    // Create a new table instance and recover
+    auto recovered_table = std::make_unique<Table>(schema_, fs_, "test_table", 1024 * 1024);
+    VERIFY_RESULT(recovered_table->Recover());
+
+    // Verify all records are accessible after recovery
+    for (const auto& key : keys) {
+        auto result = recovered_table->Get(key);
+        VERIFY_RESULT(result);
+        auto& record = result.value();
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+    }
+
+    // Verify metadata wal file exists
+    EXPECT_TRUE(fs_->exists("test_table_metadata"));
+    auto listFileResult = fs_->list("test_table_metadata");
+    VERIFY_RESULT(listFileResult);
+    EXPECT_EQ(listFileResult.value().size(), 1);
+    EXPECT_TRUE(listFileResult.value()[0].starts_with(common::WalStateMachine::WAL_FILE_NAME));
+}
+
+TEST_F(TableTest, MetadataRecoveryAfterCrash) {
+    // First phase: Create and populate table
+    {
+        auto table = std::make_unique<Table>(schema_, fs_, "test_table");
+
+        // Add some records
+        for (int i = 0; i < 10; i++) {
+            auto record = CreateTestRecord(i, "test" + std::to_string(i), "value" + std::to_string(i));
+            VERIFY_RESULT(table->Put(pond::test::GenerateKey(i), std::move(record)));
+        }
+
+        // Force flush to create SSTable
+        VERIFY_RESULT(table->Flush());
+    }
+    // Table is destroyed here, simulating a crash
+
+    // Second phase: Create new table and recover
+    auto recovered_table = std::make_unique<Table>(schema_, fs_, "test_table");
+    VERIFY_RESULT(recovered_table->Recover());
+
+    // Verify records are accessible
+    for (int i = 0; i < 10; i++) {
+        auto result = recovered_table->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT(result);
+        auto& record = result.value();
+        EXPECT_EQ(record->Get<int32_t>(0).value(), i);
+        EXPECT_EQ(record->Get<std::string>(1).value(), "test" + std::to_string(i));
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value(),
+                  common::DataChunk::fromString("value" + std::to_string(i)));
+    }
+}
+
 }  // namespace pond::kv

@@ -61,6 +61,9 @@ public:
         }
     };
 
+    static constexpr std::string WAL_FILE_NAME = "state.wal";
+    static constexpr std::string CHECKPOINT_FILE_PREFIX = "state.checkpoint.";
+
     WalStateMachine(std::shared_ptr<IAppendOnlyFileSystem> fs,
                     const std::string& dir_path,
                     const Config& config = Config::Default())
@@ -297,9 +300,11 @@ private:
         return Result<void>::success();
     }
 
-    std::string GetWALPath() const { return dir_path_ + "/state.wal"; }
+    std::string GetWALPath() const { return dir_path_ + "/" + WAL_FILE_NAME; }
 
-    std::string GetCheckpointPath(LSN lsn) const { return dir_path_ + "/state.checkpoint." + std::to_string(lsn); }
+    std::string GetCheckpointPath(LSN lsn) const {
+        return dir_path_ + "/" + CHECKPOINT_FILE_PREFIX + std::to_string(lsn);
+    }
 
     Result<void> CleanupOldCheckpoints() {
         // List all files in the directory

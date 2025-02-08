@@ -8,10 +8,12 @@
 #include "common/append_only_fs.h"
 #include "common/result.h"
 #include "common/wal.h"
+#include "common/wal_state_machine.h"
 #include "kv/kv_entry.h"
 #include "kv/memtable.h"
 #include "kv/record.h"
 #include "kv/sstable_manager.h"
+#include "kv/table_metadata.h"
 
 namespace pond::kv {
 
@@ -51,12 +53,16 @@ private:
     // Get the WAL file path with sequence number
     std::string GetWALPath(size_t sequence_number) const;
 
+    // Track metadata operation
+    common::Result<void> TrackMetadataOp(MetadataOpType op_type, const std::vector<FileInfo>& files = {});
+
     std::shared_ptr<Schema> schema_;
     std::shared_ptr<common::IAppendOnlyFileSystem> fs_;
     std::string table_name_;
     std::unique_ptr<MemTable> active_memtable_;
     std::shared_ptr<common::WAL<KvEntry>> wal_;
     std::unique_ptr<SSTableManager> sstable_manager_;
+    std::unique_ptr<TableMetadataStateMachine> metadata_state_machine_;
     mutable std::mutex mutex_;  // For thread-safe MemTable switching
     size_t max_wal_size_;
     size_t current_wal_sequence_{0};
