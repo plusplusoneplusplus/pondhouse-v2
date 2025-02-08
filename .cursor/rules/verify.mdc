@@ -1,0 +1,5 @@
+---
+description: Use VERIFY_RESULT* for asserting on Result<T> in test case
+globs: tests/*
+---
+[test_helper.cpp](mdc:tests/test_helper.cpp)

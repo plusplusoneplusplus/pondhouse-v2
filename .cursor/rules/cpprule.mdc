@@ -1,0 +1,5 @@
+---
+description: Coding style
+globs: *.cpp, *.h
+---
+Follow google c++ style. Function name starts with Upper case letter.

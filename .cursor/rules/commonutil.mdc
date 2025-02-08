@@ -1,0 +1,8 @@
+---
+description: Use existing common utilitys in src/common folder
+globs: *.cpp, *.h
+---
+[result.h](mdc:src/common/result.h)
+[error.h](mdc:src/common/error.h)
+[append_only_fs.cpp](mdc:src/common/append_only_fs.cpp)
+[wal.h](mdc:src/common/wal.h)
