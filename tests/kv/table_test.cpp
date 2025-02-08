@@ -67,8 +67,8 @@ TEST_F(TableTest, UpdateColumn) {
     auto get_result = table_->Get("key1");
     VERIFY_RESULT(get_result);
     auto& updated_record = get_result.value();
-    EXPECT_EQ(updated_record->Get<int32_t>(0).value(), 1);  // unchanged
-    EXPECT_EQ(updated_record->Get<std::string>(1).value(), "test");  // unchanged
+    EXPECT_EQ(updated_record->Get<int32_t>(0).value(), 1);                    // unchanged
+    EXPECT_EQ(updated_record->Get<std::string>(1).value(), "test");           // unchanged
     EXPECT_EQ(updated_record->Get<common::DataChunk>(2).value(), new_value);  // updated
 }
 
@@ -97,6 +97,106 @@ TEST_F(TableTest, RecoveryFromWAL) {
     EXPECT_EQ(recovered_record->Get<std::string>(1).value(), "test2");
     EXPECT_EQ(recovered_record->Get<common::DataChunk>(2).value(),
               common::DataChunk(reinterpret_cast<const uint8_t*>("value2"), 6));
+}
+
+TEST_F(TableTest, MemTableSwitchingAndSSTableIntegration) {
+    // Fill up the memtable with large values
+    std::string large_value(1024 * 1024, 'x');  // 1MB value
+    std::vector<std::string> keys;
+
+    // Insert records until memtable is full
+    for (int i = 0; i < 100; i++) {
+        std::string key = pond::test::GenerateKey(i);
+        auto record = CreateTestRecord(i, "test" + std::to_string(i), large_value);
+        auto result = table_->Put(key, std::move(record));
+        if (!result.ok()) {
+            // MemTable should be automatically switched
+            break;
+        }
+        keys.push_back(key);
+    }
+
+    EXPECT_GT(keys.size(), 0) << "Should have inserted some records";
+
+    // Insert one more record to trigger another flush
+    auto record = CreateTestRecord(keys.size(), "test_final", "final_value");
+    VERIFY_RESULT(table_->Put("final_key", std::move(record)));
+
+    // Verify all records are still accessible
+    for (const auto& key : keys) {
+        auto result = table_->Get(key);
+        VERIFY_RESULT(result);
+        auto& record = result.value();
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+    }
+
+    // Verify the final record
+    auto result = table_->Get("final_key");
+    VERIFY_RESULT(result);
+    auto& final_record = result.value();
+    EXPECT_EQ(final_record->Get<std::string>(1).value(), "test_final");
+    EXPECT_EQ(final_record->Get<common::DataChunk>(2).value(), common::DataChunk::fromString("final_value"));
+
+    // Test manual flush
+    VERIFY_RESULT(table_->Flush());
+
+    // Verify records are still accessible after manual flush
+    for (const auto& key : keys) {
+        auto result = table_->Get(key);
+        VERIFY_RESULT(result);
+        auto& record = result.value();
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+    }
+}
+
+TEST_F(TableTest, WALRotation) {
+    // Create a table with small WAL size limit (1MB)
+    auto table = std::make_unique<Table>(schema_, fs_, "test_table", 1024 * 1024);
+
+    // Insert records with large values to trigger WAL rotation
+    std::string large_value(100 * 1024, 'x');  // 100KB value
+    std::vector<std::string> keys;
+
+    // Insert enough records to trigger multiple WAL rotations
+    for (int i = 0; i < 20; i++) {
+        std::string key = pond::test::GenerateKey(i);
+        auto record = CreateTestRecord(i, "test" + std::to_string(i), large_value);
+        VERIFY_RESULT(table->Put(key, std::move(record)));
+        keys.push_back(key);
+    }
+
+    // Verify all records are still accessible
+    for (const auto& key : keys) {
+        auto result = table->Get(key);
+        VERIFY_RESULT(result);
+        auto& record = result.value();
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+    }
+
+    // Verify WAL files were created
+    std::vector<std::string> wal_files;
+    for (size_t i = 0; i < 10; i++) {
+        std::string wal_path = "test_table.wal." + std::to_string(i);
+        auto exists = fs_->exists(wal_path);
+        if (!exists) {
+            break;
+        }
+        wal_files.push_back(wal_path);
+    }
+
+    EXPECT_GT(wal_files.size(), 1) << "Should have created multiple WAL files";
+
+    // Create a new table instance and recover
+    auto recovered_table = std::make_unique<Table>(schema_, fs_, "test_table", 1024 * 1024);
+    VERIFY_RESULT(recovered_table->Recover());
+
+    // Verify all records are still accessible after recovery
+    for (const auto& key : keys) {
+        auto result = recovered_table->Get(key);
+        VERIFY_RESULT(result);
+        auto& record = result.value();
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+    }
 }
 
 }  // namespace pond::kv
