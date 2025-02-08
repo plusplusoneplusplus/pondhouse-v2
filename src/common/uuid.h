@@ -60,7 +60,7 @@ public:
 
     size_t size() const { return uuid_.size(); }
 
-    void parse(const std::string& str) { std::memcpy(uuid_.data(), str.data(), 16); }
+    void parse(const std::string& str) { memcpy(uuid_.data(), str.data(), 16); }
 
 public:
     static UUID newUUID() {

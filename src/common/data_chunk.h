@@ -44,7 +44,7 @@ public:
             data_.reserve((old_size + length) * 2);
         }
         data_.resize(old_size + length);
-        std::memcpy(data_.data() + old_size, data, length);
+        memcpy(data_.data() + old_size, data, length);
     }
 
     constexpr void append(std::span<const uint8_t> data) { data_.insert(data_.end(), data.begin(), data.end()); }

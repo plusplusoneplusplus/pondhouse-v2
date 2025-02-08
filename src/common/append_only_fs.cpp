@@ -29,13 +29,13 @@ public:
 
     Result<FileHandle> openFile(const std::string& path, bool createIfNotExists) {
         std::lock_guard<std::mutex> lock(mutex);
-        
+
         // Check if file exists
         if (!std::filesystem::exists(path)) {
             if (!createIfNotExists) {
                 return Result<FileHandle>::failure(common::ErrorCode::FileNotFound, "File not found: " + path);
             }
-            
+
             // Create parent directories if they don't exist
             std::filesystem::path fs_path(path);
             auto parent_path = fs_path.parent_path();
@@ -51,7 +51,7 @@ public:
             // Try creating the file if it doesn't exist
             stream->open(path, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc);
             if (!stream->is_open()) {
-                LOG_ERROR("Failed to open file: %s %s", path.c_str(), strerror(errno));
+                LOG_ERROR("Failed to open file: %s", path.c_str());
                 return Result<FileHandle>::failure(common::ErrorCode::FileOpenFailed, "Failed to open file: " + path);
             }
         }
