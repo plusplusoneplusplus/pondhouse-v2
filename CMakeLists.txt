@@ -51,6 +51,7 @@ target_include_directories(pondhouse_common PUBLIC ${CMAKE_SOURCE_DIR}/src)
 # Link common library with dependencies
 target_link_libraries(pondhouse_common PUBLIC 
     Arrow::arrow_shared
+    Parquet::parquet_shared
     ${XXHASH_LIBRARY}
     fmt::fmt
 )
