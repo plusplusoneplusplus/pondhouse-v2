@@ -11,6 +11,18 @@ find_package(Parquet REQUIRED)
 # Find xxHash library
 find_library(XXHASH_LIBRARY xxhash REQUIRED)
 
+# Include FetchContent for downloading dependencies
+include(FetchContent)
+
+# Fetch fmt library
+FetchContent_Declare(
+    fmt
+    GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+    GIT_TAG 9.1.0
+)
+
+FetchContent_MakeAvailable(fmt)
+
 # Add common library
 add_library(pondhouse_common
     src/common/append_only_fs.cpp
@@ -37,7 +49,11 @@ add_library(pondhouse_common
 target_include_directories(pondhouse_common PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 # Link common library with dependencies
-target_link_libraries(pondhouse_common PUBLIC Arrow::arrow_shared ${XXHASH_LIBRARY})
+target_link_libraries(pondhouse_common PUBLIC 
+    Arrow::arrow_shared
+    ${XXHASH_LIBRARY}
+    fmt::fmt
+)
 
 # Add main executable
 add_executable(${PROJECT_NAME} src/main.cpp)
@@ -49,7 +65,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE pondhouse_common)
 enable_testing()
 
 # Include FetchContent for downloading GoogleTest
-include(FetchContent)
 FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git

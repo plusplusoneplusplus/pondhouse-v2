@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <fmt/format.h>
+
 namespace pond::common {
 
 class DataChunk {
@@ -78,10 +80,19 @@ private:
 }  // namespace pond::common
 
 template <>
-struct std::formatter<pond::common::DataChunk> {
-    constexpr auto parse(format_parse_context &ctx) { return ctx.begin(); }
+struct fmt::formatter<pond::common::DataChunk> : formatter<string_view> {
     template <typename FormatContext>
-    auto format(const pond::common::DataChunk &value, FormatContext &ctx) {
-        return format_to(ctx.out(), "DataChunk(size={})", value.size());
+    auto format(const pond::common::DataChunk &chunk, FormatContext &ctx) const {
+        std::string hex;
+        hex.reserve(chunk.size() * 2);
+        static const char *digits = "0123456789ABCDEF";
+
+        for (size_t i = 0; i < chunk.size(); ++i) {
+            uint8_t byte = chunk.data()[i];
+            hex.push_back(digits[byte >> 4]);
+            hex.push_back(digits[byte & 0xF]);
+        }
+
+        return formatter<string_view>::format(hex, ctx);
     }
 };
