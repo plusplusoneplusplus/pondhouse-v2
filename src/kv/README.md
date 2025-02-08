@@ -271,6 +271,16 @@ The `SSTableReader` class provides efficient read access to SSTable files with t
    - Binary search in index and data blocks
    - Efficient key range filtering
 
+5. **Iterator Support**
+   - Forward iterator with STL compatibility
+   - Range-based for loop support
+   - Block-level iteration with automatic boundary handling
+   - Efficient seeking to specific keys
+   - Memory-efficient block loading
+   - Thread-safe iteration
+   - Key range validation
+   - Support for concurrent iterators
+
 #### Usage Example
 ```cpp
 // Create reader
@@ -295,6 +305,26 @@ size_t num_entries = reader.GetEntryCount();
 size_t file_size = reader.GetFileSize();
 std::string smallest = reader.GetSmallestKey();
 std::string largest = reader.GetLargestKey();
+
+// Iterator usage
+// Method 1: Using range-based for loop
+for (const auto& [key, value] : reader) {
+    // Process key-value pair
+}
+
+// Method 2: Using explicit iterator
+auto iter = reader.NewIterator();
+for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
+    auto key = iter->key();
+    auto value = iter->value();
+}
+
+// Method 3: Using seek
+auto iter = reader.NewIterator();
+iter->Seek("target_key");
+if (iter->Valid()) {
+    // Found first key >= target_key
+}
 ```
 
 ## Table

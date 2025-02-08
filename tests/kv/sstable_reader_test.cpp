@@ -1,6 +1,7 @@
 #include "kv/sstable_reader.h"
 
 #include <random>
+#include <thread>
 
 #include <gtest/gtest.h>
 
@@ -28,6 +29,7 @@ protected:
         if (use_filter) {
             writer.EnableFilter(entries.size());
         }
+
         for (const auto& [key, value] : entries) {
             VERIFY_RESULT(writer.Add(key, stringToChunk(value)));
         }
@@ -350,6 +352,270 @@ TEST_F(SSTableReaderTest, WriterReaderCompression) {
         auto result = reader.Get(key);
         VERIFY_RESULT(result);
         EXPECT_EQ(result.value().toString(), expected_value);
+    }
+}
+
+TEST_F(SSTableReaderTest, IteratorBasicOperations) {
+    // Create test data with sorted keys
+    std::vector<std::pair<std::string, std::string>> entries = {
+        {"key1", "value1"},
+        {"key2", "value2"},
+        {"key3", "value3"},
+        {"key4", "value4"},
+        {"key5", "value5"},
+    };
+    createTestSSTable("test.sst", entries);
+
+    // Open reader and create iterator
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+    auto iter = reader.NewIterator();
+
+    // Test SeekToFirst and sequential scan
+    iter->SeekToFirst();
+    size_t count = 0;
+    while (iter->Valid()) {
+        ASSERT_LT(count, entries.size());
+        EXPECT_EQ(iter->key(), entries[count].first);
+        EXPECT_EQ(iter->value().toString(), entries[count].second);
+        iter->Next();
+        count++;
+    }
+    EXPECT_EQ(count, entries.size());
+}
+
+TEST_F(SSTableReaderTest, IteratorSeek) {
+    // Create test data
+    std::vector<std::pair<std::string, std::string>> entries;
+    for (int i = 0; i < 100; i++) {
+        std::string key = pond::test::GenerateKey(i * 2);  // Even numbered keys
+        entries.push_back({key, "value" + std::to_string(i)});
+    }
+    createTestSSTable("test.sst", entries);
+
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+    auto iter = reader.NewIterator();
+
+    // Test seeking to exact keys
+    auto key = pond::test::GenerateKey(50);
+    iter->Seek(key);
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), key);
+
+    // Test seeking between keys (should land on next existing key)
+    key = pond::test::GenerateKey(51);
+    iter->Seek(key);
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), pond::test::GenerateKey(52));
+
+    // Test seeking past all keys
+    key = pond::test::GenerateKey(999);
+    iter->Seek(key);
+    EXPECT_FALSE(iter->Valid());
+
+    // Test seeking to first key
+    iter->Seek("");
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), entries.front().first);
+}
+
+TEST_F(SSTableReaderTest, IteratorMultipleBlocks) {
+    // Create enough entries to span multiple blocks
+    std::vector<std::pair<std::string, std::string>> entries;
+    std::string large_value(50 * 1024, 'x');  // 50KB value to force block splits
+    for (int i = 0; i < 100; i++) {
+        entries.push_back({pond::test::GenerateKey(i), large_value + std::to_string(i)});
+    }
+    createTestSSTable("test.sst", entries);
+
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+    auto iter = reader.NewIterator();
+
+    // Verify sequential scan across blocks
+    iter->SeekToFirst();
+    size_t count = 0;
+    while (iter->Valid()) {
+        ASSERT_LT(count, entries.size());
+        EXPECT_EQ(iter->key(), entries[count].first);
+        EXPECT_EQ(iter->value().toString(), entries[count].second);
+        iter->Next();
+        count++;
+    }
+    EXPECT_EQ(count, entries.size());
+
+    // Test seeking within different blocks
+    std::vector<size_t> test_positions = {0, 25, 50, 75, 99};  // Test across different blocks
+    for (size_t pos : test_positions) {
+        iter->Seek(entries[pos].first);
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), entries[pos].first);
+        EXPECT_EQ(iter->value().toString(), entries[pos].second);
+    }
+}
+
+TEST_F(SSTableReaderTest, IteratorEdgeCases) {
+    // Test single entry
+    {
+        std::vector<std::pair<std::string, std::string>> single_entry = {{"key1", "value1"}};
+        createTestSSTable("single.sst", single_entry);
+
+        SSTableReader reader(fs_, "single.sst");
+        VERIFY_RESULT(reader.Open());
+        auto iter = reader.NewIterator();
+
+        iter->SeekToFirst();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key1");
+        EXPECT_EQ(iter->value().toString(), "value1");
+
+        iter->Next();
+        EXPECT_FALSE(iter->Valid());
+    }
+
+    // Test special keys
+    {
+        std::vector<std::pair<std::string, std::string>> special_entries = {
+            {"", "empty_key"},                              // Empty key
+            {"key\0with\0nulls", "value1"},                 // Key with null bytes
+            {"key\nwith\nnewlines", "value2"},              // Key with newlines
+            {std::string("key") + char(255), "high_byte"},  // Key with high bytes
+            {std::string(1000, 'k'), "long_key_value"},     // Very long key
+        };
+        createTestSSTable("special.sst", special_entries);
+
+        SSTableReader reader(fs_, "special.sst");
+        VERIFY_RESULT(reader.Open());
+        auto iter = reader.NewIterator();
+
+        iter->SeekToFirst();
+        size_t count = 0;
+        while (iter->Valid()) {
+            ASSERT_LT(count, special_entries.size());
+            EXPECT_EQ(iter->key(), special_entries[count].first);
+            EXPECT_EQ(iter->value().toString(), special_entries[count].second);
+            iter->Next();
+            count++;
+        }
+        EXPECT_EQ(count, special_entries.size());
+    }
+}
+
+TEST_F(SSTableReaderTest, IteratorInvalidOperations) {
+    std::vector<std::pair<std::string, std::string>> entries = {
+        {"key1", "value1"},
+        {"key2", "value2"},
+    };
+    createTestSSTable("test.sst", entries);
+
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+    auto iter = reader.NewIterator();
+
+    // Test Next() on invalid iterator
+    iter->Seek("key3");  // Seek past all entries
+    EXPECT_FALSE(iter->Valid());
+    EXPECT_DEATH(iter->Next(), "");
+
+    // Test seeking on closed reader
+    SSTableReader closed_reader(fs_, "nonexistent.sst");
+    auto closed_iter = closed_reader.NewIterator();
+    closed_iter->SeekToFirst();
+    EXPECT_FALSE(closed_iter->Valid());
+}
+
+TEST_F(SSTableReaderTest, IteratorConcurrentAccess) {
+    // Create test data
+    std::vector<std::pair<std::string, std::string>> entries;
+    for (int i = 0; i < 1000; i++) {
+        entries.push_back({pond::test::GenerateKey(i), "value" + std::to_string(i)});
+    }
+    createTestSSTable("test.sst", entries);
+
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+
+    // Create multiple iterators and use them concurrently
+    constexpr int kNumThreads = 4;
+    std::vector<std::thread> threads;
+    std::atomic<size_t> success_count{0};
+
+    for (int i = 0; i < kNumThreads; i++) {
+        threads.emplace_back([&reader, &entries, &success_count, i]() {
+            auto iter = reader.NewIterator();
+
+            // Each thread starts at a different position
+            size_t start_pos = (entries.size() / kNumThreads) * i;
+            iter->Seek(entries[start_pos].first);
+
+            size_t count = 0;
+            while (iter->Valid() && count < entries.size() / kNumThreads) {
+                size_t expected_pos = (start_pos + count) % entries.size();
+                if (iter->key() == entries[expected_pos].first
+                    && iter->value().toString() == entries[expected_pos].second) {
+                    success_count++;
+                }
+                iter->Next();
+                count++;
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    EXPECT_EQ(success_count, entries.size());
+}
+
+TEST_F(SSTableReaderTest, RangeBasedForLoop) {
+    // Create test data with sorted keys
+    std::vector<std::pair<std::string, std::string>> entries = {
+        {"key1", "value1"},
+        {"key2", "value2"},
+        {"key3", "value3"},
+        {"key4", "value4"},
+        {"key5", "value5"},
+    };
+    createTestSSTable("test.sst", entries);
+
+    // Open reader
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+
+    // Test range-based for loop
+    size_t count = 0;
+    for (const auto& [key, value] : reader) {
+        ASSERT_LT(count, entries.size());
+        EXPECT_EQ(key, entries[count].first);
+        EXPECT_EQ(value.toString(), entries[count].second);
+        count++;
+    }
+    EXPECT_EQ(count, entries.size());
+}
+
+TEST_F(SSTableReaderTest, IteratorSTLCompatibility) {
+    // Create test data
+    std::vector<std::pair<std::string, std::string>> entries = {
+        {"key1", "value1"},
+        {"key2", "value2"},
+    };
+
+    createTestSSTable("test.sst", entries);
+
+    // Open reader
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+
+    // Test STL iterator interface
+    {
+        auto iter = reader.begin();
+        auto end = reader.end();
+        for (auto it = iter; it != end; ++it) {
+            EXPECT_NE((*it).first, "");
+            EXPECT_NE((*it).second.size(), 0);
+        }
     }
 }
 

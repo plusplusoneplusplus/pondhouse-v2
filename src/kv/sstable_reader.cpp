@@ -289,7 +289,6 @@ public:
         return common::Result<Metadata>::success(metadata);
     }
 
-private:
     struct IndexEntry {
         std::string largest_key;
         uint64_t offset;
@@ -357,6 +356,193 @@ const std::string& SSTableReader::GetLargestKey() const {
 
 common::Result<SSTableReader::Metadata> SSTableReader::GetMetadata() const {
     return impl_->GetMetadata();
+}
+
+class SSTableReader::Iterator::Impl {
+public:
+    explicit Impl(SSTableReader* reader) : reader_(reader), valid_(false) {}
+
+    bool Valid() const { return valid_; }
+
+    const std::string& key() const {
+        assert(valid_);
+        return current_key_;
+    }
+
+    const common::DataChunk& value() const {
+        assert(valid_);
+        return current_value_;
+    }
+
+    void Next() {
+        assert(valid_);
+
+        // If we're at the end of the current block, move to next block
+        if (block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length
+            >= current_block_.size() - BlockFooter::kFooterSize) {
+            if (current_block_idx_ + 1 >= reader_->impl_->index_entries_.size()) {
+                valid_ = false;
+                return;
+            }
+            LoadBlock(++current_block_idx_);
+            block_pos_ = 0;
+        } else {
+            // Move to next entry in current block
+            block_pos_ += DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length;
+        }
+
+        ParseCurrentEntry();
+    }
+
+    void SeekToFirst() {
+        if (reader_->impl_->index_entries_.empty()) {
+            valid_ = false;
+            return;
+        }
+
+        current_block_idx_ = 0;
+        LoadBlock(current_block_idx_);
+        block_pos_ = 0;
+        ParseCurrentEntry();
+    }
+
+    void Seek(const std::string& target) {
+        // Find the block that may contain the target key
+        auto it = std::upper_bound(
+            reader_->impl_->index_entries_.begin(),
+            reader_->impl_->index_entries_.end(),
+            target,
+            [](const std::string& k, const SSTableReader::Impl::IndexEntry& e) { return k <= e.largest_key; });
+
+        if (it == reader_->impl_->index_entries_.end()) {
+            valid_ = false;
+            return;
+        }
+
+        current_block_idx_ = std::distance(reader_->impl_->index_entries_.begin(), it);
+        LoadBlock(current_block_idx_);
+        block_pos_ = 0;
+
+        // Scan through entries in the block until we find the first key >= target
+        while (block_pos_ + DataBlockEntry::kHeaderSize <= current_block_.size() - BlockFooter::kFooterSize) {
+            if (!ParseCurrentEntry()) {
+                valid_ = false;
+                return;
+            }
+
+            if (current_key_ >= target) {
+                return;
+            }
+
+            block_pos_ += DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length;
+        }
+
+        valid_ = false;
+    }
+
+private:
+    bool LoadBlock(size_t block_idx) {
+        const auto& index_entry = reader_->impl_->index_entries_[block_idx];
+        auto block_result =
+            reader_->impl_->fs_->read(reader_->impl_->file_handle_, index_entry.offset, index_entry.size);
+        if (!block_result.ok()) {
+            valid_ = false;
+            return false;
+        }
+        current_block_ = block_result.value();
+        return true;
+    }
+
+    bool ParseCurrentEntry() {
+        if (block_pos_ + DataBlockEntry::kHeaderSize > current_block_.size() - BlockFooter::kFooterSize) {
+            valid_ = false;
+            return false;
+        }
+
+        if (!current_entry_.DeserializeHeader(current_block_.data() + block_pos_, DataBlockEntry::kHeaderSize)) {
+            valid_ = false;
+            return false;
+        }
+
+        if (block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length
+            > current_block_.size() - BlockFooter::kFooterSize) {
+            valid_ = false;
+            return false;
+        }
+
+        const char* key_ptr =
+            reinterpret_cast<const char*>(current_block_.data() + block_pos_ + DataBlockEntry::kHeaderSize);
+        current_key_ = std::string(key_ptr, current_entry_.key_length);
+
+        const uint8_t* value_ptr =
+            current_block_.data() + block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length;
+        current_value_ = common::DataChunk(value_ptr, current_entry_.value_length);
+
+        valid_ = true;
+        return true;
+    }
+
+    SSTableReader* reader_;
+    bool valid_;
+    size_t current_block_idx_{0};
+    common::DataChunk current_block_;
+    size_t block_pos_{0};
+    DataBlockEntry current_entry_;
+    std::string current_key_;
+    common::DataChunk current_value_;
+};
+
+// Iterator implementation
+SSTableReader::Iterator::Iterator(SSTableReader* reader) : impl_(std::make_unique<Impl>(reader)) {}
+
+SSTableReader::Iterator::~Iterator() = default;
+
+SSTableReader::Iterator::Iterator(const Iterator& other) : impl_(std::make_unique<Impl>(*other.impl_)) {}
+
+SSTableReader::Iterator& SSTableReader::Iterator::operator=(const Iterator& other) {
+    if (this != &other) {
+        impl_ = std::make_unique<Impl>(*other.impl_);
+    }
+    return *this;
+}
+
+bool SSTableReader::Iterator::Valid() const {
+    return impl_->Valid();
+}
+
+const std::string& SSTableReader::Iterator::key() const {
+    return impl_->key();
+}
+
+const common::DataChunk& SSTableReader::Iterator::value() const {
+    return impl_->value();
+}
+
+void SSTableReader::Iterator::Next() {
+    impl_->Next();
+}
+
+void SSTableReader::Iterator::SeekToFirst() {
+    impl_->SeekToFirst();
+}
+
+void SSTableReader::Iterator::Seek(const std::string& target) {
+    impl_->Seek(target);
+}
+
+// Add NewIterator method to SSTableReader
+std::unique_ptr<SSTableReader::Iterator> SSTableReader::NewIterator() {
+    return std::make_unique<Iterator>(this);
+}
+
+SSTableReader::Iterator SSTableReader::begin() {
+    auto iter = Iterator(this);
+    iter.SeekToFirst();
+    return iter;
+}
+
+SSTableReader::Iterator SSTableReader::end() {
+    return Iterator(this);  // Creates an invalid iterator representing the end
 }
 
 }  // namespace pond::kv
