@@ -1,7 +1,6 @@
 #pragma once
 
 #include <concepts>
-#include <format>
 #include <functional>
 #include <sstream>
 #include <string>
@@ -39,16 +38,16 @@ public:
     // Access value
     [[nodiscard]] const T& value() const& {
         if (!ok()) {
-            throw std::runtime_error(std::format("Attempting to access value of failed Result. Error: {}",
-                                                 std::get<Error>(data_).message()));
+            throw std::runtime_error("Attempting to access value of failed Result. Error: "
+                                     + std::get<Error>(data_).message());
         }
         return std::get<T>(data_);
     }
 
     [[nodiscard]] T&& value() && {
         if (!ok()) {
-            throw std::runtime_error(std::format("Attempting to access value of failed Result. Error: {}",
-                                                 std::get<Error>(data_).message()));
+            throw std::runtime_error("Attempting to access value of failed Result. Error: "
+                                     + std::get<Error>(data_).message());
         }
         return std::move(std::get<T>(data_));
     }
