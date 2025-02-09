@@ -43,9 +43,13 @@ public:
         for (auto it = sstables_[0].rbegin(); it != sstables_[0].rend(); ++it) {
             // Check metadata cache first
             if (!metadata_cache_.MayContainKey(0, *it, key)) {
+                stats_.metadata_filter_cache_hits++;
                 continue;  // Skip this file if metadata indicates key cannot exist
             }
+            stats_.metadata_filter_cache_misses++;
 
+            // Physical read required
+            stats_.physical_reads++;
             auto reader = std::make_shared<SSTableReader>(fs_, GetTablePath(0, *it));
             auto open_result = reader->Open();
             if (!open_result.ok()) {
@@ -66,9 +70,13 @@ public:
             for (const auto& file_number : sstables_[level]) {
                 // Check metadata cache first
                 if (!metadata_cache_.MayContainKey(level, file_number, key)) {
+                    stats_.metadata_filter_cache_hits++;
                     continue;  // Skip this file if metadata indicates key cannot exist
                 }
+                stats_.metadata_filter_cache_misses++;
 
+                // Physical read required
+                stats_.physical_reads++;
                 auto reader = std::make_shared<SSTableReader>(fs_, GetTablePath(level, file_number));
                 auto open_result = reader->Open();
                 if (!open_result.ok()) {

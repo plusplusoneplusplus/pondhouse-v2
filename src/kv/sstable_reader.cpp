@@ -178,6 +178,7 @@ public:
             filter_ = std::make_unique<common::BloomFilter>(std::move(filter_result_2.value()));
         }
 
+        opened_ = true;
         return common::Result<bool>::success(true);
     }
 
@@ -290,26 +291,18 @@ public:
     }
 
     common::Result<std::unique_ptr<common::BloomFilter>> GetBloomFilter() const {
-        if (!header_.HasFilter()) {
-            return common::Result<std::unique_ptr<common::BloomFilter>>::failure(
-                common::ErrorCode::NotFound, "SSTable does not have a bloom filter");
+        if (!opened_) {
+            return common::Result<std::unique_ptr<common::BloomFilter>>::failure(common::ErrorCode::InvalidOperation,
+                                                                                 "Reader not opened");
         }
 
-        // Read filter block
-        auto filter_data = fs_->read(file_handle_, footer_.filter_block_offset, footer_.filter_block_size);
-        if (!filter_data.ok()) {
-            return common::Result<std::unique_ptr<common::BloomFilter>>::failure(filter_data.error());
-        }
-
-        // Deserialize filter
-        auto filter_result = common::BloomFilter::Deserialize(filter_data.value());
-        if (!filter_result.ok()) {
-            return common::Result<std::unique_ptr<common::BloomFilter>>::failure(common::ErrorCode::InvalidArgument,
-                                                                                 "Failed to deserialize bloom filter");
+        if (!filter_) {
+            return common::Result<std::unique_ptr<common::BloomFilter>>::failure(common::ErrorCode::NotFound,
+                                                                                 "No bloom filter present");
         }
 
         return common::Result<std::unique_ptr<common::BloomFilter>>::success(
-            std::make_unique<common::BloomFilter>(std::move(filter_result).value()));
+            std::make_unique<common::BloomFilter>(*filter_));
     }
 
     struct IndexEntry {
@@ -321,6 +314,7 @@ public:
 
     std::shared_ptr<common::IAppendOnlyFileSystem> fs_;
     std::string path_;
+    bool opened_{false};
     common::FileHandle file_handle_{common::INVALID_HANDLE};
     size_t file_size_;
     size_t num_entries_;

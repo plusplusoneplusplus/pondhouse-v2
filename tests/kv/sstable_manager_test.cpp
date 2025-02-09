@@ -250,9 +250,12 @@ TEST_F(SSTableManagerTest, MetadataCacheBasic) {
     auto result = manager_->CreateSSTableFromMemTable(*memtable);
     VERIFY_RESULT(result);
 
+    // Get initial stats
+    auto initial_stats = manager_->GetStats();
+
     // Test key lookups that should be filtered by metadata cache
     // Key before range
-    auto before_range = manager_->Get(pond::test::GenerateKey(-1));
+    auto before_range = manager_->Get("kee");
     ASSERT_FALSE(before_range.ok());
     EXPECT_EQ(before_range.error().code(), ErrorCode::NotFound);
 
@@ -265,6 +268,15 @@ TEST_F(SSTableManagerTest, MetadataCacheBasic) {
     auto within_range = manager_->Get(pond::test::GenerateKey(50));
     ASSERT_TRUE(within_range.ok());
     EXPECT_EQ(ToRecord(within_range.value())->Get<std::string>(0).value(), "value50");
+
+    // Verify cache statistics
+    auto final_stats = manager_->GetStats();
+    EXPECT_EQ(final_stats.metadata_filter_cache_hits - initial_stats.metadata_filter_cache_hits,
+              2);  // Before and after range
+    EXPECT_EQ(final_stats.metadata_filter_cache_misses - initial_stats.metadata_filter_cache_misses,
+              1);  // Within range
+    EXPECT_EQ(final_stats.physical_reads - initial_stats.physical_reads,
+              1);  // Only one physical read for the found key
 }
 
 TEST_F(SSTableManagerTest, MetadataCacheMultipleLevels) {
@@ -333,13 +345,16 @@ TEST_F(SSTableManagerTest, MetadataCacheConcurrentAccess) {
     auto memtable = CreateTestMemTable(0, 1000);
     ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
 
+    // Get initial stats
+    auto initial_stats = manager_->GetStats();
+
     // Start multiple threads doing concurrent reads
     std::vector<std::thread> threads;
-    std::atomic<size_t> cache_hits{0};
+    std::atomic<size_t> found_keys{0};
     std::atomic<size_t> total_ops{0};
 
     for (int i = 0; i < 4; i++) {
-        threads.emplace_back([this, &cache_hits, &total_ops]() {
+        threads.emplace_back([this, &found_keys, &total_ops]() {
             for (int j = 0; j < 250; j++) {
                 total_ops++;
 
@@ -350,7 +365,7 @@ TEST_F(SSTableManagerTest, MetadataCacheConcurrentAccess) {
                 if (key_num < 1000) {
                     // Should exist
                     ASSERT_TRUE(result.ok()) << "Key " << key_num << " should exist";
-                    cache_hits++;
+                    found_keys++;
                 } else {
                     // Should not exist
                     ASSERT_FALSE(result.ok()) << "Key " << key_num << " should not exist";
@@ -363,9 +378,22 @@ TEST_F(SSTableManagerTest, MetadataCacheConcurrentAccess) {
         thread.join();
     }
 
-    // Verify that we had a reasonable number of cache hits
-    EXPECT_GT(cache_hits, 0);
+    // Get final stats
+    auto final_stats = manager_->GetStats();
+
+    // Verify operation counts
     EXPECT_EQ(total_ops, 1000);  // 4 threads * 250 ops
+    EXPECT_GT(found_keys, 0);
+
+    // Verify cache effectiveness
+    size_t cache_hits = final_stats.metadata_filter_cache_hits - initial_stats.metadata_filter_cache_hits;
+    size_t cache_misses = final_stats.metadata_filter_cache_misses - initial_stats.metadata_filter_cache_misses;
+    size_t physical_reads = final_stats.physical_reads - initial_stats.physical_reads;
+
+    // We expect roughly half of the operations to be cache hits (keys outside range)
+    EXPECT_GT(cache_hits, total_ops / 4);     // At least 25% should be cache hits
+    EXPECT_LT(physical_reads, total_ops);     // Should have fewer physical reads than operations
+    EXPECT_EQ(cache_misses, physical_reads);  // Each cache miss should result in one physical read
 }
 
 TEST_F(SSTableManagerTest, MetadataCacheRecovery) {

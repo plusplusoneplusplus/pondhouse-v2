@@ -50,6 +50,22 @@ public:
         size_t total_files{0};                // Total number of SSTable files
         size_t total_bytes{0};                // Total bytes across all SSTables
         common::LRUCacheStats cache_stats;    // Block cache statistics
+
+        // Metadata cache statistics
+        size_t metadata_filter_cache_hits{0};    // Number of times metadata cache avoided file read
+        size_t metadata_filter_cache_misses{0};  // Number of times metadata cache required file read
+        size_t physical_reads{0};                // Number of actual SSTable file reads
+
+        void clear() {
+            files_per_level.clear();
+            bytes_per_level.clear();
+            total_files = 0;
+            total_bytes = 0;
+            cache_stats = common::LRUCacheStats{};
+            metadata_filter_cache_hits = 0;
+            metadata_filter_cache_misses = 0;
+            physical_reads = 0;
+        }
     };
 
     // Constructor takes filesystem and base directory
