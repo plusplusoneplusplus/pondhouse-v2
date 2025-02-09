@@ -56,7 +56,7 @@ arrow::Status AppendOnlyOutputStream::Write(const void* data, int64_t nbytes) {
     }
 
     common::DataChunk chunk(static_cast<const uint8_t*>(data), nbytes);
-    auto result = fs_->append(handle_, chunk);
+    auto result = fs_->Append(handle_, chunk);
     if (!result.ok()) {
         LOG_ERROR("Failed to write to file: %s", result.error().c_str());
         return arrow::Status::IOError("Failed to write to file: " + result.error().message());

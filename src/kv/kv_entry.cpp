@@ -13,9 +13,9 @@ namespace pond::kv {
 DataChunk KvEntry::Serialize() const {
     DataChunk data;
     uint32_t key_size = static_cast<uint32_t>(key.size());
-    uint32_t value_size = static_cast<uint32_t>(value.size());
+    uint32_t value_size = static_cast<uint32_t>(value.Size());
 
-    data.reserve(sizeof(lsn_) + sizeof(ts) + sizeof(type) + sizeof(key_size) + key_size + sizeof(value_size)
+    data.Reserve(sizeof(lsn_) + sizeof(ts) + sizeof(type) + sizeof(key_size) + key_size + sizeof(value_size)
                  + value_size);
 
     Serialize(data);
@@ -24,23 +24,23 @@ DataChunk KvEntry::Serialize() const {
 
 void KvEntry::Serialize(DataChunk& data) const {
     uint32_t key_size = static_cast<uint32_t>(key.size());
-    uint32_t value_size = static_cast<uint32_t>(value.size());
+    uint32_t value_size = static_cast<uint32_t>(value.Size());
 
-    data.append(reinterpret_cast<const uint8_t*>(&lsn_), sizeof(lsn_));
-    data.append(reinterpret_cast<const uint8_t*>(&ts), sizeof(ts));
-    data.append(reinterpret_cast<const uint8_t*>(&type), sizeof(type));
-    data.append(reinterpret_cast<const uint8_t*>(&key_size), sizeof(key_size));
-    data.append(reinterpret_cast<const uint8_t*>(key.data()), key_size);
-    data.append(reinterpret_cast<const uint8_t*>(&value_size), sizeof(value_size));
-    data.append(value.data(), value_size);
+    data.Append(reinterpret_cast<const uint8_t*>(&lsn_), sizeof(lsn_));
+    data.Append(reinterpret_cast<const uint8_t*>(&ts), sizeof(ts));
+    data.Append(reinterpret_cast<const uint8_t*>(&type), sizeof(type));
+    data.Append(reinterpret_cast<const uint8_t*>(&key_size), sizeof(key_size));
+    data.Append(reinterpret_cast<const uint8_t*>(key.data()), key_size);
+    data.Append(reinterpret_cast<const uint8_t*>(&value_size), sizeof(value_size));
+    data.Append(value.Data(), value_size);
 }
 
 bool KvEntry::Deserialize(const DataChunk& data) {
-    if (data.size() < sizeof(lsn_) + sizeof(ts) + sizeof(type) + sizeof(uint32_t) + sizeof(uint32_t)) {
+    if (data.Size() < sizeof(lsn_) + sizeof(ts) + sizeof(type) + sizeof(uint32_t) + sizeof(uint32_t)) {
         return false;
     }
 
-    const uint8_t* ptr = data.data();
+    const uint8_t* ptr = data.Data();
     std::memcpy(&lsn_, ptr, sizeof(lsn_));
     ptr += sizeof(lsn_);
     std::memcpy(&ts, ptr, sizeof(ts));

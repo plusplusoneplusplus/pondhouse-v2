@@ -19,7 +19,7 @@ public:
 
     ~Impl() {
         if (file_handle_ != common::INVALID_HANDLE) {
-            fs_->closeFile(file_handle_);
+            fs_->CloseFile(file_handle_);
         }
     }
 
@@ -30,7 +30,7 @@ public:
 
         if (!file_handle_) {
             // Open file on first write
-            auto result = fs_->openFile(path_, true);
+            auto result = fs_->OpenFile(path_, true);
             if (!result.ok()) {
                 return common::Result<bool>::failure(result.error());
             }
@@ -41,7 +41,7 @@ public:
                 header_.flags |= FileHeader::kHasFilter;
             }
             auto header_data = header_.Serialize();
-            auto append_result = fs_->append(file_handle_, common::DataChunk(header_data.data(), header_data.size()));
+            auto append_result = fs_->Append(file_handle_, common::DataChunk(header_data.data(), header_data.size()));
             if (!append_result.ok()) {
                 return common::Result<bool>::failure(append_result.error());
             }
@@ -112,7 +112,7 @@ public:
             filter_offset = current_offset_;
             auto filter_data = filter_builder_->Finish();
             filter_size = filter_data.size();
-            auto append_result = fs_->append(file_handle_, common::DataChunk(filter_data.data(), filter_data.size()));
+            auto append_result = fs_->Append(file_handle_, common::DataChunk(filter_data.data(), filter_data.size()));
             if (!append_result.ok()) {
                 return common::Result<bool>::failure(append_result.error());
             }
@@ -123,7 +123,7 @@ public:
         uint64_t index_offset = current_offset_;
         auto index_data = index_builder_.Finish();
         uint64_t index_size = index_data.size();
-        auto append_result = fs_->append(file_handle_, common::DataChunk(index_data.data(), index_data.size()));
+        auto append_result = fs_->Append(file_handle_, common::DataChunk(index_data.data(), index_data.size()));
         if (!append_result.ok()) {
             return common::Result<bool>::failure(append_result.error());
         }
@@ -133,7 +133,7 @@ public:
         uint64_t metadata_offset = current_offset_;
         auto metadata_data = metadata_builder_.Finish();
         uint64_t metadata_size = metadata_data.size();
-        append_result = fs_->append(file_handle_, common::DataChunk(metadata_data.data(), metadata_data.size()));
+        append_result = fs_->Append(file_handle_, common::DataChunk(metadata_data.data(), metadata_data.size()));
         if (!append_result.ok()) {
             return common::Result<bool>::failure(append_result.error());
         }
@@ -148,13 +148,13 @@ public:
         footer.filter_block_size = filter_size;
         footer.metadata_block_size = metadata_size;
         auto footer_data = footer.Serialize();
-        append_result = fs_->append(file_handle_, common::DataChunk(footer_data.data(), footer_data.size()));
+        append_result = fs_->Append(file_handle_, common::DataChunk(footer_data.data(), footer_data.size()));
         if (!append_result.ok()) {
             return common::Result<bool>::failure(append_result.error());
         }
 
         // Close file
-        auto close_result = fs_->closeFile(file_handle_);
+        auto close_result = fs_->CloseFile(file_handle_);
         if (!close_result.ok()) {
             return common::Result<bool>::failure(close_result.error());
         }
@@ -179,7 +179,7 @@ private:
         }
 
         // Append block to file
-        auto append_result = fs_->append(file_handle_, common::DataChunk(block_data.data(), block_data.size()));
+        auto append_result = fs_->Append(file_handle_, common::DataChunk(block_data.data(), block_data.size()));
         if (!append_result.ok()) {
             return common::Result<bool>::failure(append_result.error());
         }

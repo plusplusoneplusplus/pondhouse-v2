@@ -127,7 +127,7 @@ TEST_F(TableTest, MemTableSwitchingAndSSTableIntegration) {
         auto result = table_->Get(key);
         VERIFY_RESULT(result);
         auto& record = result.value();
-        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().Size(), large_value.size());
     }
 
     // Verify the final record
@@ -135,7 +135,7 @@ TEST_F(TableTest, MemTableSwitchingAndSSTableIntegration) {
     VERIFY_RESULT(result);
     auto& final_record = result.value();
     EXPECT_EQ(final_record->Get<std::string>(1).value(), "test_final");
-    EXPECT_EQ(final_record->Get<common::DataChunk>(2).value(), common::DataChunk::fromString("final_value"));
+    EXPECT_EQ(final_record->Get<common::DataChunk>(2).value(), common::DataChunk::FromString("final_value"));
 
     // Test manual flush
     VERIFY_RESULT(table_->Flush());
@@ -145,7 +145,7 @@ TEST_F(TableTest, MemTableSwitchingAndSSTableIntegration) {
         auto result = table_->Get(key);
         VERIFY_RESULT(result);
         auto& record = result.value();
-        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().Size(), large_value.size());
     }
 }
 
@@ -170,14 +170,14 @@ TEST_F(TableTest, WALRotation) {
         auto result = table->Get(key);
         VERIFY_RESULT(result);
         auto& record = result.value();
-        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().Size(), large_value.size());
     }
 
     // Verify WAL files were created
     std::vector<std::string> wal_files;
     for (size_t i = 0; i < 10; i++) {
         std::string wal_path = "test_table.wal." + std::to_string(i);
-        auto exists = fs_->exists(wal_path);
+        auto exists = fs_->Exists(wal_path);
         if (!exists) {
             break;
         }
@@ -195,7 +195,7 @@ TEST_F(TableTest, WALRotation) {
         auto result = recovered_table->Get(key);
         VERIFY_RESULT(result);
         auto& record = result.value();
-        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().Size(), large_value.size());
     }
 }
 
@@ -226,12 +226,12 @@ TEST_F(TableTest, MetadataTracking) {
         auto result = recovered_table->Get(key);
         VERIFY_RESULT(result);
         auto& record = result.value();
-        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().Size(), large_value.size());
     }
 
     // Verify metadata wal file exists
-    EXPECT_TRUE(fs_->exists("test_table_metadata"));
-    auto listFileResult = fs_->list("test_table_metadata");
+    EXPECT_TRUE(fs_->Exists("test_table_metadata"));
+    auto listFileResult = fs_->List("test_table_metadata");
     VERIFY_RESULT(listFileResult);
     EXPECT_EQ(listFileResult.value().size(), 1);
     EXPECT_TRUE(listFileResult.value()[0].starts_with(common::WalStateMachine::WAL_FILE_NAME));
@@ -265,7 +265,7 @@ TEST_F(TableTest, MetadataRecoveryAfterCrash) {
         EXPECT_EQ(record->Get<int32_t>(0).value(), i);
         EXPECT_EQ(record->Get<std::string>(1).value(), "test" + std::to_string(i));
         EXPECT_EQ(record->Get<common::DataChunk>(2).value(),
-                  common::DataChunk::fromString("value" + std::to_string(i)));
+                  common::DataChunk::FromString("value" + std::to_string(i)));
     }
 }
 
@@ -296,8 +296,8 @@ TEST_F(TableTest, RecoveryFromWALAndSSTables) {
     }
 
     // Verify metadata files were created
-    EXPECT_TRUE(fs_->exists("test_table_metadata"));
-    EXPECT_TRUE(fs_->exists("test_table_metadata/state.wal"));
+    EXPECT_TRUE(fs_->Exists("test_table_metadata"));
+    EXPECT_TRUE(fs_->Exists("test_table_metadata/state.wal"));
 
     // Create a new table instance and recover
     auto recovered_table = std::make_unique<Table>(schema_, fs_, "test_table", 1024 * 1024);
@@ -308,7 +308,7 @@ TEST_F(TableTest, RecoveryFromWALAndSSTables) {
         auto result = recovered_table->Get(key);
         VERIFY_RESULT(result);
         auto& record = result.value();
-        EXPECT_EQ(record->Get<common::DataChunk>(2).value().size(), large_value.size());
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value().Size(), large_value.size());
     }
 
     // Verify all records from WAL/memtable are accessible
@@ -320,16 +320,16 @@ TEST_F(TableTest, RecoveryFromWALAndSSTables) {
         EXPECT_EQ(record->Get<int32_t>(0).value(), id);
         EXPECT_EQ(record->Get<std::string>(1).value(), "name" + std::to_string(id));
         EXPECT_EQ(record->Get<common::DataChunk>(2).value(),
-                  common::DataChunk::fromString("value" + std::to_string(id)));
+                  common::DataChunk::FromString("value" + std::to_string(id)));
     }
 
     // Verify metadata state is correct
     auto metadata_path = "test_table_metadata";
-    EXPECT_TRUE(fs_->exists(metadata_path));
+    EXPECT_TRUE(fs_->Exists(metadata_path));
 
     auto data_path = "test_table";
     // Verify SSTable files exist
-    auto list_result = fs_->list(data_path);
+    auto list_result = fs_->List(data_path);
     VERIFY_RESULT(list_result);
     bool found_sstable = false;
     for (const auto& file : list_result.value()) {
@@ -348,7 +348,7 @@ TEST_F(TableTest, RecoveryFromWALAndSSTables) {
     VERIFY_RESULT(get_result);
     EXPECT_EQ(get_result.value()->Get<int32_t>(0).value(), 100);
     EXPECT_EQ(get_result.value()->Get<std::string>(1).value(), "post_recovery");
-    EXPECT_EQ(get_result.value()->Get<common::DataChunk>(2).value(), common::DataChunk::fromString("value"));
+    EXPECT_EQ(get_result.value()->Get<common::DataChunk>(2).value(), common::DataChunk::FromString("value"));
 }
 
 }  // namespace pond::kv

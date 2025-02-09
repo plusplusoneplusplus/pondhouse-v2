@@ -21,19 +21,19 @@ TEST_F(BloomFilterTest, BasicOperations) {
     BloomFilter filter(1000, 0.01);
 
     // Test empty filter
-    DataChunk item1 = DataChunk::fromString("test1");
-    EXPECT_FALSE(filter.mightContain(item1)) << "Empty filter should not contain any items";
+    DataChunk item1 = DataChunk::FromString("test1");
+    EXPECT_FALSE(filter.MightContain(item1)) << "Empty filter should not contain any items";
 
     // Test adding and checking items
-    filter.add(item1);
-    EXPECT_TRUE(filter.mightContain(item1)) << "Filter should contain added item";
+    filter.Add(item1);
+    EXPECT_TRUE(filter.MightContain(item1)) << "Filter should contain added item";
 
-    DataChunk item2 = DataChunk::fromString("test2");
-    EXPECT_FALSE(filter.mightContain(item2)) << "Filter should not contain non-added item";
+    DataChunk item2 = DataChunk::FromString("test2");
+    EXPECT_FALSE(filter.MightContain(item2)) << "Filter should not contain non-added item";
 
     // Test clear operation
-    filter.clear();
-    EXPECT_FALSE(filter.mightContain(item1)) << "Cleared filter should not contain previously added items";
+    filter.Clear();
+    EXPECT_FALSE(filter.MightContain(item1)) << "Cleared filter should not contain previously added items";
 }
 
 TEST_F(BloomFilterTest, FalsePositiveRate) {
@@ -54,7 +54,7 @@ TEST_F(BloomFilterTest, FalsePositiveRate) {
     for (size_t i = 0; i < num_items; ++i) {
         int value = dis(gen);
         added_items.insert(value);
-        filter.add(DataChunk::fromString(std::to_string(value)));
+        filter.Add(DataChunk::FromString(std::to_string(value)));
     }
 
     // Test false positive rate
@@ -65,7 +65,7 @@ TEST_F(BloomFilterTest, FalsePositiveRate) {
         int value = dis(gen);
         if (added_items.find(value) == added_items.end()) {
             // This is a value we didn't add
-            if (filter.mightContain(DataChunk::fromString(std::to_string(value)))) {
+            if (filter.MightContain(DataChunk::FromString(std::to_string(value)))) {
                 ++false_positives;
             }
         }
@@ -80,10 +80,10 @@ TEST_F(BloomFilterTest, Serialization) {
     // Create and populate a filter
     BloomFilter original(100, 0.01);
     std::vector<DataChunk> items = {
-        DataChunk::fromString("item1"), DataChunk::fromString("item2"), DataChunk::fromString("item3")};
+        DataChunk::FromString("item1"), DataChunk::FromString("item2"), DataChunk::FromString("item3")};
 
     for (const auto& item : items) {
-        original.add(item);
+        original.Add(item);
     }
 
     // Serialize
@@ -97,13 +97,13 @@ TEST_F(BloomFilterTest, Serialization) {
     auto& deserialized = deserialized_result.value();
 
     // Verify parameters
-    EXPECT_EQ(deserialized.getBitSize(), original.getBitSize()) << "Bit sizes should match";
-    EXPECT_EQ(deserialized.getHashFunctionCount(), original.getHashFunctionCount())
+    EXPECT_EQ(deserialized.GetBitSize(), original.GetBitSize()) << "Bit sizes should match";
+    EXPECT_EQ(deserialized.GetHashFunctionCount(), original.GetHashFunctionCount())
         << "Hash function counts should match";
 
     // Verify contents
     for (const auto& item : items) {
-        EXPECT_TRUE(deserialized.mightContain(item)) << "Deserialized filter should contain all original items";
+        EXPECT_TRUE(deserialized.MightContain(item)) << "Deserialized filter should contain all original items";
     }
 
     // Test invalid deserialization
@@ -126,10 +126,10 @@ TEST_F(BloomFilterTest, OptimalParameters) {
 
         // Add the expected number of items
         for (size_t i = 0; i < test_case.items; ++i) {
-            filter.add(DataChunk::fromString(std::to_string(i)));
+            filter.Add(DataChunk::FromString(std::to_string(i)));
         }
 
-        double actual_fp_rate = filter.getFalsePositiveProbability();
+        double actual_fp_rate = filter.GetFalsePositiveProbability();
         EXPECT_LE(actual_fp_rate, test_case.fp_rate * 1.5) << "Actual false positive rate should be close to target";
     }
 }

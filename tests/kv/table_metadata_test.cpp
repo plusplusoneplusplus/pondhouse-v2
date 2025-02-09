@@ -25,7 +25,7 @@ TEST_F(TableMetadataTest, MetadataEntrySerialization) {
 
     // Serialize
     auto data = entry.Serialize();
-    ASSERT_GT(data.size(), 0);
+    ASSERT_GT(data.Size(), 0);
 
     // Deserialize
     TableMetadataEntry deserialized;
@@ -48,7 +48,7 @@ TEST_F(TableMetadataTest, MetadataEntryEmptyFiles) {
 
     // Serialize and deserialize
     auto data = entry.Serialize();
-    ASSERT_GT(data.size(), 0);
+    ASSERT_GT(data.Size(), 0);
 
     TableMetadataEntry deserialized;
     ASSERT_TRUE(deserialized.Deserialize(data));
@@ -162,7 +162,7 @@ TEST_F(TableMetadataTest, StateMachineCheckpointing) {
     VERIFY_RESULT(state_machine.CreateCheckpoint());
 
     {
-        auto listFileResult = fs_->list("test_metadata");
+        auto listFileResult = fs_->List("test_metadata");
         VERIFY_RESULT(listFileResult);
 
         // Filter for checkpoint files only
@@ -179,7 +179,7 @@ TEST_F(TableMetadataTest, StateMachineCheckpointing) {
 
         // Verify checkpoint file exists with the actual LSN
         std::string checkpoint_file = "test_metadata/" + checkpoint_files[0];
-        EXPECT_TRUE(fs_->exists(checkpoint_file));
+        EXPECT_TRUE(fs_->Exists(checkpoint_file));
     }
 
     // Create new instance and verify it recovers from checkpoint

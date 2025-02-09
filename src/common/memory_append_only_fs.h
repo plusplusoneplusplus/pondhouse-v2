@@ -25,22 +25,22 @@ public:
     // Set whether the next append should create a duplicate block (for testing)
     void setNextAppendDuplicate(bool should_duplicate);
 
-    [[nodiscard]] Result<FileHandle> openFile(const std::string& path, bool createIfNotExists = false) override;
-    Result<bool> closeFile(FileHandle handle) override;
-    [[nodiscard]] Result<PositionRecord> append(FileHandle handle, const DataChunk& data) override;
-    [[nodiscard]] Result<DataChunk> read(FileHandle handle, size_t offset, size_t length) override;
-    [[nodiscard]] Result<size_t> size(FileHandle handle) const override;
-    [[nodiscard]] bool exists(const std::string& path) const override;
-    [[nodiscard]] Result<bool> renameFiles(const std::vector<RenameOperation>& renames) override;
-    [[nodiscard]] Result<std::vector<std::string>> list(const std::string& path, bool recursive = false) override;
-    [[nodiscard]] Result<bool> deleteFiles(const std::vector<std::string>& paths) override;
+    [[nodiscard]] Result<FileHandle> OpenFile(const std::string& path, bool createIfNotExists = false) override;
+    Result<bool> CloseFile(FileHandle handle) override;
+    [[nodiscard]] Result<PositionRecord> Append(FileHandle handle, const DataChunk& data) override;
+    [[nodiscard]] Result<DataChunk> Read(FileHandle handle, size_t offset, size_t length) override;
+    [[nodiscard]] Result<size_t> Size(FileHandle handle) const override;
+    [[nodiscard]] bool Exists(const std::string& path) const override;
+    [[nodiscard]] Result<bool> RenameFiles(const std::vector<RenameOperation>& renames) override;
+    [[nodiscard]] Result<std::vector<std::string>> List(const std::string& path, bool recursive = false) override;
+    [[nodiscard]] Result<bool> DeleteFiles(const std::vector<std::string>& paths) override;
 
     // Directory operations implementation
-    [[nodiscard]] Result<bool> createDirectory(const std::string& path) override;
-    [[nodiscard]] Result<bool> deleteDirectory(const std::string& path, bool recursive = false) override;
-    [[nodiscard]] Result<bool> moveDirectory(const std::string& source_path, const std::string& target_path) override;
-    [[nodiscard]] Result<DirectoryInfo> getDirectoryInfo(const std::string& path) const override;
-    [[nodiscard]] bool isDirectory(const std::string& path) const override;
+    [[nodiscard]] Result<bool> CreateDirectory(const std::string& path) override;
+    [[nodiscard]] Result<bool> DeleteDirectory(const std::string& path, bool recursive = false) override;
+    [[nodiscard]] Result<bool> MoveDirectory(const std::string& source_path, const std::string& target_path) override;
+    [[nodiscard]] Result<DirectoryInfo> GetDirectoryInfo(const std::string& path) const override;
+    [[nodiscard]] bool IsDirectory(const std::string& path) const override;
 
 private:
     struct FileData {
@@ -67,7 +67,10 @@ private:
                        const std::string& base_path,
                        std::vector<std::string>& result,
                        bool recursive) const;
+protected:
     bool exists(bool lock_held, const std::string& path) const;
+
+private:
     bool shouldCreateDuplicate() const;
 
     DirectoryData root_;

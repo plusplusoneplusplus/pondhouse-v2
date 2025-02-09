@@ -20,7 +20,7 @@ Result<std::unique_ptr<ParquetReader>> ParquetReader::create(
     std::shared_ptr<IAppendOnlyFileSystem> fs,
     const std::string& path) {
     // Open the file for reading
-    auto file_result = fs->openFile(path, false);
+    auto file_result = fs->OpenFile(path, false);
     if (!file_result.ok()) {
         return Result<std::unique_ptr<ParquetReader>>::failure(file_result.error());
     }

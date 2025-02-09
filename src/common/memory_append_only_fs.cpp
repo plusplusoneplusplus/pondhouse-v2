@@ -92,7 +92,7 @@ MemoryAppendOnlyFileSystem::FileData* MemoryAppendOnlyFileSystem::getFile(const 
     return it != dir->files.end() ? it->second.get() : nullptr;
 }
 
-Result<FileHandle> MemoryAppendOnlyFileSystem::openFile(const std::string& path, bool createIfNotExists) {
+Result<FileHandle> MemoryAppendOnlyFileSystem::OpenFile(const std::string& path, bool createIfNotExists) {
     std::lock_guard lock(mutex_);
 
     auto [dir, name] = getDirectoryAndName(path, createIfNotExists);
@@ -118,7 +118,7 @@ Result<FileHandle> MemoryAppendOnlyFileSystem::openFile(const std::string& path,
     return Result<FileHandle>::success(handle);
 }
 
-Result<bool> MemoryAppendOnlyFileSystem::closeFile(FileHandle handle) {
+Result<bool> MemoryAppendOnlyFileSystem::CloseFile(FileHandle handle) {
     if (!handle) {
         return Result<bool>::failure(common::ErrorCode::InvalidHandle, "Invalid handle");
     }
@@ -140,7 +140,7 @@ Result<bool> MemoryAppendOnlyFileSystem::closeFile(FileHandle handle) {
     return Result<bool>::success(true);
 }
 
-Result<PositionRecord> MemoryAppendOnlyFileSystem::append(FileHandle handle, const DataChunk& data) {
+Result<PositionRecord> MemoryAppendOnlyFileSystem::Append(FileHandle handle, const DataChunk& data) {
     if (!handle) {
         return Result<PositionRecord>::failure(common::ErrorCode::InvalidHandle, "Invalid handle");
     }
@@ -167,18 +167,18 @@ Result<PositionRecord> MemoryAppendOnlyFileSystem::append(FileHandle handle, con
 
     if (should_duplicate && !file->has_duplicate) {
         // First attempt with duplicate - simulate failure but write the data
-        file->data.insert(file->data.end(), data.data(), data.data() + data.size());
+        file->data.insert(file->data.end(), data.Data(), data.Data() + data.Size());
         file->has_duplicate = true;
     }
 
     // Normal append or retry after duplicate
-    file->data.insert(file->data.end(), data.data(), data.data() + data.size());
+    file->data.insert(file->data.end(), data.Data(), data.Data() + data.Size());
 
     return Result<PositionRecord>::success(
-        PositionRecord{.id_ = common::UUID::newUUID(), .offset_ = offset, .length_ = data.size()});
+        PositionRecord{.id_ = common::UUID::newUUID(), .offset_ = offset, .length_ = data.Size()});
 }
 
-Result<DataChunk> MemoryAppendOnlyFileSystem::read(FileHandle handle, size_t offset, size_t length) {
+Result<DataChunk> MemoryAppendOnlyFileSystem::Read(FileHandle handle, size_t offset, size_t length) {
     if (!handle) {
         return Result<DataChunk>::failure(common::ErrorCode::InvalidHandle, "Invalid handle");
     }
@@ -203,7 +203,7 @@ Result<DataChunk> MemoryAppendOnlyFileSystem::read(FileHandle handle, size_t off
     return Result<DataChunk>::success(DataChunk(file->data.data() + offset, length));
 }
 
-Result<size_t> MemoryAppendOnlyFileSystem::size(FileHandle handle) const {
+Result<size_t> MemoryAppendOnlyFileSystem::Size(FileHandle handle) const {
     if (!handle) {
         return Result<size_t>::failure(common::ErrorCode::InvalidHandle, "Invalid handle");
     }
@@ -223,12 +223,8 @@ Result<size_t> MemoryAppendOnlyFileSystem::size(FileHandle handle) const {
     return Result<size_t>::success(file->data.size());
 }
 
-bool MemoryAppendOnlyFileSystem::exists(bool lock_held, const std::string& path) const {
-    std::unique_ptr<std::lock_guard<std::mutex>> lock;
-
-    if (!lock_held) {
-        lock = std::make_unique<std::lock_guard<std::mutex>>(mutex_);
-    }
+bool MemoryAppendOnlyFileSystem::Exists(const std::string& path) const {
+    std::lock_guard lock(mutex_);
 
     auto [dir, name] = const_cast<MemoryAppendOnlyFileSystem*>(this)->getDirectoryAndName(path, false);
     if (!dir) {
@@ -242,11 +238,7 @@ bool MemoryAppendOnlyFileSystem::exists(bool lock_held, const std::string& path)
     return dir->files.find(name) != dir->files.end() || dir->subdirs.find(name) != dir->subdirs.end();
 }
 
-bool MemoryAppendOnlyFileSystem::exists(const std::string& path) const {
-    return exists(false, path);
-}
-
-Result<bool> MemoryAppendOnlyFileSystem::renameFiles(const std::vector<RenameOperation>& renames) {
+Result<bool> MemoryAppendOnlyFileSystem::RenameFiles(const std::vector<RenameOperation>& renames) {
     std::lock_guard lock(mutex_);
 
     // Validate operations first
@@ -302,7 +294,7 @@ void MemoryAppendOnlyFileSystem::listRecursive(const DirectoryData* dir,
     }
 }
 
-Result<std::vector<std::string>> MemoryAppendOnlyFileSystem::list(const std::string& path, bool recursive) {
+Result<std::vector<std::string>> MemoryAppendOnlyFileSystem::List(const std::string& path, bool recursive) {
     std::lock_guard lock(mutex_);
 
     auto [dir, name] = getDirectoryAndName(path, false);
@@ -325,7 +317,7 @@ Result<std::vector<std::string>> MemoryAppendOnlyFileSystem::list(const std::str
     return Result<std::vector<std::string>>::success(std::move(result));
 }
 
-Result<bool> MemoryAppendOnlyFileSystem::deleteFiles(const std::vector<std::string>& paths) {
+Result<bool> MemoryAppendOnlyFileSystem::DeleteFiles(const std::vector<std::string>& paths) {
     std::lock_guard lock(mutex_);
 
     bool had_error = false;
@@ -361,7 +353,7 @@ Result<bool> MemoryAppendOnlyFileSystem::deleteFiles(const std::vector<std::stri
     return Result<bool>::success(true);
 }
 
-Result<bool> MemoryAppendOnlyFileSystem::createDirectory(const std::string& path) {
+Result<bool> MemoryAppendOnlyFileSystem::CreateDirectory(const std::string& path) {
     std::lock_guard lock(mutex_);
 
     auto [dir, name] = getDirectoryAndName(path, true);
@@ -384,7 +376,7 @@ Result<bool> MemoryAppendOnlyFileSystem::createDirectory(const std::string& path
     return Result<bool>::success(true);
 }
 
-Result<bool> MemoryAppendOnlyFileSystem::deleteDirectory(const std::string& path, bool recursive) {
+Result<bool> MemoryAppendOnlyFileSystem::DeleteDirectory(const std::string& path, bool recursive) {
     std::lock_guard lock(mutex_);
 
     auto [parent_dir, name] = getDirectoryAndName(path, false);
@@ -410,7 +402,7 @@ Result<bool> MemoryAppendOnlyFileSystem::deleteDirectory(const std::string& path
     return Result<bool>::success(true);
 }
 
-Result<bool> MemoryAppendOnlyFileSystem::moveDirectory(const std::string& source_path, const std::string& target_path) {
+Result<bool> MemoryAppendOnlyFileSystem::MoveDirectory(const std::string& source_path, const std::string& target_path) {
     std::lock_guard lock(mutex_);
 
     if (!exists(true, source_path)) {
@@ -441,7 +433,7 @@ Result<bool> MemoryAppendOnlyFileSystem::moveDirectory(const std::string& source
     return Result<bool>::success(true);
 }
 
-Result<DirectoryInfo> MemoryAppendOnlyFileSystem::getDirectoryInfo(const std::string& path) const {
+Result<DirectoryInfo> MemoryAppendOnlyFileSystem::GetDirectoryInfo(const std::string& path) const {
     std::lock_guard lock(mutex_);
 
     DirectoryInfo info{.exists = false, .is_directory = false, .num_files = 0, .total_size = 0};
@@ -477,7 +469,7 @@ Result<DirectoryInfo> MemoryAppendOnlyFileSystem::getDirectoryInfo(const std::st
     return Result<DirectoryInfo>::success(info);
 }
 
-bool MemoryAppendOnlyFileSystem::isDirectory(const std::string& path) const {
+bool MemoryAppendOnlyFileSystem::IsDirectory(const std::string& path) const {
     std::lock_guard lock(mutex_);
 
     auto [dir, name] = const_cast<MemoryAppendOnlyFileSystem*>(this)->getDirectoryAndName(path, false);
@@ -491,6 +483,22 @@ bool MemoryAppendOnlyFileSystem::isDirectory(const std::string& path) const {
 
     auto it = dir->subdirs.find(name);
     return it != dir->subdirs.end();
+}
+
+bool MemoryAppendOnlyFileSystem::exists(bool lock_held, const std::string& path) const {
+    if (!lock_held) {
+        std::lock_guard lock(mutex_);
+        return exists(true, path);
+    }
+
+    auto [dir, name] = const_cast<MemoryAppendOnlyFileSystem*>(this)->getDirectoryAndName(path, false);
+    if (!dir) {
+        return false;
+    }
+    if (name.empty()) {
+        return true;  // Root or existing directory path
+    }
+    return dir->subdirs.find(name) != dir->subdirs.end() || dir->files.find(name) != dir->files.end();
 }
 
 }  // namespace pond::common

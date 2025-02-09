@@ -69,8 +69,8 @@ public:
                     const Config& config = Config::Default())
         : fs_(std::move(fs)), dir_path_(dir_path), config_(config), wal_(fs_) {
         // Create directory if it doesn't exist
-        if (!fs_->exists(dir_path_)) {
-            auto result = fs_->createDirectory(dir_path_);
+        if (!fs_->Exists(dir_path_)) {
+            auto result = fs_->CreateDirectory(dir_path_);
             if (!result.ok()) {
                 throw std::runtime_error("Failed to create directory: " + result.error().message());
             }
@@ -187,14 +187,14 @@ private:
         std::string checkpoint_path = GetCheckpointPath(current_lsn);
 
         // Write checkpoint to file
-        auto file_result = fs_->openFile(checkpoint_path, true);
+        auto file_result = fs_->OpenFile(checkpoint_path, true);
         if (!file_result.ok()) {
             return Result<void>::failure(file_result.error());
         }
 
         // Write state data
-        auto write_result = fs_->append(file_result.value(), state_result.value());
-        fs_->closeFile(file_result.value());
+        auto write_result = fs_->Append(file_result.value(), state_result.value());
+        fs_->CloseFile(file_result.value());
 
         if (!write_result.ok()) {
             return Result<void>::failure(write_result.error());
@@ -222,7 +222,7 @@ private:
 
     Result<void> RecoverFromCheckpoint() {
         // List all files in the directory
-        auto list_result = fs_->list(dir_path_);
+        auto list_result = fs_->List(dir_path_);
         if (!list_result.ok()) {
             return Result<void>::failure(list_result.error());
         }
@@ -258,19 +258,19 @@ private:
         }
 
         // Read checkpoint file
-        auto file_result = fs_->openFile(dir_path_ + "/" + latest_checkpoint, false);
+        auto file_result = fs_->OpenFile(dir_path_ + "/" + latest_checkpoint, false);
         if (!file_result.ok()) {
             return Result<void>::failure(file_result.error());
         }
 
-        auto size_result = fs_->size(file_result.value());
+        auto size_result = fs_->Size(file_result.value());
         if (!size_result.ok()) {
-            fs_->closeFile(file_result.value());
+            fs_->CloseFile(file_result.value());
             return Result<void>::failure(size_result.error());
         }
 
-        auto read_result = fs_->read(file_result.value(), 0, size_result.value());
-        fs_->closeFile(file_result.value());
+        auto read_result = fs_->Read(file_result.value(), 0, size_result.value());
+        fs_->CloseFile(file_result.value());
 
         if (!read_result.ok()) {
             return Result<void>::failure(read_result.error());
@@ -293,7 +293,7 @@ private:
         }
 
         // Delete the old WAL file since we're rotating to a new one
-        auto delete_result = fs_->deleteFiles({GetWALPath()});
+        auto delete_result = fs_->DeleteFiles({GetWALPath()});
         if (!delete_result.ok()) {
             return Result<void>::failure(delete_result.error());
         }
@@ -314,7 +314,7 @@ private:
 
     Result<void> CleanupOldCheckpoints() {
         // List all files in the directory
-        auto list_result = fs_->list(dir_path_);
+        auto list_result = fs_->List(dir_path_);
         if (!list_result.ok()) {
             return Result<void>::failure(list_result.error());
         }
@@ -350,7 +350,7 @@ private:
                 files_to_delete.push_back(dir_path_ + "/" + checkpoints[i].second);
             }
 
-            auto delete_result = fs_->deleteFiles(files_to_delete);
+            auto delete_result = fs_->DeleteFiles(files_to_delete);
             if (!delete_result.ok()) {
                 LOG_WARNING("Failed to delete old checkpoints: %s", delete_result.error().message().c_str());
             }

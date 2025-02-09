@@ -41,14 +41,14 @@ public:
         LOG_STATUS("Opening WAL file: %s", path.c_str());
 
         path_ = path;
-        auto result = fs_->openFile(path, true);
+        auto result = fs_->OpenFile(path, true);
         if (!result.ok()) {
             return common::Result<bool>::failure(result.error());
         }
         handle_ = result.value();
 
         // Read the last LSN if file is not empty
-        auto size_result = fs_->size(handle_);
+        auto size_result = fs_->Size(handle_);
         if (!size_result.ok()) {
             LOG_ERROR("Failed to get file size: %s", size_result.error().c_str());
             return common::Result<bool>::failure(size_result.error());
@@ -83,10 +83,10 @@ public:
 
         // Prepare entry data
         auto entry_data = entry.Serialize();
-        size_t total_size = detail::HEADER_SIZE + entry_data.size();
+        size_t total_size = detail::HEADER_SIZE + entry_data.Size();
 
         common::DataChunk data(total_size);
-        uint8_t* ptr = data.data();
+        uint8_t* ptr = data.Data();
 
         // Write header
         std::memcpy(ptr, &MAGIC_NUMBER, detail::MAGIC_SIZE);
@@ -96,14 +96,14 @@ public:
         std::memcpy(ptr, &current, detail::LSN_SIZE);
         ptr += detail::LSN_SIZE;
 
-        uint32_t entry_size = entry_data.size();
+        uint32_t entry_size = entry_data.Size();
         std::memcpy(ptr, &entry_size, detail::ENTRY_SIZE_SIZE);
         ptr += detail::ENTRY_SIZE_SIZE;
 
-        std::memcpy(ptr, entry_data.data(), entry_data.size());
+        std::memcpy(ptr, entry_data.Data(), entry_data.Size());
 
         // Append to file
-        auto result = fs_->append(handle_, data);
+        auto result = fs_->Append(handle_, data);
         if (!result.ok()) {
             return common::Result<LSN>::failure(result.error().code(), result.error().message());
         }
@@ -116,7 +116,7 @@ public:
     // Read entries from WAL starting from given LSN
     common::Result<std::vector<T>> read(LSN start_lsn) {
         std::vector<T> entries;
-        auto size_result = fs_->size(handle_);
+        auto size_result = fs_->Size(handle_);
         if (!size_result.ok()) {
             LOG_ERROR("Failed to get file size: %s", size_result.error().c_str());
             return common::Result<std::vector<T>>::failure(size_result.error().code(), size_result.error().message());
@@ -127,21 +127,21 @@ public:
 
         while (offset < file_size) {
             // Read header first
-            auto header_result = fs_->read(handle_, offset, detail::HEADER_SIZE);
+            auto header_result = fs_->Read(handle_, offset, detail::HEADER_SIZE);
             if (!header_result.ok()) {
                 LOG_ERROR("Failed to read header: %s", header_result.error().c_str());
                 return common::Result<std::vector<T>>::failure(header_result.error().code(),
                                                                header_result.error().message());
             }
 
-            if (header_result.value().size() < detail::HEADER_SIZE) {
+            if (header_result.value().Size() < detail::HEADER_SIZE) {
                 LOG_ERROR("Incomplete header read: expected %zu bytes, got %zu",
                           detail::HEADER_SIZE,
-                          header_result.value().size());
+                          header_result.value().Size());
                 return common::Result<std::vector<T>>::failure(ErrorCode::FileReadFailed, "Incomplete header read");
             }
 
-            const uint8_t* ptr = header_result.value().data();
+            const uint8_t* ptr = header_result.value().Data();
 
             // Verify magic number
             uint32_t magic;
@@ -172,7 +172,7 @@ public:
             }
 
             // Read the entry data
-            auto entry_data_result = fs_->read(handle_, offset + detail::HEADER_SIZE, entry_size);
+            auto entry_data_result = fs_->Read(handle_, offset + detail::HEADER_SIZE, entry_size);
             if (!entry_data_result.ok()) {
                 LOG_ERROR("Failed to read entry data: %s", entry_data_result.error().c_str());
                 return common::Result<std::vector<T>>::failure(entry_data_result.error().code(),
@@ -207,7 +207,7 @@ public:
             return common::Result<bool>::success(true);
         }
 
-        auto result = fs_->closeFile(handle_);
+        auto result = fs_->CloseFile(handle_);
         handle_ = INVALID_HANDLE;
         return result;
     }

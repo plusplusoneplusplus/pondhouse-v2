@@ -194,7 +194,7 @@ public:
     // Add keys from a data block
     void AddKeys(const std::vector<std::string>& keys) {
         for (const auto& key : keys) {
-            filter_.add(common::DataChunk::fromString(key));
+            filter_.Add(common::DataChunk::FromString(key));
         }
     }
 
@@ -207,12 +207,12 @@ public:
         }
 
         // Create filter data
-        std::vector<uint8_t> filter_data(result.value().data(), result.value().data() + result.value().size());
+        std::vector<uint8_t> filter_data(result.value().Data(), result.value().Data() + result.value().Size());
 
         // Create and serialize footer
         FilterBlockFooter footer;
         footer.filter_size = filter_data.size();
-        footer.num_keys = filter_.getItemsCount();
+        footer.num_keys = filter_.GetItemsCount();
         footer.checksum = common::Crc32(filter_data.data(), filter_data.size());
         footer.reserved = 0;
 
@@ -223,9 +223,9 @@ public:
         return filter_data;
     }
 
-    void Reset() { filter_.clear(); }
+    void Reset() { filter_.Clear(); }
 
-    double GetFalsePositiveRate() const { return filter_.getFalsePositiveProbability(); }
+    double GetFalsePositiveRate() const { return filter_.GetFalsePositiveProbability(); }
 
 private:
     common::BloomFilter filter_;
@@ -303,7 +303,7 @@ public:
     void UpdateStats(const std::string& key, const common::DataChunk& value) {
         stats_.key_count++;
         stats_.total_key_size += key.size();
-        stats_.total_value_size += value.size();
+        stats_.total_value_size += value.Size();
 
         if (stats_.smallest_key.empty() || key < stats_.smallest_key) {
             stats_.smallest_key = key;

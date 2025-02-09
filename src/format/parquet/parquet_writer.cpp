@@ -26,7 +26,7 @@ Result<std::unique_ptr<ParquetWriter>> ParquetWriter::create(
     const std::shared_ptr<arrow::Schema>& schema,
     parquet::WriterProperties::Builder properties) {
     // Open the file for writing
-    auto file_result = fs->openFile(path, true);
+    auto file_result = fs->OpenFile(path, true);
     if (!file_result.ok()) {
         return Result<std::unique_ptr<ParquetWriter>>::failure(file_result.error());
     }

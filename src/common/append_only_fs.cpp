@@ -98,7 +98,7 @@ public:
         }
 
         auto current_pos = file.stream->tellp();
-        file.stream->write(reinterpret_cast<const char*>(data.data()), data.size());
+        file.stream->write(reinterpret_cast<const char*>(data.Data()), data.Size());
         if (file.stream->fail()) {
             return Result<PositionRecord>::failure(common::ErrorCode::FileWriteFailed, "Failed to write to file");
         }
@@ -107,7 +107,7 @@ public:
         file.stream->flush();
 
         return Result<PositionRecord>::success(PositionRecord{
-            .id_ = common::UUID::newUUID(), .offset_ = static_cast<size_t>(current_pos), .length_ = data.size()});
+            .id_ = common::UUID::newUUID(), .offset_ = static_cast<size_t>(current_pos), .length_ = data.Size()});
     }
 
     Result<DataChunk> read(FileHandle handle, size_t offset, size_t length) {
@@ -129,9 +129,9 @@ public:
             return Result<DataChunk>::failure(common::ErrorCode::FileSeekFailed, "Failed to seek to offset");
         }
 
-        file.stream->read(reinterpret_cast<char*>(chunk.data()), length);
+        file.stream->read(reinterpret_cast<char*>(chunk.Data()), length);
         size_t bytes_read = file.stream->gcount();
-        chunk.resize(bytes_read);
+        chunk.Resize(bytes_read);
 
         if (file.stream->fail() && !file.stream->eof()) {
             return Result<DataChunk>::failure(common::ErrorCode::FileReadFailed, "Failed to read from file");
@@ -223,41 +223,41 @@ private:
 LocalAppendOnlyFileSystem::LocalAppendOnlyFileSystem() : impl_(std::make_unique<Impl>()) {}
 LocalAppendOnlyFileSystem::~LocalAppendOnlyFileSystem() = default;
 
-Result<FileHandle> LocalAppendOnlyFileSystem::openFile(const std::string& path, bool createIfNotExists) {
+Result<FileHandle> LocalAppendOnlyFileSystem::OpenFile(const std::string& path, bool createIfNotExists) {
     return impl_->openFile(path, createIfNotExists);
 }
 
-Result<bool> LocalAppendOnlyFileSystem::closeFile(FileHandle handle) {
+Result<bool> LocalAppendOnlyFileSystem::CloseFile(FileHandle handle) {
     return impl_->closeFile(handle);
 }
 
-Result<PositionRecord> LocalAppendOnlyFileSystem::append(FileHandle handle, const DataChunk& data) {
+Result<PositionRecord> LocalAppendOnlyFileSystem::Append(FileHandle handle, const DataChunk& data) {
     return impl_->append(handle, data);
 }
 
-Result<DataChunk> LocalAppendOnlyFileSystem::read(FileHandle handle, size_t offset, size_t length) {
+Result<DataChunk> LocalAppendOnlyFileSystem::Read(FileHandle handle, size_t offset, size_t length) {
     return impl_->read(handle, offset, length);
 }
 
-Result<size_t> LocalAppendOnlyFileSystem::size(FileHandle handle) const {
+Result<size_t> LocalAppendOnlyFileSystem::Size(FileHandle handle) const {
     return impl_->size(handle);
 }
 
-bool LocalAppendOnlyFileSystem::exists(const std::string& path) const {
+bool LocalAppendOnlyFileSystem::Exists(const std::string& path) const {
     return impl_->exists(path);
 }
 
-Result<bool> LocalAppendOnlyFileSystem::renameFiles(const std::vector<RenameOperation>& renames) {
+Result<bool> LocalAppendOnlyFileSystem::RenameFiles(const std::vector<RenameOperation>& renames) {
     // Validate operations first
     for (const auto& op : renames) {
         // Check if source exists
-        if (!exists(op.source_path)) {
+        if (!Exists(op.source_path)) {
             return Result<bool>::failure(common::ErrorCode::FileNotFound,
                                          "Source file does not exist: " + op.source_path);
         }
 
         // Check if any target already exists
-        if (exists(op.target_path)) {
+        if (Exists(op.target_path)) {
             return Result<bool>::failure(common::ErrorCode::FileAlreadyExists,
                                          "Target file already exists: " + op.target_path);
         }
@@ -306,7 +306,7 @@ Result<bool> LocalAppendOnlyFileSystem::renameFiles(const std::vector<RenameOper
     }
 }
 
-Result<std::vector<std::string>> LocalAppendOnlyFileSystem::list(const std::string& path, bool recursive) {
+Result<std::vector<std::string>> LocalAppendOnlyFileSystem::List(const std::string& path, bool recursive) {
     try {
         std::vector<std::string> files;
         std::filesystem::path base_path = path;
@@ -348,11 +348,11 @@ Result<std::vector<std::string>> LocalAppendOnlyFileSystem::list(const std::stri
     }
 }
 
-Result<bool> LocalAppendOnlyFileSystem::deleteFiles(const std::vector<std::string>& paths) {
+Result<bool> LocalAppendOnlyFileSystem::DeleteFiles(const std::vector<std::string>& paths) {
     return impl_->deleteFiles(paths);
 }
 
-Result<bool> LocalAppendOnlyFileSystem::createDirectory(const std::string& path) {
+Result<bool> LocalAppendOnlyFileSystem::CreateDirectory(const std::string& path) {
     try {
         if (std::filesystem::exists(path)) {
             if (std::filesystem::is_directory(path)) {
@@ -374,7 +374,7 @@ Result<bool> LocalAppendOnlyFileSystem::createDirectory(const std::string& path)
     }
 }
 
-Result<bool> LocalAppendOnlyFileSystem::deleteDirectory(const std::string& path, bool recursive) {
+Result<bool> LocalAppendOnlyFileSystem::DeleteDirectory(const std::string& path, bool recursive) {
     try {
         if (!std::filesystem::exists(path)) {
             return Result<bool>::failure(common::ErrorCode::DirectoryNotFound, "Directory does not exist: " + path);
@@ -409,7 +409,7 @@ Result<bool> LocalAppendOnlyFileSystem::deleteDirectory(const std::string& path,
     }
 }
 
-Result<bool> LocalAppendOnlyFileSystem::moveDirectory(const std::string& source_path, const std::string& target_path) {
+Result<bool> LocalAppendOnlyFileSystem::MoveDirectory(const std::string& source_path, const std::string& target_path) {
     try {
         if (!std::filesystem::exists(source_path)) {
             return Result<bool>::failure(common::ErrorCode::DirectoryNotFound,
@@ -441,7 +441,7 @@ Result<bool> LocalAppendOnlyFileSystem::moveDirectory(const std::string& source_
     }
 }
 
-Result<DirectoryInfo> LocalAppendOnlyFileSystem::getDirectoryInfo(const std::string& path) const {
+Result<DirectoryInfo> LocalAppendOnlyFileSystem::GetDirectoryInfo(const std::string& path) const {
     try {
         DirectoryInfo info{.exists = false, .is_directory = false, .num_files = 0, .total_size = 0};
 
@@ -471,7 +471,7 @@ Result<DirectoryInfo> LocalAppendOnlyFileSystem::getDirectoryInfo(const std::str
     }
 }
 
-bool LocalAppendOnlyFileSystem::isDirectory(const std::string& path) const {
+bool LocalAppendOnlyFileSystem::IsDirectory(const std::string& path) const {
     try {
         return std::filesystem::is_directory(path);
     } catch (const std::filesystem::filesystem_error&) {
@@ -480,7 +480,7 @@ bool LocalAppendOnlyFileSystem::isDirectory(const std::string& path) const {
 }
 
 // Factory method implementation
-std::unique_ptr<IAppendOnlyFileSystem> IAppendOnlyFileSystem::create(std::string_view type) {
+std::unique_ptr<IAppendOnlyFileSystem> IAppendOnlyFileSystem::Create(std::string_view type) {
     if (type == "local") {
         return std::make_unique<LocalAppendOnlyFileSystem>();
     } else if (type == "memory") {
@@ -492,7 +492,7 @@ std::unique_ptr<IAppendOnlyFileSystem> IAppendOnlyFileSystem::create(std::string
 }
 
 // Factory method to create a shared pointer to the concrete implementation
-std::shared_ptr<IAppendOnlyFileSystem> IAppendOnlyFileSystem::createShared(std::string_view type) {
+std::shared_ptr<IAppendOnlyFileSystem> IAppendOnlyFileSystem::CreateShared(std::string_view type) {
     if (type == "local") {
         return std::make_shared<LocalAppendOnlyFileSystem>();
     } else if (type == "memory") {

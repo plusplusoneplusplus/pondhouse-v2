@@ -22,8 +22,8 @@ public:
     Impl(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& base_dir, const Config& config)
         : fs_(std::move(fs)), base_dir_(base_dir), config_(config), cache_(config.block_cache_size) {
         // Create base directory if it doesn't exist
-        if (!fs_->exists(base_dir_)) {
-            auto result = fs_->createDirectory(base_dir_);
+        if (!fs_->Exists(base_dir_)) {
+            auto result = fs_->CreateDirectory(base_dir_);
             if (!result.ok()) {
                 LOG_ERROR(
                     "Failed to create base directory %s: %s", base_dir_.c_str(), result.error().message().c_str());
@@ -140,7 +140,7 @@ public:
         }
 
         // Get file size
-        auto size_result = fs_->size(fs_->openFile(file_path).value());
+        auto size_result = fs_->Size(fs_->OpenFile(file_path).value());
         if (!size_result.ok()) {
             return common::Result<FileInfo>::failure(size_result.error());
         }
@@ -194,7 +194,7 @@ private:
     void LoadExistingSSTables() {
         // List files in base directory
         // TODO: handle the dirty files or use metadata file to record the file numbers
-        auto list_result = fs_->list(base_dir_);
+        auto list_result = fs_->List(base_dir_);
         if (!list_result.ok()) {
             LOG_ERROR("Failed to list directory %s: %s", base_dir_.c_str(), list_result.error().message().c_str());
             return;

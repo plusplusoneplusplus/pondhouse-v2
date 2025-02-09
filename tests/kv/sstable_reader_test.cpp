@@ -19,7 +19,7 @@ protected:
     void SetUp() override { fs_ = std::make_shared<MemoryAppendOnlyFileSystem>(); }
 
     // Helper to create DataChunk from string
-    DataChunk stringToChunk(const std::string& str) { return DataChunk::fromString(str); }
+    DataChunk stringToChunk(const std::string& str) { return DataChunk::FromString(str); }
 
     // Helper to create a test SSTable file
     void createTestSSTable(const std::string& path,
@@ -62,8 +62,8 @@ TEST_F(SSTableReaderTest, BasicOperations) {
     for (const auto& [key, value] : entries) {
         auto result = reader.Get(key);
         ASSERT_TRUE(result.ok());
-        ASSERT_TRUE(result.value().size() > 0);
-        EXPECT_EQ(result.value().toString(), value);
+        ASSERT_TRUE(result.value().Size() > 0);
+        EXPECT_EQ(result.value().ToString(), value);
     }
 
     // Try non-existent key
@@ -114,8 +114,8 @@ TEST_F(SSTableReaderTest, LargeValues) {
     for (const auto& [key, value] : entries) {
         auto result = reader.Get(key);
         VERIFY_RESULT(result);
-        ASSERT_EQ(result.value().size(), large_value.size());
-        EXPECT_EQ(std::string(reinterpret_cast<const char*>(result.value().data()), result.value().size()),
+        ASSERT_EQ(result.value().Size(), large_value.size());
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(result.value().Data()), result.value().Size()),
                   large_value);
     }
 }
@@ -166,13 +166,13 @@ TEST_F(SSTableReaderTest, EmptyKeyValue) {
     // Read empty key
     auto result1 = reader.Get("");
     VERIFY_RESULT(result1);
-    ASSERT_TRUE(result1.value().size() > 0);
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(result1.value().data()), result1.value().size()), "empty_key");
+    ASSERT_TRUE(result1.value().Size() > 0);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(result1.value().Data()), result1.value().Size()), "empty_key");
 
     // Read empty value
     auto result2 = reader.Get("key1");
     VERIFY_RESULT(result2);
-    EXPECT_EQ(result2.value().size(), 0);
+    EXPECT_EQ(result2.value().Size(), 0);
 }
 
 TEST_F(SSTableReaderTest, MultipleBlocks) {
@@ -192,8 +192,8 @@ TEST_F(SSTableReaderTest, MultipleBlocks) {
         int idx = rand() % entries.size();
         auto result = reader.Get(entries[idx].first);
         VERIFY_RESULT(result);
-        ASSERT_TRUE(result.value().size() > 0);
-        EXPECT_EQ(std::string(reinterpret_cast<const char*>(result.value().data()), result.value().size()),
+        ASSERT_TRUE(result.value().Size() > 0);
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(result.value().Data()), result.value().Size()),
                   entries[idx].second);
     }
 }
@@ -227,7 +227,7 @@ TEST_F(SSTableReaderTest, WriterReaderInteraction) {
         for (const auto& reader : readers) {
             auto result = reader->Get(key);
             VERIFY_RESULT(result);
-            EXPECT_EQ(result.value().toString(), expected_value);
+            EXPECT_EQ(result.value().ToString(), expected_value);
         }
     }
 }
@@ -280,7 +280,7 @@ TEST_F(SSTableReaderTest, WriterReaderStress) {
         // Then read the actual value
         auto result = reader.Get(key);
         VERIFY_RESULT(result);
-        EXPECT_EQ(result.value().toString(), expected_value);
+        EXPECT_EQ(result.value().ToString(), expected_value);
     }
 }
 
@@ -307,7 +307,7 @@ TEST_F(SSTableReaderTest, WriterReaderEdgeCases) {
     for (const auto& [key, expected_value] : special_entries) {
         auto result = reader.Get(key);
         VERIFY_RESULT(result);
-        EXPECT_EQ(result.value().toString(), expected_value);
+        EXPECT_EQ(result.value().ToString(), expected_value);
     }
 }
 
@@ -351,7 +351,7 @@ TEST_F(SSTableReaderTest, WriterReaderCompression) {
     for (const auto& [key, expected_value] : entries) {
         auto result = reader.Get(key);
         VERIFY_RESULT(result);
-        EXPECT_EQ(result.value().toString(), expected_value);
+        EXPECT_EQ(result.value().ToString(), expected_value);
     }
 }
 
@@ -377,7 +377,7 @@ TEST_F(SSTableReaderTest, IteratorBasicOperations) {
     while (iter->Valid()) {
         ASSERT_LT(count, entries.size());
         EXPECT_EQ(iter->key(), entries[count].first);
-        EXPECT_EQ(iter->value().toString(), entries[count].second);
+        EXPECT_EQ(iter->value().ToString(), entries[count].second);
         iter->Next();
         count++;
     }
@@ -439,7 +439,7 @@ TEST_F(SSTableReaderTest, IteratorMultipleBlocks) {
     while (iter->Valid()) {
         ASSERT_LT(count, entries.size());
         EXPECT_EQ(iter->key(), entries[count].first);
-        EXPECT_EQ(iter->value().toString(), entries[count].second);
+        EXPECT_EQ(iter->value().ToString(), entries[count].second);
         iter->Next();
         count++;
     }
@@ -451,7 +451,7 @@ TEST_F(SSTableReaderTest, IteratorMultipleBlocks) {
         iter->Seek(entries[pos].first);
         ASSERT_TRUE(iter->Valid());
         EXPECT_EQ(iter->key(), entries[pos].first);
-        EXPECT_EQ(iter->value().toString(), entries[pos].second);
+        EXPECT_EQ(iter->value().ToString(), entries[pos].second);
     }
 }
 
@@ -468,7 +468,7 @@ TEST_F(SSTableReaderTest, IteratorEdgeCases) {
         iter->SeekToFirst();
         ASSERT_TRUE(iter->Valid());
         EXPECT_EQ(iter->key(), "key1");
-        EXPECT_EQ(iter->value().toString(), "value1");
+        EXPECT_EQ(iter->value().ToString(), "value1");
 
         iter->Next();
         EXPECT_FALSE(iter->Valid());
@@ -494,7 +494,7 @@ TEST_F(SSTableReaderTest, IteratorEdgeCases) {
         while (iter->Valid()) {
             ASSERT_LT(count, special_entries.size());
             EXPECT_EQ(iter->key(), special_entries[count].first);
-            EXPECT_EQ(iter->value().toString(), special_entries[count].second);
+            EXPECT_EQ(iter->value().ToString(), special_entries[count].second);
             iter->Next();
             count++;
         }
@@ -553,7 +553,7 @@ TEST_F(SSTableReaderTest, IteratorConcurrentAccess) {
             while (iter->Valid() && count < entries.size() / kNumThreads) {
                 size_t expected_pos = (start_pos + count) % entries.size();
                 if (iter->key() == entries[expected_pos].first
-                    && iter->value().toString() == entries[expected_pos].second) {
+                    && iter->value().ToString() == entries[expected_pos].second) {
                     success_count++;
                 }
                 iter->Next();
@@ -589,7 +589,7 @@ TEST_F(SSTableReaderTest, RangeBasedForLoop) {
     for (const auto& [key, value] : reader) {
         ASSERT_LT(count, entries.size());
         EXPECT_EQ(key, entries[count].first);
-        EXPECT_EQ(value.toString(), entries[count].second);
+        EXPECT_EQ(value.ToString(), entries[count].second);
         count++;
     }
     EXPECT_EQ(count, entries.size());
@@ -614,7 +614,7 @@ TEST_F(SSTableReaderTest, IteratorSTLCompatibility) {
         auto end = reader.end();
         for (auto it = iter; it != end; ++it) {
             EXPECT_NE((*it).first, "");
-            EXPECT_NE((*it).second.size(), 0);
+            EXPECT_NE((*it).second.Size(), 0);
         }
     }
 }

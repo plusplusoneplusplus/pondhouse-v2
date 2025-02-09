@@ -37,58 +37,58 @@ common::DataChunk Record::PackValue(const common::DataChunk& value) {
 
 template<>
 common::Result<int32_t> Record::UnpackValue(const common::DataChunk& data) {
-    if (data.size() != sizeof(int32_t)) {
+    if (data.Size() != sizeof(int32_t)) {
         return common::Result<int32_t>::failure(common::ErrorCode::InvalidArgument, "Invalid data size for int32");
     }
     int32_t value;
-    std::memcpy(&value, data.data(), sizeof(value));
+    std::memcpy(&value, data.Data(), sizeof(value));
     return common::Result<int32_t>::success(value);
 }
 
 template<>
 common::Result<int64_t> Record::UnpackValue(const common::DataChunk& data) {
-    if (data.size() != sizeof(int64_t)) {
+    if (data.Size() != sizeof(int64_t)) {
         return common::Result<int64_t>::failure(common::ErrorCode::InvalidArgument, "Invalid data size for int64");
     }
     int64_t value;
-    std::memcpy(&value, data.data(), sizeof(value));
+    std::memcpy(&value, data.Data(), sizeof(value));
     return common::Result<int64_t>::success(value);
 }
 
 template<>
 common::Result<float> Record::UnpackValue(const common::DataChunk& data) {
-    if (data.size() != sizeof(float)) {
+    if (data.Size() != sizeof(float)) {
         return common::Result<float>::failure(common::ErrorCode::InvalidArgument, "Invalid data size for float");
     }
     float value;
-    std::memcpy(&value, data.data(), sizeof(value));
+    std::memcpy(&value, data.Data(), sizeof(value));
     return common::Result<float>::success(value);
 }
 
 template<>
 common::Result<double> Record::UnpackValue(const common::DataChunk& data) {
-    if (data.size() != sizeof(double)) {
+    if (data.Size() != sizeof(double)) {
         return common::Result<double>::failure(common::ErrorCode::InvalidArgument, "Invalid data size for double");
     }
     double value;
-    std::memcpy(&value, data.data(), sizeof(value));
+    std::memcpy(&value, data.Data(), sizeof(value));
     return common::Result<double>::success(value);
 }
 
 template<>
 common::Result<bool> Record::UnpackValue(const common::DataChunk& data) {
-    if (data.size() != sizeof(bool)) {
+    if (data.Size() != sizeof(bool)) {
         return common::Result<bool>::failure(common::ErrorCode::InvalidArgument, "Invalid data size for boolean");
     }
     bool value;
-    std::memcpy(&value, data.data(), sizeof(value));
+    std::memcpy(&value, data.Data(), sizeof(value));
     return common::Result<bool>::success(value);
 }
 
 template<>
 common::Result<std::string> Record::UnpackValue(const common::DataChunk& data) {
     return common::Result<std::string>::success(
-        std::string(reinterpret_cast<const char*>(data.data()), data.size()));
+        std::string(reinterpret_cast<const char*>(data.Data()), data.Size()));
 }
 
 template<>
@@ -109,7 +109,7 @@ common::DataChunk Record::Serialize() const {
     for (size_t i = 0; i < num_columns; i++) {
         if (values_[i].has_value()) {
             null_bitmap[i / 8] |= (1 << (i % 8));
-            value_lengths[i] = values_[i]->size();
+            value_lengths[i] = values_[i]->Size();
             total_values_size += value_lengths[i];
         }
     }
@@ -139,8 +139,8 @@ common::DataChunk Record::Serialize() const {
     // Write values
     for (size_t i = 0; i < num_columns; i++) {
         if (values_[i].has_value()) {
-            std::memcpy(buffer.data() + offset, values_[i]->data(), values_[i]->size());
-            offset += values_[i]->size();
+            std::memcpy(buffer.data() + offset, values_[i]->Data(), values_[i]->Size());
+            offset += values_[i]->Size();
         }
     }
 
@@ -149,8 +149,8 @@ common::DataChunk Record::Serialize() const {
 
 common::Result<std::unique_ptr<Record>> Record::Deserialize(
     const common::DataChunk& data, std::shared_ptr<Schema> schema) {
-    const uint8_t* ptr = data.data();
-    size_t remaining = data.size();
+    const uint8_t* ptr = data.Data();
+    size_t remaining = data.Size();
 
     if (remaining < sizeof(uint32_t)) {
         return common::Result<std::unique_ptr<Record>>::failure(common::ErrorCode::InvalidArgument, "Invalid data size");

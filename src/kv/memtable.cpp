@@ -190,7 +190,7 @@ size_t MemTable::CalculateEntrySize(const Key& key, const Record& record) const 
     constexpr size_t kNodeOverhead = 64;       // Skip list node overhead (approximate)
     constexpr size_t kAllocatorOverhead = 16;  // Typical memory allocator overhead
 
-    return key.size() + kStringOverhead + record.Serialize().size() + kNodeOverhead + kAllocatorOverhead;
+    return key.size() + kStringOverhead + record.Serialize().Size() + kNodeOverhead + kAllocatorOverhead;
 }
 
 // Iterator implementation

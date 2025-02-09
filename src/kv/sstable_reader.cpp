@@ -15,20 +15,20 @@ public:
 
     ~Impl() {
         if (file_handle_ != common::INVALID_HANDLE) {
-            fs_->closeFile(file_handle_);
+            fs_->CloseFile(file_handle_);
         }
     }
 
     common::Result<bool> Open() {
         // Open file
-        auto result = fs_->openFile(path_, false);
+        auto result = fs_->OpenFile(path_, false);
         if (!result.ok()) {
             return common::Result<bool>::failure(result.error());
         }
         file_handle_ = result.value();
 
         // Get file size
-        auto size_result = fs_->size(file_handle_);
+        auto size_result = fs_->Size(file_handle_);
         if (!size_result.ok()) {
             return common::Result<bool>::failure(size_result.error());
         }
@@ -39,22 +39,22 @@ public:
         }
 
         // Read and validate header
-        auto header_result = fs_->read(file_handle_, 0, FileHeader::kHeaderSize);
+        auto header_result = fs_->Read(file_handle_, 0, FileHeader::kHeaderSize);
         if (!header_result.ok()) {
             return common::Result<bool>::failure(header_result.error());
         }
 
-        if (!header_.Deserialize(header_result.value().data(), FileHeader::kHeaderSize)) {
+        if (!header_.Deserialize(header_result.value().Data(), FileHeader::kHeaderSize)) {
             return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid header");
         }
 
         // Read and validate footer
-        auto footer_result = fs_->read(file_handle_, file_size_ - Footer::kFooterSize, Footer::kFooterSize);
+        auto footer_result = fs_->Read(file_handle_, file_size_ - Footer::kFooterSize, Footer::kFooterSize);
         if (!footer_result.ok()) {
             return common::Result<bool>::failure(footer_result.error());
         }
 
-        if (!footer_.Deserialize(footer_result.value().data(), Footer::kFooterSize)) {
+        if (!footer_.Deserialize(footer_result.value().Data(), Footer::kFooterSize)) {
             return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid footer");
         }
 
@@ -62,7 +62,7 @@ public:
         if (footer_.metadata_block_offset > 0) {
             // Read metadata block
             auto metadata_size = footer_.metadata_block_size;
-            auto read_result = fs_->read(file_handle_, footer_.metadata_block_offset, metadata_size);
+            auto read_result = fs_->Read(file_handle_, footer_.metadata_block_offset, metadata_size);
             if (!read_result.ok()) {
                 return common::Result<bool>::failure(read_result.error());
             }
@@ -71,24 +71,24 @@ public:
             MetadataBlockFooter metadata_footer;
             // Parse metadata block
             if (!metadata_footer.Deserialize(
-                    metadata_data.data() + metadata_data.size() - MetadataBlockFooter::kFooterSize,
+                    metadata_data.Data() + metadata_data.Size() - MetadataBlockFooter::kFooterSize,
                     MetadataBlockFooter::kFooterSize)) {
                 return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid metadata block");
             }
 
             // Verify metadata block checksum
-            if (common::Crc32(metadata_data.data(), metadata_data.size() - MetadataBlockFooter::kFooterSize)
+            if (common::Crc32(metadata_data.Data(), metadata_data.Size() - MetadataBlockFooter::kFooterSize)
                 != metadata_footer.checksum) {
                 return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid metadata block");
             }
 
             // Parse metadata sections
 
-            if (!stats_.Deserialize(metadata_data.data(), metadata_footer.stats_size)) {
+            if (!stats_.Deserialize(metadata_data.Data(), metadata_footer.stats_size)) {
                 return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid metadata stats");
             }
 
-            if (!properties_.Deserialize(metadata_data.data() + metadata_footer.stats_size,
+            if (!properties_.Deserialize(metadata_data.Data() + metadata_footer.stats_size,
                                          metadata_footer.props_size)) {
                 return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid metadata props");
             }
@@ -97,7 +97,7 @@ public:
         // Read filter block if present
         if (footer_.filter_block_offset > 0) {
             auto filter_size = footer_.filter_block_size;
-            auto read_result = fs_->read(file_handle_, footer_.filter_block_offset, filter_size);
+            auto read_result = fs_->Read(file_handle_, footer_.filter_block_offset, filter_size);
             if (!read_result.ok()) {
                 return common::Result<bool>::failure(read_result.error());
             }
@@ -106,7 +106,7 @@ public:
 
         // Read index block
         auto index_size = footer_.index_block_size;
-        auto read_result = fs_->read(file_handle_, footer_.index_block_offset, index_size);
+        auto read_result = fs_->Read(file_handle_, footer_.index_block_offset, index_size);
         if (!read_result.ok()) {
             return common::Result<bool>::failure(read_result.error());
         }
@@ -114,19 +114,19 @@ public:
 
         // Parse index entries
         size_t pos = 0;
-        while (pos + IndexBlockEntry::kHeaderSize <= index_data_.size() - BlockFooter::kFooterSize) {
+        while (pos + IndexBlockEntry::kHeaderSize <= index_data_.Size() - BlockFooter::kFooterSize) {
             IndexBlockEntry entry;
-            if (!entry.DeserializeHeader(index_data_.data() + pos, IndexBlockEntry::kHeaderSize)) {
+            if (!entry.DeserializeHeader(index_data_.Data() + pos, IndexBlockEntry::kHeaderSize)) {
                 return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid index entry");
             }
 
-            if (pos + IndexBlockEntry::kHeaderSize + entry.key_length > index_data_.size() - BlockFooter::kFooterSize) {
+            if (pos + IndexBlockEntry::kHeaderSize + entry.key_length > index_data_.Size() - BlockFooter::kFooterSize) {
                 return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid,
                                                      "Invalid index entry key length");
             }
 
             std::string largest_key(
-                reinterpret_cast<const char*>(index_data_.data() + pos + IndexBlockEntry::kHeaderSize),
+                reinterpret_cast<const char*>(index_data_.Data() + pos + IndexBlockEntry::kHeaderSize),
                 entry.key_length);
             index_entries_.push_back({largest_key, entry.block_offset, entry.block_size, entry.entry_count});
             num_entries_ += entry.entry_count;
@@ -139,39 +139,39 @@ public:
         }
 
         // Read first data block to get the smallest key
-        auto first_block_result = fs_->read(file_handle_, index_entries_[0].offset, index_entries_[0].size);
+        auto first_block_result = fs_->Read(file_handle_, index_entries_[0].offset, index_entries_[0].size);
         if (!first_block_result.ok()) {
             return common::Result<bool>::failure(first_block_result.error());
         }
 
         auto first_block_data = first_block_result.value();
         DataBlockEntry first_entry;
-        if (!first_entry.DeserializeHeader(first_block_data.data(), DataBlockEntry::kHeaderSize)) {
+        if (!first_entry.DeserializeHeader(first_block_data.Data(), DataBlockEntry::kHeaderSize)) {
             return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid first data entry");
         }
 
         smallest_key_ =
-            std::string(reinterpret_cast<const char*>(first_block_data.data() + DataBlockEntry::kHeaderSize),
+            std::string(reinterpret_cast<const char*>(first_block_data.Data() + DataBlockEntry::kHeaderSize),
                         first_entry.key_length);
         largest_key_ = index_entries_.back().largest_key;
 
         // Read bloom filter if present
         if (header_.HasFilter() && footer_.filter_block_offset > 0) {
             auto filter_size = footer_.index_block_offset - footer_.filter_block_offset;
-            auto filter_result = fs_->read(file_handle_, footer_.filter_block_offset, filter_size);
+            auto filter_result = fs_->Read(file_handle_, footer_.filter_block_offset, filter_size);
             if (!filter_result.ok()) {
                 return common::Result<bool>::failure(filter_result.error());
             }
 
             auto filter_data = filter_result.value();
             FilterBlockFooter filter_footer;
-            if (!filter_footer.Deserialize(filter_data.data() + filter_data.size() - FilterBlockFooter::kFooterSize,
+            if (!filter_footer.Deserialize(filter_data.Data() + filter_data.Size() - FilterBlockFooter::kFooterSize,
                                            FilterBlockFooter::kFooterSize)) {
                 return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid filter footer");
             }
 
             auto filter_result_2 =
-                common::BloomFilter::Deserialize(common::DataChunk(filter_data.data(), filter_footer.filter_size));
+                common::BloomFilter::Deserialize(common::DataChunk(filter_data.Data(), filter_footer.filter_size));
             if (!filter_result_2.ok()) {
                 return common::Result<bool>::failure(filter_result_2.error());
             }
@@ -194,7 +194,7 @@ public:
 
         // Check bloom filter if present
         if (filter_
-            && !filter_->mightContain(common::DataChunk(reinterpret_cast<const uint8_t*>(key.data()), key.size()))) {
+            && !filter_->MightContain(common::DataChunk(reinterpret_cast<const uint8_t*>(key.data()), key.size()))) {
             return common::Result<common::DataChunk>::failure(common::ErrorCode::NotFound, "Key not found");
         }
 
@@ -208,7 +208,7 @@ public:
         }
 
         // Read data block
-        auto block_result = fs_->read(file_handle_, it->offset, it->size);
+        auto block_result = fs_->Read(file_handle_, it->offset, it->size);
         if (!block_result.ok()) {
             return common::Result<common::DataChunk>::failure(block_result.error());
         }
@@ -218,25 +218,25 @@ public:
         size_t pos = 0;
 
         // Iterate through data block entries, can be optimized to binary search if needed
-        while (pos + DataBlockEntry::kHeaderSize <= block_data.size() - BlockFooter::kFooterSize) {
+        while (pos + DataBlockEntry::kHeaderSize <= block_data.Size() - BlockFooter::kFooterSize) {
             DataBlockEntry entry;
-            if (!entry.DeserializeHeader(block_data.data() + pos, DataBlockEntry::kHeaderSize)) {
+            if (!entry.DeserializeHeader(block_data.Data() + pos, DataBlockEntry::kHeaderSize)) {
                 return common::Result<common::DataChunk>::failure(common::ErrorCode::SSTableInvalid,
                                                                   "Invalid data entry");
             }
 
             if (pos + DataBlockEntry::kHeaderSize + entry.key_length + entry.value_length
-                > block_data.size() - BlockFooter::kFooterSize) {
+                > block_data.Size() - BlockFooter::kFooterSize) {
                 return common::Result<common::DataChunk>::failure(common::ErrorCode::SSTableInvalid,
                                                                   "Invalid data entry lengths");
             }
 
             std::string current_key(
-                reinterpret_cast<const char*>(block_data.data() + pos + DataBlockEntry::kHeaderSize), entry.key_length);
+                reinterpret_cast<const char*>(block_data.Data() + pos + DataBlockEntry::kHeaderSize), entry.key_length);
 
             if (current_key == key) {
                 // Found the key
-                const uint8_t* value_ptr = block_data.data() + pos + DataBlockEntry::kHeaderSize + entry.key_length;
+                const uint8_t* value_ptr = block_data.Data() + pos + DataBlockEntry::kHeaderSize + entry.key_length;
                 return common::Result<common::DataChunk>::success(common::DataChunk(value_ptr, entry.value_length));
             } else if (current_key > key) {
                 // Key not found (we've gone past it)
@@ -263,7 +263,7 @@ public:
         // Check bloom filter if present
         if (filter_) {
             return common::Result<bool>::success(
-                filter_->mightContain(common::DataChunk(reinterpret_cast<const uint8_t*>(key.data()), key.size())));
+                filter_->MightContain(common::DataChunk(reinterpret_cast<const uint8_t*>(key.data()), key.size())));
         }
 
         // No bloom filter, have to assume it might be present
@@ -404,7 +404,7 @@ public:
 
         // If we're at the end of the current block, move to next block
         if (block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length
-            >= current_block_.size() - BlockFooter::kFooterSize) {
+            >= current_block_.Size() - BlockFooter::kFooterSize) {
             if (current_block_idx_ + 1 >= reader_->impl_->index_entries_.size()) {
                 valid_ = false;
                 return;
@@ -449,7 +449,7 @@ public:
         block_pos_ = 0;
 
         // Scan through entries in the block until we find the first key >= target
-        while (block_pos_ + DataBlockEntry::kHeaderSize <= current_block_.size() - BlockFooter::kFooterSize) {
+        while (block_pos_ + DataBlockEntry::kHeaderSize <= current_block_.Size() - BlockFooter::kFooterSize) {
             if (!ParseCurrentEntry()) {
                 valid_ = false;
                 return;
@@ -469,7 +469,7 @@ private:
     bool LoadBlock(size_t block_idx) {
         const auto& index_entry = reader_->impl_->index_entries_[block_idx];
         auto block_result =
-            reader_->impl_->fs_->read(reader_->impl_->file_handle_, index_entry.offset, index_entry.size);
+            reader_->impl_->fs_->Read(reader_->impl_->file_handle_, index_entry.offset, index_entry.size);
         if (!block_result.ok()) {
             valid_ = false;
             return false;
@@ -479,28 +479,28 @@ private:
     }
 
     bool ParseCurrentEntry() {
-        if (block_pos_ + DataBlockEntry::kHeaderSize > current_block_.size() - BlockFooter::kFooterSize) {
+        if (block_pos_ + DataBlockEntry::kHeaderSize > current_block_.Size() - BlockFooter::kFooterSize) {
             valid_ = false;
             return false;
         }
 
-        if (!current_entry_.DeserializeHeader(current_block_.data() + block_pos_, DataBlockEntry::kHeaderSize)) {
+        if (!current_entry_.DeserializeHeader(current_block_.Data() + block_pos_, DataBlockEntry::kHeaderSize)) {
             valid_ = false;
             return false;
         }
 
         if (block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length
-            > current_block_.size() - BlockFooter::kFooterSize) {
+            > current_block_.Size() - BlockFooter::kFooterSize) {
             valid_ = false;
             return false;
         }
 
         const char* key_ptr =
-            reinterpret_cast<const char*>(current_block_.data() + block_pos_ + DataBlockEntry::kHeaderSize);
+            reinterpret_cast<const char*>(current_block_.Data() + block_pos_ + DataBlockEntry::kHeaderSize);
         current_key_ = std::string(key_ptr, current_entry_.key_length);
 
         const uint8_t* value_ptr =
-            current_block_.data() + block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length;
+            current_block_.Data() + block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length;
         current_value_ = common::DataChunk(value_ptr, current_entry_.value_length);
 
         valid_ = true;

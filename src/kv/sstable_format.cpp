@@ -270,7 +270,7 @@ bool DataBlockEntry::DeserializeHeader(const uint8_t* data, size_t size) {
 
 std::vector<uint8_t> DataBlockEntry::Serialize(const std::string& key, const common::DataChunk& value) const {
     assert(key.size() == key_length);
-    assert(value.size() == value_length);
+    assert(value.Size() == value_length);
 
     std::vector<uint8_t> buffer;
     buffer.reserve(kHeaderSize + key_length + value_length);
@@ -283,7 +283,7 @@ std::vector<uint8_t> DataBlockEntry::Serialize(const std::string& key, const com
     buffer.insert(buffer.end(), key.begin(), key.end());
 
     // Add value
-    buffer.insert(buffer.end(), value.data(), value.data() + value.size());
+    buffer.insert(buffer.end(), value.Data(), value.Data() + value.Size());
 
     return buffer;
 }
@@ -355,7 +355,7 @@ std::vector<uint8_t> IndexBlockEntry::Serialize(const std::string& largest_key) 
 }
 
 bool DataBlockBuilder::Add(const std::string& key, const common::DataChunk& value) {
-    size_t entry_size = DataBlockEntry::kHeaderSize + key.size() + value.size();
+    size_t entry_size = DataBlockEntry::kHeaderSize + key.size() + value.Size();
     if (!Empty() && current_size_ + entry_size > kTargetBlockSize) {
         return false;
     }
@@ -377,7 +377,7 @@ std::vector<uint8_t> DataBlockBuilder::Finish() {
     for (const auto& entry : entries_) {
         DataBlockEntry header;
         header.key_length = entry.key.size();
-        header.value_length = entry.value.size();
+        header.value_length = entry.value.Size();
 
         auto serialized = header.Serialize(entry.key, entry.value);
         buffer.insert(buffer.end(), serialized.begin(), serialized.end());

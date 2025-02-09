@@ -61,7 +61,7 @@ TEST_F(KVWALTest, BasicOperations) {
     const auto& read_entry3 = entries.value()[2];
     EXPECT_EQ(read_entry3.key, "key1");
     EXPECT_EQ(read_entry3.type, EntryType::Delete);
-    EXPECT_EQ(read_entry3.value.size(), 0);
+    EXPECT_EQ(read_entry3.value.Size(), 0);
 }
 
 TEST_F(KVWALTest, ReadFromOffset) {

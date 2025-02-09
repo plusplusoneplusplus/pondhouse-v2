@@ -43,7 +43,7 @@ TEST_F(MemTableTest, BasicOperations) {
     EXPECT_EQ(retrieved->Get<std::string>(1).value(), "test");
     auto value_result = retrieved->Get<common::DataChunk>(2);
     EXPECT_TRUE(value_result.ok());
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(value_result.value().data()), value_result.value().size()),
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(value_result.value().Data()), value_result.value().Size()),
               "value1");
 
     // Test non-existent key
@@ -63,7 +63,7 @@ TEST_F(MemTableTest, ColumnOperations) {
     // Verify update
     auto column_result = table->GetColumn("key1", "name");
     EXPECT_TRUE(column_result.ok());
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(column_result.value().data()), column_result.value().size()),
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(column_result.value().Data()), column_result.value().Size()),
               "updated");
 
     // Other columns should remain unchanged
@@ -73,7 +73,7 @@ TEST_F(MemTableTest, ColumnOperations) {
     EXPECT_EQ(retrieved->Get<int32_t>(0).value(), 1);
     auto value_result = retrieved->Get<common::DataChunk>(2);
     EXPECT_TRUE(value_result.ok());
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(value_result.value().data()), value_result.value().size()),
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(value_result.value().Data()), value_result.value().Size()),
               "value1");
 }
 
@@ -133,7 +133,7 @@ TEST_F(MemTableTest, IteratorBasicOperations) {
         EXPECT_EQ(record.Get<std::string>(1).value(), "name" + std::to_string(count));
         auto value_result = record.Get<common::DataChunk>(2);
         EXPECT_TRUE(value_result.ok());
-        EXPECT_EQ(std::string(reinterpret_cast<const char*>(value_result.value().data()), value_result.value().size()),
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(value_result.value().Data()), value_result.value().Size()),
                   "value" + std::to_string(count));
 
         EXPECT_TRUE(it->Next().ok());
@@ -270,7 +270,7 @@ TEST_F(MemTableTest, ConcurrentOperations) {
             auto value_result = record->Get<common::DataChunk>(2);
             EXPECT_TRUE(value_result.ok());
             EXPECT_EQ(
-                std::string(reinterpret_cast<const char*>(value_result.value().data()), value_result.value().size()),
+                std::string(reinterpret_cast<const char*>(value_result.value().Data()), value_result.value().Size()),
                 "value" + std::to_string(j));
         }
     }
@@ -296,7 +296,7 @@ TEST_F(MemTableTest, DeleteOperations) {
     EXPECT_EQ(retrieved->Get<std::string>(1).value(), "test2");
     auto value_result = retrieved->Get<common::DataChunk>(2);
     EXPECT_TRUE(value_result.ok());
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(value_result.value().data()), value_result.value().size()),
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(value_result.value().Data()), value_result.value().Size()),
               "value2");
 }
 

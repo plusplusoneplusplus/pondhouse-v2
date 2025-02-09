@@ -9,7 +9,7 @@ namespace pond::format {
 
 AppendOnlyInputStream::AppendOnlyInputStream(std::shared_ptr<common::IAppendOnlyFileSystem> fs, common::FileHandle handle)
     : fs_(fs), handle_(handle) {
-    auto size_result = fs_->size(handle_);
+    auto size_result = fs_->Size(handle_);
     if (size_result.ok()) {
         size_ = size_result.value();
     } else {
@@ -48,15 +48,15 @@ arrow::Result<int64_t> AppendOnlyInputStream::Read(int64_t nbytes, void* out) {
         return 0;
     }
 
-    auto read_result = fs_->read(handle_, position_, nbytes);
+    auto read_result = fs_->Read(handle_, position_, nbytes);
     if (!read_result.ok()) {
         LOG_ERROR("Failed to read from file: %s", read_result.error().c_str());
         return arrow::Status::IOError("Failed to read from file");
     }
 
     const auto& data = read_result.value();
-    int64_t bytes_to_read = std::min(static_cast<int64_t>(data.size()), nbytes);
-    std::memcpy(out, data.data(), bytes_to_read);
+    int64_t bytes_to_read = std::min(static_cast<int64_t>(data.Size()), nbytes);
+    std::memcpy(out, data.Data(), bytes_to_read);
     position_ += bytes_to_read;
     return bytes_to_read;
 }
@@ -66,15 +66,15 @@ arrow::Result<std::shared_ptr<arrow::Buffer>> AppendOnlyInputStream::Read(int64_
         return arrow::Status::OK();
     }
 
-    auto read_result = fs_->read(handle_, position_, nbytes);
+    auto read_result = fs_->Read(handle_, position_, nbytes);
     if (!read_result.ok()) {
         LOG_ERROR("Failed to read from file: %s", read_result.error().c_str());
         return arrow::Status::IOError("Failed to read from file");
     }
 
     const auto& data = read_result.value();
-    auto buffer = arrow::Buffer::FromString(std::string(reinterpret_cast<const char*>(data.data()), data.size()));
-    position_ += data.size();
+    auto buffer = arrow::Buffer::FromString(std::string(reinterpret_cast<const char*>(data.Data()), data.Size()));
+    position_ += data.Size();
     return buffer;
 }
 

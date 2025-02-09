@@ -131,7 +131,7 @@ common::Result<bool> Table::Recover() {
     size_t max_sequence = 0;
     for (size_t i = 0; i < 1000; i++) {  // Limit to prevent infinite loop
         std::string wal_path = GetWALPath(i);
-        auto exists = fs_->exists(wal_path);
+        auto exists = fs_->Exists(wal_path);
         if (!exists) {
             break;
         }
@@ -222,7 +222,7 @@ common::Result<common::LSN> Table::WriteToWAL(KvEntry& entry) {
     }
 
     // Check if WAL needs rotation
-    auto size_result = fs_->size(wal_->handle());
+    auto size_result = fs_->Size(wal_->handle());
     if (!size_result.ok()) {
         return common::Result<common::LSN>::failure(size_result.error());
     }

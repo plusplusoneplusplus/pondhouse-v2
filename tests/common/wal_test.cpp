@@ -31,7 +31,7 @@ protected:
 };
 
 TEST_F(WALTest, LSNValidation) {
-    auto _ = fs_->deleteFiles({"test_lsn.wal"});
+    auto _ = fs_->DeleteFiles({"test_lsn.wal"});
 
     WAL<KvEntry> wal(fs_);
     auto result = wal.open("test_lsn.wal");
@@ -66,7 +66,7 @@ TEST_F(WALTest, LSNValidation) {
 }
 
 TEST_F(WALTest, BasicOperations) {
-    auto _ = fs_->deleteFiles({"test.wal"});
+    auto _ = fs_->DeleteFiles({"test.wal"});
 
     WAL<KvEntry> wal(fs_);
 
@@ -102,7 +102,7 @@ TEST_F(WALTest, BasicOperations) {
 }
 
 TEST_F(WALTest, Recovery) {
-    auto _ = fs_->deleteFiles({"recovery.wal"});
+    auto _ = fs_->DeleteFiles({"recovery.wal"});
 
     // Write some entries
     {
@@ -149,7 +149,7 @@ TEST_F(WALTest, Recovery) {
 }
 
 TEST_F(WALTest, PartialRead) {
-    auto _ = fs_->deleteFiles({"partial.wal"});
+    auto _ = fs_->DeleteFiles({"partial.wal"});
 
     // Write entries
     {
@@ -190,7 +190,7 @@ TEST_F(WALTest, PartialRead) {
 }
 
 TEST_F(WALTest, CorruptedEntry) {
-    auto _ = fs_->deleteFiles({"corrupted.wal"});
+    auto _ = fs_->DeleteFiles({"corrupted.wal"});
 
     WAL<KvEntry> wal(fs_);
     auto result = wal.open("corrupted.wal");
@@ -202,7 +202,7 @@ TEST_F(WALTest, CorruptedEntry) {
     VERIFY_RESULT_MSG(append_result, "Should append valid entry");
 
     // Corrupt the file by writing invalid data
-    auto corrupt_result = fs_->append(wal.handle(), DataChunk(10));  // Write zeros
+    auto corrupt_result = fs_->Append(wal.handle(), DataChunk(10));  // Write zeros
     VERIFY_RESULT_MSG(corrupt_result, "Should append corrupted data");
 
     // Try to read

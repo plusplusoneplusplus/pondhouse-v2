@@ -29,7 +29,7 @@ std::vector<bool> unpackBits(const uint8_t* bytes, size_t num_bits) {
 }  // namespace
 
 BloomFilter::BloomFilter(size_t expected_items, double false_positive_prob) {
-    auto [size, num_hash] = calculateOptimalParameters(expected_items, false_positive_prob);
+    auto [size, num_hash] = CalculateOptimalParameters(expected_items, false_positive_prob);
     bits_.resize(size);
     num_hash_functions_ = num_hash;
 }
@@ -37,19 +37,19 @@ BloomFilter::BloomFilter(size_t expected_items, double false_positive_prob) {
 BloomFilter::BloomFilter(size_t size_in_bits, size_t num_hash_functions)
     : bits_(size_in_bits), num_hash_functions_(num_hash_functions) {}
 
-void BloomFilter::add(const DataChunk& item) {
-    auto [hash1, hash2] = getBaseHashes(item);
+void BloomFilter::Add(const DataChunk& item) {
+    auto [hash1, hash2] = GetBaseHashes(item);
     for (size_t i = 0; i < num_hash_functions_; ++i) {
-        size_t hash = getNthHash(i, hash1, hash2);
+        size_t hash = GetNthHash(i, hash1, hash2);
         bits_[hash % bits_.size()] = true;
     }
     ++items_count_;
 }
 
-bool BloomFilter::mightContain(const DataChunk& item) const {
-    auto [hash1, hash2] = getBaseHashes(item);
+bool BloomFilter::MightContain(const DataChunk& item) const {
+    auto [hash1, hash2] = GetBaseHashes(item);
     for (size_t i = 0; i < num_hash_functions_; ++i) {
-        size_t hash = getNthHash(i, hash1, hash2);
+        size_t hash = GetNthHash(i, hash1, hash2);
         if (!bits_[hash % bits_.size()]) {
             return false;
         }
@@ -57,12 +57,12 @@ bool BloomFilter::mightContain(const DataChunk& item) const {
     return true;
 }
 
-void BloomFilter::clear() {
+void BloomFilter::Clear() {
     std::fill(bits_.begin(), bits_.end(), false);
     items_count_ = 0;
 }
 
-double BloomFilter::getFalsePositiveProbability() const {
+double BloomFilter::GetFalsePositiveProbability() const {
     if (items_count_ == 0)
         return 0.0;
 
@@ -76,7 +76,7 @@ double BloomFilter::getFalsePositiveProbability() const {
     return std::pow(inner, k);
 }
 
-size_t BloomFilter::getPopCount() const {
+size_t BloomFilter::GetPopCount() const {
     return std::count(bits_.begin(), bits_.end(), true);
 }
 
@@ -90,7 +90,7 @@ Result<DataChunk> BloomFilter::Serialize() const {
 
     // Create data chunk for serialization
     DataChunk chunk(header_size + packed_bits.size());
-    uint8_t* ptr = chunk.data();
+    uint8_t* ptr = chunk.Data();
 
     // Write header
     *reinterpret_cast<uint32_t*>(ptr) = MAGIC_NUMBER;
@@ -115,12 +115,12 @@ Result<DataChunk> BloomFilter::Serialize() const {
 }
 
 Result<BloomFilter> BloomFilter::Deserialize(const DataChunk& data) {
-    if (data.size() < sizeof(MAGIC_NUMBER) + sizeof(VERSION) + sizeof(size_t) * 3) {
+    if (data.Size() < sizeof(MAGIC_NUMBER) + sizeof(VERSION) + sizeof(size_t) * 3) {
         return Result<BloomFilter>::failure(ErrorCode::BloomFilterInvalidDataSize,
                                             "Data too small for valid bloom filter");
     }
 
-    const uint8_t* ptr = data.data();
+    const uint8_t* ptr = data.Data();
 
     // Verify magic number and version
     uint32_t magic = *reinterpret_cast<const uint32_t*>(ptr);
@@ -153,7 +153,7 @@ Result<BloomFilter> BloomFilter::Deserialize(const DataChunk& data) {
 
     // Unpack bits
     size_t packed_size = (bits_size + 7) / 8;
-    if (data.size() != sizeof(MAGIC_NUMBER) + sizeof(VERSION) + sizeof(size_t) * 3 + packed_size) {
+    if (data.Size() != sizeof(MAGIC_NUMBER) + sizeof(VERSION) + sizeof(size_t) * 3 + packed_size) {
         return Result<BloomFilter>::failure(ErrorCode::BloomFilterInvalidDataSize, "Invalid data size");
     }
 
@@ -162,7 +162,7 @@ Result<BloomFilter> BloomFilter::Deserialize(const DataChunk& data) {
     return Result<BloomFilter>::success(std::move(filter));
 }
 
-std::pair<size_t, size_t> BloomFilter::calculateOptimalParameters(size_t expected_items, double false_positive_prob) {
+std::pair<size_t, size_t> BloomFilter::CalculateOptimalParameters(size_t expected_items, double false_positive_prob) {
     // m = -n*ln(p)/(ln(2))^2
     size_t optimal_size = static_cast<size_t>(
         std::ceil(-static_cast<double>(expected_items) * std::log(false_positive_prob) / (std::log(2) * std::log(2))));
@@ -174,14 +174,14 @@ std::pair<size_t, size_t> BloomFilter::calculateOptimalParameters(size_t expecte
     return {optimal_size, optimal_hash_functions};
 }
 
-std::array<size_t, 2> BloomFilter::getBaseHashes(const DataChunk& item) const {
+std::array<size_t, 2> BloomFilter::GetBaseHashes(const DataChunk& item) const {
     // Use xxHash for high-quality, fast hashing
-    size_t hash1 = XXH64(item.data(), item.size(), 0);
-    size_t hash2 = XXH64(item.data(), item.size(), hash1);
+    size_t hash1 = XXH64(item.Data(), item.Size(), 0);
+    size_t hash2 = XXH64(item.Data(), item.Size(), hash1);
     return {hash1, hash2};
 }
 
-size_t BloomFilter::getNthHash(size_t n, size_t hash1, size_t hash2) const {
+size_t BloomFilter::GetNthHash(size_t n, size_t hash1, size_t hash2) const {
     // Use double hashing technique: h(i) = h1 + i*h2
     return hash1 + n * hash2;
 }

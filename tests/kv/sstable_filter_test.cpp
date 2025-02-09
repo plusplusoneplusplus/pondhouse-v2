@@ -69,11 +69,11 @@ TEST_F(SSTableFilterTest, FilterBlockWithFooter) {
 
     // Check existing keys
     for (const auto& key : keys) {
-        EXPECT_TRUE(filter.mightContain(DataChunk::fromString(key)));
+        EXPECT_TRUE(filter.MightContain(DataChunk::FromString(key)));
     }
 
     // Check non-existent key
-    EXPECT_FALSE(filter.mightContain(DataChunk::fromString("nonexistent")));
+    EXPECT_FALSE(filter.MightContain(DataChunk::FromString("nonexistent")));
 }
 
 TEST_F(SSTableFilterTest, FilterBlockBasic) {
@@ -99,11 +99,11 @@ TEST_F(SSTableFilterTest, FilterBlockBasic) {
 
     // Check existing keys
     for (const auto& key : keys) {
-        EXPECT_TRUE(filter.mightContain(DataChunk::fromString(key)));
+        EXPECT_TRUE(filter.MightContain(DataChunk::FromString(key)));
     }
 
     // Check non-existent key
-    EXPECT_FALSE(filter.mightContain(DataChunk::fromString("nonexistent")));
+    EXPECT_FALSE(filter.MightContain(DataChunk::FromString("nonexistent")));
 }
 
 TEST_F(SSTableFilterTest, FilterBlockMultipleBlocks) {
@@ -134,13 +134,13 @@ TEST_F(SSTableFilterTest, FilterBlockMultipleBlocks) {
 
     // Check all keys from all blocks
     for (const auto& key : block1_keys) {
-        EXPECT_TRUE(filter.mightContain(DataChunk::fromString(key)));
+        EXPECT_TRUE(filter.MightContain(DataChunk::FromString(key)));
     }
     for (const auto& key : block2_keys) {
-        EXPECT_TRUE(filter.mightContain(DataChunk::fromString(key)));
+        EXPECT_TRUE(filter.MightContain(DataChunk::FromString(key)));
     }
     for (const auto& key : block3_keys) {
-        EXPECT_TRUE(filter.mightContain(DataChunk::fromString(key)));
+        EXPECT_TRUE(filter.MightContain(DataChunk::FromString(key)));
     }
 
     // Check false positive rate
@@ -148,7 +148,7 @@ TEST_F(SSTableFilterTest, FilterBlockMultipleBlocks) {
     const int num_tests = 1000;
     for (int i = 0; i < num_tests; i++) {
         std::string test_key = "test" + std::to_string(i);
-        if (filter.mightContain(DataChunk::fromString(test_key))) {
+        if (filter.MightContain(DataChunk::FromString(test_key))) {
             false_positives++;
         }
     }
@@ -186,12 +186,12 @@ TEST_F(SSTableFilterTest, FilterBlockReset) {
 
     // Original keys should not be present
     for (const auto& key : keys1) {
-        EXPECT_FALSE(filter.mightContain(DataChunk::fromString(key)));
+        EXPECT_FALSE(filter.MightContain(DataChunk::FromString(key)));
     }
 
     // New keys should be present
     for (const auto& key : keys2) {
-        EXPECT_TRUE(filter.mightContain(DataChunk::fromString(key)));
+        EXPECT_TRUE(filter.MightContain(DataChunk::FromString(key)));
     }
 }
 

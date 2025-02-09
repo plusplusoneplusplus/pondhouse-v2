@@ -41,8 +41,8 @@ TEST_F(RecordTest, BasicOperations) {
 
     auto binary_result = record.Get<common::DataChunk>(5);
     EXPECT_TRUE(binary_result.ok());
-    EXPECT_EQ(binary_result.value().size(), 10);
-    EXPECT_EQ(std::memcmp(binary_result.value().data(), "binary data", 10), 0);
+    EXPECT_EQ(binary_result.value().Size(), 10);
+    EXPECT_EQ(std::memcmp(binary_result.value().Data(), "binary data", 10), 0);
 }
 
 TEST_F(RecordTest, NullValues) {
@@ -75,7 +75,7 @@ TEST_F(RecordTest, SerializationDeserialization) {
 
     // Serialize
     common::DataChunk serialized = original.Serialize();
-    EXPECT_GT(serialized.size(), 0);
+    EXPECT_GT(serialized.Size(), 0);
 
     // Deserialize
     auto result = Record::Deserialize(serialized, schema);
@@ -142,8 +142,8 @@ TEST_F(RecordTest, LargeValues) {
     record.Set(5, common::DataChunk(large_binary.data(), large_binary.size()));
     auto binary_result = record.Get<common::DataChunk>(5);
     EXPECT_TRUE(binary_result.ok());
-    EXPECT_EQ(binary_result.value().size(), large_binary.size());
-    EXPECT_EQ(std::memcmp(binary_result.value().data(), large_binary.data(), large_binary.size()), 0);
+    EXPECT_EQ(binary_result.value().Size(), large_binary.size());
+    EXPECT_EQ(std::memcmp(binary_result.value().Data(), large_binary.data(), large_binary.size()), 0);
 }
 
 }  // namespace pond::kv

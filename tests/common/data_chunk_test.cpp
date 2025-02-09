@@ -5,31 +5,31 @@ using namespace pond::common;
 
 TEST(DataChunkTest, DefaultConstructor) {
     DataChunk chunk;
-    EXPECT_TRUE(chunk.empty());
-    EXPECT_EQ(chunk.size(), 0);
+    EXPECT_TRUE(chunk.Empty());
+    EXPECT_EQ(chunk.Size(), 0);
 }
 
 TEST(DataChunkTest, VectorConstructor) {
     std::vector<uint8_t> data = {1, 2, 3, 4, 5};
     DataChunk chunk(data);
-    EXPECT_EQ(chunk.size(), 5);
-    EXPECT_FALSE(chunk.empty());
-    EXPECT_EQ(chunk.asVector(), data);
+    EXPECT_EQ(chunk.Size(), 5);
+    EXPECT_FALSE(chunk.Empty());
+    EXPECT_EQ(chunk.AsVector(), data);
 }
 
 TEST(DataChunkTest, SizeConstructor) {
     size_t size = 10;
     DataChunk chunk(size);
-    EXPECT_EQ(chunk.size(), size);
-    EXPECT_FALSE(chunk.empty());
+    EXPECT_EQ(chunk.Size(), size);
+    EXPECT_FALSE(chunk.Empty());
 }
 
 TEST(DataChunkTest, RawDataConstructor) {
     uint8_t data[] = {1, 2, 3, 4, 5};
     DataChunk chunk(data, 5);
-    EXPECT_EQ(chunk.size(), 5);
-    EXPECT_FALSE(chunk.empty());
-    EXPECT_EQ(std::memcmp(chunk.data(), data, 5), 0);
+    EXPECT_EQ(chunk.Size(), 5);
+    EXPECT_FALSE(chunk.Empty());
+    EXPECT_EQ(std::memcmp(chunk.Data(), data, 5), 0);
 }
 
 TEST(DataChunkTest, AppendOperations) {
@@ -37,59 +37,59 @@ TEST(DataChunkTest, AppendOperations) {
     
     // Test append raw data
     uint8_t data1[] = {1, 2, 3};
-    chunk.append(data1, 3);
-    EXPECT_EQ(chunk.size(), 3);
+    chunk.Append(data1, 3);
+    EXPECT_EQ(chunk.Size(), 3);
     
     // Test append vector
     std::vector<uint8_t> data2 = {4, 5, 6};
-    chunk.append(data2);
-    EXPECT_EQ(chunk.size(), 6);
+    chunk.Append(data2);
+    EXPECT_EQ(chunk.Size(), 6);
     
     // Test append another chunk
     DataChunk other({7, 8, 9});
-    chunk.append(other);
-    EXPECT_EQ(chunk.size(), 9);
+    chunk.Append(other);
+    EXPECT_EQ(chunk.Size(), 9);
     
     // Verify final content
     std::vector<uint8_t> expected = {1, 2, 3, 4, 5, 6, 7, 8, 9};
-    EXPECT_EQ(chunk.asVector(), expected);
+    EXPECT_EQ(chunk.AsVector(), expected);
 }
 
 TEST(DataChunkTest, StringConversion) {
     std::string test_str = "Hello, World!";
-    DataChunk chunk = DataChunk::fromString(test_str);
-    EXPECT_EQ(chunk.size(), test_str.size());
-    EXPECT_EQ(chunk.toString(), test_str);
+    DataChunk chunk = DataChunk::FromString(test_str);
+    EXPECT_EQ(chunk.Size(), test_str.size());
+    EXPECT_EQ(chunk.ToString(), test_str);
 }
 
 TEST(DataChunkTest, ResizeOperations) {
     DataChunk chunk({1, 2, 3});
     
     // Test resize larger
-    chunk.resize(5);
-    EXPECT_EQ(chunk.size(), 5);
+    chunk.Resize(5);
+    EXPECT_EQ(chunk.Size(), 5);
     
     // Test resize smaller
-    chunk.resize(2);
-    EXPECT_EQ(chunk.size(), 2);
-    EXPECT_EQ(chunk.data()[0], 1);
-    EXPECT_EQ(chunk.data()[1], 2);
+    chunk.Resize(2);
+    EXPECT_EQ(chunk.Size(), 2);
+    EXPECT_EQ(chunk.Data()[0], 1);
+    EXPECT_EQ(chunk.Data()[1], 2);
 }
 
 TEST(DataChunkTest, ClearOperation) {
     DataChunk chunk({1, 2, 3});
-    EXPECT_FALSE(chunk.empty());
+    EXPECT_FALSE(chunk.Empty());
     
-    chunk.clear();
-    EXPECT_TRUE(chunk.empty());
-    EXPECT_EQ(chunk.size(), 0);
+    chunk.Clear();
+    EXPECT_TRUE(chunk.Empty());
+    EXPECT_EQ(chunk.Size(), 0);
 }
 
 TEST(DataChunkTest, SpanAccess) {
     std::vector<uint8_t> data = {1, 2, 3, 4, 5};
     DataChunk chunk(data);
     
-    auto span = chunk.span();
+    auto span = chunk.Span();
     EXPECT_EQ(span.size(), data.size());
     EXPECT_EQ(std::memcmp(span.data(), data.data(), data.size()), 0);
 }

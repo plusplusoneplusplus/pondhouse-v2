@@ -20,38 +20,38 @@ public:
     BloomFilter(size_t size_in_bits, size_t num_hash_functions);
 
     // Add an item to the filter
-    void add(const common::DataChunk& item);
+    void Add(const common::DataChunk& item);
 
     // Check if an item might be in the filter
     // False positives are possible, but false negatives are not
-    [[nodiscard]] bool mightContain(const common::DataChunk& item) const;
+    [[nodiscard]] bool MightContain(const common::DataChunk& item) const;
 
     // Clear the filter
-    void clear();
+    void Clear();
 
     // Get the current false positive probability
-    [[nodiscard]] double getFalsePositiveProbability() const;
+    [[nodiscard]] double GetFalsePositiveProbability() const;
 
     // Get number of bits set to 1
-    [[nodiscard]] size_t getPopCount() const;
+    [[nodiscard]] size_t GetPopCount() const;
 
     // Serialization
     [[nodiscard]] common::Result<common::DataChunk> Serialize() const;
     [[nodiscard]] static common::Result<BloomFilter> Deserialize(const common::DataChunk& data);
 
     // Get filter parameters
-    [[nodiscard]] size_t getBitSize() const { return bits_.size(); }
-    [[nodiscard]] size_t getHashFunctionCount() const { return num_hash_functions_; }
+    [[nodiscard]] size_t GetBitSize() const { return bits_.size(); }
+    [[nodiscard]] size_t GetHashFunctionCount() const { return num_hash_functions_; }
 
-    [[nodiscard]] size_t getItemsCount() const { return items_count_; }
+    [[nodiscard]] size_t GetItemsCount() const { return items_count_; }
 
 private:
     // Calculate optimal size and hash functions
-    static std::pair<size_t, size_t> calculateOptimalParameters(size_t expected_items, double false_positive_prob);
+    static std::pair<size_t, size_t> CalculateOptimalParameters(size_t expected_items, double false_positive_prob);
 
     // Hash functions
-    [[nodiscard]] std::array<size_t, 2> getBaseHashes(const common::DataChunk& item) const;
-    [[nodiscard]] size_t getNthHash(size_t n, size_t hash1, size_t hash2) const;
+    [[nodiscard]] std::array<size_t, 2> GetBaseHashes(const common::DataChunk& item) const;
+    [[nodiscard]] size_t GetNthHash(size_t n, size_t hash1, size_t hash2) const;
 
     std::vector<bool> bits_;
     size_t num_hash_functions_;

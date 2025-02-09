@@ -18,20 +18,20 @@ protected:
 
     // Helper to read entire file
     Result<DataChunk> readEntireFile(const std::string& path) {
-        auto handle_result = fs_->openFile(path, false);
+        auto handle_result = fs_->OpenFile(path, false);
         if (!handle_result.ok()) {
             return Result<DataChunk>::failure(handle_result.error());
         }
         auto handle = handle_result.value();
 
-        auto size_result = fs_->size(handle);
+        auto size_result = fs_->Size(handle);
         if (!size_result.ok()) {
-            fs_->closeFile(handle);
+            fs_->CloseFile(handle);
             return Result<DataChunk>::failure(size_result.error());
         }
 
-        auto read_result = fs_->read(handle, 0, size_result.value());
-        fs_->closeFile(handle);
+        auto read_result = fs_->Read(handle, 0, size_result.value());
+        fs_->CloseFile(handle);
         return read_result;
     }
 
@@ -53,7 +53,7 @@ TEST_F(SSTableWriterTest, BasicOperations) {
     ASSERT_TRUE(writer.Finish().ok());
 
     // Verify file exists
-    ASSERT_TRUE(fs_->exists("test.sst"));
+    ASSERT_TRUE(fs_->Exists("test.sst"));
 
     // Read file and verify basic structure
     auto read_result = readEntireFile("test.sst");
@@ -62,13 +62,13 @@ TEST_F(SSTableWriterTest, BasicOperations) {
 
     // Verify file header
     FileHeader header;
-    ASSERT_TRUE(header.Deserialize(data.data(), FileHeader::kHeaderSize));
+    ASSERT_TRUE(header.Deserialize(data.Data(), FileHeader::kHeaderSize));
     EXPECT_EQ(header.magic_number, FileHeader::kMagicNumber);
     EXPECT_EQ(header.version, 1);
 
     // Verify footer is present (at end of file)
     Footer footer;
-    ASSERT_TRUE(footer.Deserialize(data.data() + data.size() - Footer::kFooterSize, Footer::kFooterSize));
+    ASSERT_TRUE(footer.Deserialize(data.Data() + data.Size() - Footer::kFooterSize, Footer::kFooterSize));
     EXPECT_EQ(footer.magic_number, Footer::kMagicNumber);
     EXPECT_GT(footer.index_block_offset, FileHeader::kHeaderSize);
 }
@@ -140,12 +140,12 @@ TEST_F(SSTableWriterTest, WithBloomFilter) {
 
     // Verify header has filter flag
     FileHeader header;
-    ASSERT_TRUE(header.Deserialize(data.data(), FileHeader::kHeaderSize));
+    ASSERT_TRUE(header.Deserialize(data.Data(), FileHeader::kHeaderSize));
     EXPECT_TRUE(header.HasFilter());
 
     // Verify footer has valid filter block offset
     Footer footer;
-    ASSERT_TRUE(footer.Deserialize(data.data() + data.size() - Footer::kFooterSize, Footer::kFooterSize));
+    ASSERT_TRUE(footer.Deserialize(data.Data() + data.Size() - Footer::kFooterSize, Footer::kFooterSize));
     EXPECT_GT(footer.filter_block_offset, FileHeader::kHeaderSize);
 }
 
@@ -169,7 +169,7 @@ TEST_F(SSTableWriterTest, LateFilterEnable) {
 
     // Verify header does not have filter flag
     FileHeader header;
-    ASSERT_TRUE(header.Deserialize(data.data(), FileHeader::kHeaderSize));
+    ASSERT_TRUE(header.Deserialize(data.Data(), FileHeader::kHeaderSize));
     EXPECT_FALSE(header.HasFilter());
 }
 
@@ -193,15 +193,15 @@ TEST_F(SSTableWriterTest, BlockBoundaries) {
 
     // Verify footer
     Footer footer;
-    ASSERT_TRUE(footer.Deserialize(data.data() + data.size() - Footer::kFooterSize, Footer::kFooterSize));
+    ASSERT_TRUE(footer.Deserialize(data.Data() + data.Size() - Footer::kFooterSize, Footer::kFooterSize));
 
     // Read index block
-    DataChunk index_block(data.data() + footer.index_block_offset,
-                          data.size() - footer.index_block_offset - Footer::kFooterSize);
+    DataChunk index_block(data.Data() + footer.index_block_offset,
+                          data.Size() - footer.index_block_offset - Footer::kFooterSize);
 
     // Verify index block has multiple entries (multiple blocks were created)
     BlockFooter index_footer;
-    ASSERT_TRUE(index_footer.Deserialize(index_block.data() + index_block.size() - BlockFooter::kFooterSize,
+    ASSERT_TRUE(index_footer.Deserialize(index_block.Data() + index_block.Size() - BlockFooter::kFooterSize,
                                          BlockFooter::kFooterSize));
     EXPECT_GT(index_footer.entry_count, 1);
 }

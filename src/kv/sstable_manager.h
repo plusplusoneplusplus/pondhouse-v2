@@ -200,7 +200,7 @@ public:
 
         // Check bloom filter if available
         if (meta.filter) {
-            return meta.filter->mightContain(common::DataChunk::fromString(key));
+            return meta.filter->MightContain(common::DataChunk::FromString(key));
         }
 
         return true;

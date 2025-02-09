@@ -153,7 +153,7 @@ TEST_F(SSTableFormatTest, DataBlockEntrySerialization) {
     entry.value_length = 10;
 
     std::string key = "hello";
-    DataChunk value = DataChunk::fromString("world12345");
+    DataChunk value = DataChunk::FromString("world12345");
 
     // Test header serialization
     auto header = entry.SerializeHeader();
@@ -166,14 +166,14 @@ TEST_F(SSTableFormatTest, DataBlockEntrySerialization) {
 
     // Test full serialization
     auto full = entry.Serialize(key, value);
-    ASSERT_EQ(full.size(), DataBlockEntry::kHeaderSize + key.size() + value.size());
+    ASSERT_EQ(full.size(), DataBlockEntry::kHeaderSize + key.size() + value.Size());
 
     // Verify the serialized data
     std::string serialized_key(full.begin() + DataBlockEntry::kHeaderSize,
                                full.begin() + DataBlockEntry::kHeaderSize + key.size());
     std::vector<uint8_t> serialized_value(full.begin() + DataBlockEntry::kHeaderSize + key.size(), full.end());
     EXPECT_EQ(serialized_key, key);
-    EXPECT_EQ(std::vector<uint8_t>(value.data(), value.data() + value.size()), serialized_value);
+    EXPECT_EQ(std::vector<uint8_t>(value.Data(), value.Data() + value.Size()), serialized_value);
 }
 
 TEST_F(SSTableFormatTest, IndexBlockEntrySerialization) {
@@ -215,8 +215,8 @@ TEST_F(SSTableFormatTest, DataBlockBuilder) {
     EXPECT_TRUE(empty_block.empty());
 
     // Add entries
-    DataChunk value1 = DataChunk::fromString("val1");
-    DataChunk value2 = DataChunk::fromString("val2");
+    DataChunk value1 = DataChunk::FromString("val1");
+    DataChunk value2 = DataChunk::FromString("val2");
     EXPECT_TRUE(builder.Add("key1", value1));
     EXPECT_TRUE(builder.Add("key2", value2));
     EXPECT_FALSE(builder.Empty());
@@ -271,8 +271,8 @@ TEST_F(SSTableFormatTest, IndexBlockBuilder) {
 
 TEST_F(SSTableFormatTest, DataBlockBuilderSizeLimit) {
     DataBlockBuilder builder;
-    DataChunk large_value = DataChunk::fromString(std::string(DataBlockBuilder::kTargetBlockSize, 'x'));
-    DataChunk small_value = DataChunk::fromString("val1");
+    DataChunk large_value = DataChunk::FromString(std::string(DataBlockBuilder::kTargetBlockSize, 'x'));
+    DataChunk small_value = DataChunk::FromString("val1");
 
     // First entry should succeed
     EXPECT_TRUE(builder.Add("key1", small_value));
@@ -305,7 +305,7 @@ TEST_F(SSTableFormatTest, DataBlockBuilderTargetSize) {
     ASSERT_LT(entry_size * 4 + BlockFooter::kFooterSize, DataBlockBuilder::kTargetBlockSize)
         << "Test setup error: entries won't fit in target size";
 
-    DataChunk value = DataChunk::fromString(std::string(value_size, 'x'));
+    DataChunk value = DataChunk::FromString(std::string(value_size, 'x'));
 
     // Should be able to add 4 entries of ~900KB each
     EXPECT_TRUE(builder.Add(key + "1", value));

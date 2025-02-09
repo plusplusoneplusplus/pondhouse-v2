@@ -15,28 +15,28 @@ common::DataChunk TableMetadataEntry::Serialize() const {
 
 void TableMetadataEntry::Serialize(common::DataChunk& chunk) const {
     // Serialize operation type
-    chunk.append(reinterpret_cast<const uint8_t*>(&op_type_), sizeof(op_type_));
+    chunk.Append(reinterpret_cast<const uint8_t*>(&op_type_), sizeof(op_type_));
 
     // Serialize number of files
     uint32_t num_files = files_.size();
-    chunk.append(reinterpret_cast<const uint8_t*>(&num_files), sizeof(num_files));
+    chunk.Append(reinterpret_cast<const uint8_t*>(&num_files), sizeof(num_files));
 
     // Serialize each file info
     for (const auto& file : files_) {
         uint32_t name_size = file.name.size();
-        chunk.append(reinterpret_cast<const uint8_t*>(&name_size), sizeof(name_size));
-        chunk.append(reinterpret_cast<const uint8_t*>(file.name.data()), name_size);
-        chunk.append(reinterpret_cast<const uint8_t*>(&file.size), sizeof(file.size));
+        chunk.Append(reinterpret_cast<const uint8_t*>(&name_size), sizeof(name_size));
+        chunk.Append(reinterpret_cast<const uint8_t*>(file.name.data()), name_size);
+        chunk.Append(reinterpret_cast<const uint8_t*>(&file.size), sizeof(file.size));
     }
 }
 
 bool TableMetadataEntry::Deserialize(const common::DataChunk& chunk) {
-    if (chunk.size() < sizeof(op_type_) + sizeof(uint32_t)) {
-        LOG_ERROR("Invalid metadata entry size: {}", chunk.size());
+    if (chunk.Size() < sizeof(op_type_) + sizeof(uint32_t)) {
+        LOG_ERROR("Invalid metadata entry size: {}", chunk.Size());
         return false;
     }
 
-    const uint8_t* ptr = chunk.data();
+    const uint8_t* ptr = chunk.Data();
 
     // Read operation type
     std::memcpy(&op_type_, ptr, sizeof(op_type_));
@@ -50,8 +50,8 @@ bool TableMetadataEntry::Deserialize(const common::DataChunk& chunk) {
     // Read each file info
     files_.clear();
     for (uint32_t i = 0; i < num_files; i++) {
-        if (ptr + sizeof(uint32_t) > chunk.data() + chunk.size()) {
-            LOG_ERROR("Invalid metadata entry size: {}", chunk.size());
+        if (ptr + sizeof(uint32_t) > chunk.Data() + chunk.Size()) {
+            LOG_ERROR("Invalid metadata entry size: {}", chunk.Size());
             return false;
         }
 
@@ -59,8 +59,8 @@ bool TableMetadataEntry::Deserialize(const common::DataChunk& chunk) {
         std::memcpy(&name_size, ptr, sizeof(name_size));
         ptr += sizeof(name_size);
 
-        if (ptr + name_size + sizeof(uint64_t) > chunk.data() + chunk.size()) {
-            LOG_ERROR("Invalid metadata entry size: {}", chunk.size());
+        if (ptr + name_size + sizeof(uint64_t) > chunk.Data() + chunk.Size()) {
+            LOG_ERROR("Invalid metadata entry size: {}", chunk.Size());
             return false;
         }
 
@@ -131,27 +131,27 @@ common::Result<common::DataChunk> TableMetadataStateMachine::GetCurrentState() {
 
     // Serialize number of files
     uint32_t num_files = sstable_files_.size();
-    state.append(reinterpret_cast<const uint8_t*>(&num_files), sizeof(num_files));
+    state.Append(reinterpret_cast<const uint8_t*>(&num_files), sizeof(num_files));
 
     // Serialize file names
     for (const auto& file : sstable_files_) {
         uint32_t name_size = file.size();
-        state.append(reinterpret_cast<const uint8_t*>(&name_size), sizeof(name_size));
-        state.append(reinterpret_cast<const uint8_t*>(file.data()), name_size);
+        state.Append(reinterpret_cast<const uint8_t*>(&name_size), sizeof(name_size));
+        state.Append(reinterpret_cast<const uint8_t*>(file.data()), name_size);
     }
 
     // Serialize total size
-    state.append(reinterpret_cast<const uint8_t*>(&total_size_), sizeof(total_size_));
+    state.Append(reinterpret_cast<const uint8_t*>(&total_size_), sizeof(total_size_));
 
     return common::Result<common::DataChunk>::success(std::move(state));
 }
 
 common::Result<void> TableMetadataStateMachine::RestoreState(const common::DataChunk& state_data) {
-    if (state_data.size() < sizeof(uint32_t)) {
+    if (state_data.Size() < sizeof(uint32_t)) {
         return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Invalid state data size");
     }
 
-    const uint8_t* ptr = state_data.data();
+    const uint8_t* ptr = state_data.Data();
 
     // Read number of files
     uint32_t num_files;
@@ -161,7 +161,7 @@ common::Result<void> TableMetadataStateMachine::RestoreState(const common::DataC
     // Read file names
     sstable_files_.clear();
     for (uint32_t i = 0; i < num_files; i++) {
-        if (ptr + sizeof(uint32_t) > state_data.data() + state_data.size()) {
+        if (ptr + sizeof(uint32_t) > state_data.Data() + state_data.Size()) {
             return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Invalid state data");
         }
 
@@ -169,7 +169,7 @@ common::Result<void> TableMetadataStateMachine::RestoreState(const common::DataC
         std::memcpy(&name_size, ptr, sizeof(name_size));
         ptr += sizeof(name_size);
 
-        if (ptr + name_size > state_data.data() + state_data.size()) {
+        if (ptr + name_size > state_data.Data() + state_data.Size()) {
             return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Invalid state data");
         }
 
@@ -180,7 +180,7 @@ common::Result<void> TableMetadataStateMachine::RestoreState(const common::DataC
     }
 
     // Read total size
-    if (ptr + sizeof(total_size_) > state_data.data() + state_data.size()) {
+    if (ptr + sizeof(total_size_) > state_data.Data() + state_data.Size()) {
         return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Invalid state data");
     }
     std::memcpy(&total_size_, ptr, sizeof(total_size_));

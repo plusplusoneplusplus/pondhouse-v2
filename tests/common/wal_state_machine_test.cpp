@@ -23,26 +23,26 @@ public:
 protected:
     Result<void> ApplyEntry(const DataChunk& entry_data) override {
         // Simple state machine that just adds integers
-        if (entry_data.size() != sizeof(int64_t)) {
+        if (entry_data.Size() != sizeof(int64_t)) {
             return Result<void>::failure(Error(ErrorCode::InvalidArgument, "Invalid entry size"));
         }
         int64_t delta;
-        std::memcpy(&delta, entry_data.data(), sizeof(int64_t));
+        std::memcpy(&delta, entry_data.Data(), sizeof(int64_t));
         value_ += delta;
         return Result<void>::success();
     }
 
     Result<DataChunk> GetCurrentState() override {
         DataChunk state(sizeof(int64_t));
-        std::memcpy(state.data(), &value_, sizeof(int64_t));
+        std::memcpy(state.Data(), &value_, sizeof(int64_t));
         return Result<DataChunk>::success(std::move(state));
     }
 
     Result<void> RestoreState(const DataChunk& state_data) override {
-        if (state_data.size() != sizeof(int64_t)) {
+        if (state_data.Size() != sizeof(int64_t)) {
             return Result<void>::failure(Error(ErrorCode::InvalidArgument, "Invalid state size"));
         }
-        std::memcpy(&value_, state_data.data(), sizeof(int64_t));
+        std::memcpy(&value_, state_data.Data(), sizeof(int64_t));
         return Result<void>::success();
     }
 };
@@ -57,13 +57,13 @@ protected:
     // Helper to create entry data
     DataChunk CreateEntry(int64_t delta) {
         DataChunk entry(sizeof(int64_t));
-        std::memcpy(entry.data(), &delta, sizeof(int64_t));
+        std::memcpy(entry.Data(), &delta, sizeof(int64_t));
         return entry;
     }
 
     // Helper to count checkpoint files
     size_t CountCheckpointFiles(const std::string& dir) {
-        auto files = fs_->list(dir).value();
+        auto files = fs_->List(dir).value();
         size_t count = 0;
         for (const auto& file : files) {
             if (file.find("checkpoint.") != std::string::npos) {
@@ -228,7 +228,7 @@ TEST_F(WalStateMachineTest, DirectoryCreation) {
     VERIFY_RESULT_MSG(result, "Failed to open state machine");
 
     // Verify directory was created
-    EXPECT_TRUE(fs_->exists("new_dir/state_machine"));
+    EXPECT_TRUE(fs_->Exists("new_dir/state_machine"));
 }
 
 TEST_F(WalStateMachineTest, CheckpointCorruption) {
@@ -245,14 +245,14 @@ TEST_F(WalStateMachineTest, CheckpointCorruption) {
     }
 
     // Corrupt the checkpoint file
-    auto files = fs_->list("test_state_machine").value();
+    auto files = fs_->List("test_state_machine").value();
     for (const auto& file : files) {
         if (file.find("checkpoint.") != std::string::npos) {
-            auto handle = fs_->openFile("test_state_machine/" + file, true).value();
+            auto handle = fs_->OpenFile("test_state_machine/" + file, true).value();
             DataChunk corrupt_data(1);  // Wrong size
-            auto result = fs_->append(handle, corrupt_data);
+            auto result = fs_->Append(handle, corrupt_data);
             VERIFY_RESULT(result);
-            fs_->closeFile(handle);
+            fs_->CloseFile(handle);
             break;
         }
     }
@@ -284,7 +284,7 @@ TEST_F(WalStateMachineTest, CheckpointCleanup) {
     // Get the first checkpoint file name
     std::string first_checkpoint;
     {
-        auto files = fs_->list("test_state_machine").value();
+        auto files = fs_->List("test_state_machine").value();
         for (const auto& file : files) {
             if (file.find("checkpoint.") != std::string::npos) {
                 first_checkpoint = file;
@@ -307,7 +307,7 @@ TEST_F(WalStateMachineTest, CheckpointCleanup) {
     EXPECT_EQ(CountCheckpointFiles("test_state_machine"), 2);  // Still 2 due to cleanup
 
     // Verify first checkpoint was deleted
-    auto files = fs_->list("test_state_machine").value();
+    auto files = fs_->List("test_state_machine").value();
     bool first_checkpoint_exists = false;
     for (const auto& file : files) {
         if (file == first_checkpoint) {
