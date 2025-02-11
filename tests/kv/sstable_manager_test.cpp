@@ -431,10 +431,10 @@ TEST_F(SSTableManagerTest, MetadataStateTracking) {
     }
 
     // Verify metadata state machine has recorded the operation
-    const auto& sstable_files = metadata_state_machine_->GetSSTableFiles();
+    const auto& sstable_files = metadata_state_machine_->GetSSTableFiles(0 /*level*/);
     ASSERT_EQ(sstable_files.size(), 1);
-    EXPECT_TRUE(sstable_files[0].starts_with("L0_"));
-    EXPECT_TRUE(sstable_files[0].ends_with(".sst"));
+    EXPECT_TRUE(sstable_files[0].name.starts_with("L0_"));
+    EXPECT_TRUE(sstable_files[0].name.ends_with(".sst"));
 
     // Create another SSTable
     {
@@ -443,7 +443,7 @@ TEST_F(SSTableManagerTest, MetadataStateTracking) {
     }
 
     // Verify both files are tracked
-    EXPECT_EQ(metadata_state_machine_->GetSSTableFiles().size(), 2);
+    EXPECT_EQ(metadata_state_machine_->GetSSTableFiles(0 /*level*/).size(), 2);
     EXPECT_GT(metadata_state_machine_->GetTotalSize(), 0);
 
     // Create new manager instance and verify state is recovered
@@ -452,7 +452,7 @@ TEST_F(SSTableManagerTest, MetadataStateTracking) {
     auto new_manager = std::make_unique<SSTableManager>(fs_, "test_db", new_metadata_state_machine);
 
     // Verify state is consistent
-    EXPECT_EQ(new_metadata_state_machine->GetSSTableFiles().size(), 2);
+    EXPECT_EQ(new_metadata_state_machine->GetSSTableFiles(0 /*level*/).size(), 2);
     EXPECT_EQ(new_metadata_state_machine->GetTotalSize(), metadata_state_machine_->GetTotalSize());
 
     // Verify files are accessible through new manager
@@ -493,7 +493,7 @@ TEST_F(SSTableManagerTest, MetadataStateCheckpointing) {
     auto new_manager = std::make_unique<SSTableManager>(fs_, "test_db", new_metadata_state_machine);
 
     // Verify state is recovered correctly
-    EXPECT_EQ(new_metadata_state_machine->GetSSTableFiles().size(), 5);
+    EXPECT_EQ(new_metadata_state_machine->GetSSTableFiles(0 /*level*/).size(), 5);
     EXPECT_EQ(new_metadata_state_machine->GetTotalSize(), metadata_state_machine_->GetTotalSize());
 
     // Verify all data is accessible

@@ -98,23 +98,34 @@ common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChu
     switch (entry.op_type()) {
         case MetadataOpType::CreateSSTable:
             for (const auto& file : entry.files()) {
-                sstable_files_.push_back(file.name);
+                sstable_files_[file.level].push_back(file);
+                level_sizes_[file.level] += file.size;
                 total_size_ += file.size;
             }
             break;
         case MetadataOpType::DeleteSSTable:
             for (const auto& file : entry.files()) {
-                auto it = std::find(sstable_files_.begin(), sstable_files_.end(), file.name);
-                if (it != sstable_files_.end()) {
-                    sstable_files_.erase(it);
-                    total_size_ -= file.size;
+                auto& level_files = sstable_files_[file.level];
+                auto it = std::find_if(
+                    level_files.begin(), level_files.end(), [&](const FileInfo& f) { return f.name == file.name; });
+                if (it != level_files.end()) {
+                    level_sizes_[file.level] -= it->size;
+                    total_size_ -= it->size;
+                    level_files.erase(it);
+                }
+                if (level_files.empty()) {
+                    sstable_files_.erase(file.level);
+                    level_sizes_.erase(file.level);
                 }
             }
             break;
         case MetadataOpType::UpdateStats:
-            // For UpdateStats, we expect only one entry with the total size
-            if (!entry.files().empty()) {
-                total_size_ = entry.files()[0].size;
+            // For UpdateStats, we expect files to contain per-level size information
+            total_size_ = 0;
+            level_sizes_.clear();
+            for (const auto& file : entry.files()) {
+                level_sizes_[file.level] = file.size;
+                total_size_ += file.size;
             }
             break;
         case MetadataOpType::FlushMemTable:
@@ -129,19 +140,25 @@ common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChu
 common::Result<common::DataChunk> TableMetadataStateMachine::GetCurrentState() {
     common::DataChunk state;
 
-    // Serialize number of files
-    uint32_t num_files = sstable_files_.size();
-    state.Append(reinterpret_cast<const uint8_t*>(&num_files), sizeof(num_files));
+    // Serialize number of levels
+    uint32_t num_levels = sstable_files_.size();
+    state.Append(reinterpret_cast<const uint8_t*>(&num_levels), sizeof(num_levels));
 
-    // Serialize file names
-    for (const auto& file : sstable_files_) {
-        uint32_t name_size = file.size();
-        state.Append(reinterpret_cast<const uint8_t*>(&name_size), sizeof(name_size));
-        state.Append(reinterpret_cast<const uint8_t*>(file.data()), name_size);
+    // Serialize each level's files
+    for (const auto& [level, files] : sstable_files_) {
+        // Serialize level number
+        uint32_t level_num = level;
+        state.Append(reinterpret_cast<const uint8_t*>(&level_num), sizeof(level_num));
+
+        // Serialize number of files in this level
+        uint32_t num_files = files.size();
+        state.Append(reinterpret_cast<const uint8_t*>(&num_files), sizeof(num_files));
+
+        // Serialize each file's information using FileInfo's serialization
+        for (const auto& file : files) {
+            file.Serialize(state);
+        }
     }
-
-    // Serialize total size
-    state.Append(reinterpret_cast<const uint8_t*>(&total_size_), sizeof(total_size_));
 
     return common::Result<common::DataChunk>::success(std::move(state));
 }
@@ -152,38 +169,52 @@ common::Result<void> TableMetadataStateMachine::RestoreState(const common::DataC
     }
 
     const uint8_t* ptr = state_data.Data();
+    const uint8_t* end = ptr + state_data.Size();
 
-    // Read number of files
-    uint32_t num_files;
-    std::memcpy(&num_files, ptr, sizeof(num_files));
-    ptr += sizeof(num_files);
-
-    // Read file names
+    // Clear existing state
     sstable_files_.clear();
-    for (uint32_t i = 0; i < num_files; i++) {
-        if (ptr + sizeof(uint32_t) > state_data.Data() + state_data.Size()) {
+    level_sizes_.clear();
+    total_size_ = 0;
+
+    // Read number of levels
+    uint32_t num_levels;
+    std::memcpy(&num_levels, ptr, sizeof(num_levels));
+    ptr += sizeof(num_levels);
+
+    // Read each level's files
+    for (uint32_t i = 0; i < num_levels; i++) {
+        if (ptr + sizeof(uint32_t) * 2 > end) {
             return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Invalid state data");
         }
 
-        uint32_t name_size;
-        std::memcpy(&name_size, ptr, sizeof(name_size));
-        ptr += sizeof(name_size);
+        // Read level number
+        uint32_t level;
+        std::memcpy(&level, ptr, sizeof(level));
+        ptr += sizeof(level);
 
-        if (ptr + name_size > state_data.Data() + state_data.Size()) {
-            return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Invalid state data");
+        // Read number of files
+        uint32_t num_files;
+        std::memcpy(&num_files, ptr, sizeof(num_files));
+        ptr += sizeof(num_files);
+
+        // Read each file's information
+        for (uint32_t j = 0; j < num_files; j++) {
+            FileInfo file;
+            common::DataChunk file_chunk(ptr, end - ptr);
+            if (!file.Deserialize(file_chunk)) {
+                return common::Result<void>::failure(common::ErrorCode::InvalidArgument,
+                                                     "Failed to deserialize file info");
+            }
+
+            // Update pointer position based on serialized size
+            ptr += file_chunk.Size();
+
+            // Add file to state
+            sstable_files_[level].push_back(file);
+            level_sizes_[level] += file.size;
+            total_size_ += file.size;
         }
-
-        std::string name(reinterpret_cast<const char*>(ptr), name_size);
-        ptr += name_size;
-
-        sstable_files_.push_back(std::move(name));
     }
-
-    // Read total size
-    if (ptr + sizeof(total_size_) > state_data.Data() + state_data.Size()) {
-        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Invalid state data");
-    }
-    std::memcpy(&total_size_, ptr, sizeof(total_size_));
 
     return common::Result<void>::success();
 }

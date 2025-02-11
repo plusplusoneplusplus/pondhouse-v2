@@ -213,39 +213,37 @@ private:
     }
 
     void LoadExistingSSTables() {
-        // List files in base directory
-        // TODO: handle the dirty files or use metadata file to record the file numbers
-        auto list_result = fs_->List(base_dir_);
-        if (!list_result.ok()) {
-            LOG_ERROR("Failed to list directory %s: %s", base_dir_.c_str(), list_result.error().message().c_str());
-            return;
-        }
+        // Get SSTable files from metadata state machine
+        for (size_t level = 0; level < metadata_state_machine_->GetLevelCount(); level++) {
+            const auto& files = metadata_state_machine_->GetSSTableFiles(level);
+            CreateLevelIfNotExists(level);
 
-        // Parse file names and organize by level
-        for (const auto& file : list_result.value()) {
-            if (file.length() < 4 || file.substr(file.length() - 4) != ".sst") {
-                continue;
-            }
+            for (const auto& file : files) {
+                // Parse file number from name
+                size_t num_pos = file.name.find('_');
+                if (num_pos == std::string::npos) {
+                    LOG_ERROR("Invalid SSTable file name: %s", file.name.c_str());
+                    continue;
+                }
 
-            // Parse level and file number from name
-            size_t level_pos = file.find('L');
-            size_t num_pos = file.find('_');
-            if (level_pos == std::string::npos || num_pos == std::string::npos) {
-                continue;
-            }
+                try {
+                    size_t file_number = std::stoul(file.name.substr(num_pos + 1, file.name.length() - num_pos - 5));
+                    sstables_[level].push_back(file_number);
+                    next_file_number_ = std::max(next_file_number_, file_number + 1);
 
-            try {
-                size_t level = std::stoul(file.substr(level_pos + 1, num_pos - level_pos - 1));
-                size_t file_number = std::stoul(file.substr(num_pos + 1, file.length() - num_pos - 5));
-
-                // Ensure we have enough levels
-                CreateLevelIfNotExists(level);
-
-                sstables_[level].push_back(file_number);
-                next_file_number_ = std::max(next_file_number_, file_number + 1);
-            } catch (const std::exception& e) {
-                LOG_ERROR("Failed to parse SSTable file name %s: %s", file.c_str(), e.what());
-                continue;
+                    // Add to metadata cache
+                    metadata_cache_.AddTable(level,
+                                             file_number,
+                                             SSTableMetadata(GetTablePath(level, file_number),
+                                                             file.smallest_key,
+                                                             file.largest_key,
+                                                             file.size,
+                                                             nullptr,  // Bloom filter will be loaded on demand
+                                                             0));  // Entry count will be updated when filter is loaded
+                } catch (const std::exception& e) {
+                    LOG_ERROR("Failed to parse SSTable file name %s: %s", file.name.c_str(), e.what());
+                    continue;
+                }
             }
         }
 
