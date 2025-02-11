@@ -21,7 +21,9 @@ protected:
         schema_ = std::make_shared<Schema>(std::vector<ColumnSchema>{
             {"value", ColumnType::STRING},
         });
-        manager_ = std::make_unique<SSTableManager>(fs_, "test_db");
+        metadata_state_machine_ = std::make_shared<TableMetadataStateMachine>(fs_, "test_db_metadata");
+        VERIFY_RESULT(metadata_state_machine_->Open());
+        manager_ = std::make_unique<SSTableManager>(fs_, "test_db", metadata_state_machine_);
     }
 
     // Helper to create a MemTable with test data
@@ -29,7 +31,7 @@ protected:
         auto memtable = std::make_unique<MemTable>(schema_);
         for (size_t i = 0; i < num_entries; i++) {
             std::string key = pond::test::GenerateKey(start_key + i);
-            std::string value = "value" + std::to_string(i);
+            std::string value = "value" + std::to_string(start_key + i);
             auto record = std::make_unique<Record>(schema_);
             record->Set(0, value);
             EXPECT_TRUE(memtable->Put(key, record).ok());
@@ -48,6 +50,7 @@ protected:
     std::shared_ptr<MemoryAppendOnlyFileSystem> fs_;
     std::unique_ptr<SSTableManager> manager_;
     std::shared_ptr<Schema> schema_;
+    std::shared_ptr<TableMetadataStateMachine> metadata_state_machine_;
 };
 
 TEST_F(SSTableManagerTest, BasicOperations) {
@@ -98,13 +101,13 @@ TEST_F(SSTableManagerTest, MultipleL0Files) {
         std::string key = pond::test::GenerateKey(i);
         auto result = manager_->Get(key);
         ASSERT_TRUE(result.ok());
-        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i % 100));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
     }
 }
 
 TEST_F(SSTableManagerTest, EmptyDirectory) {
     // Create new manager with empty directory
-    auto empty_manager = std::make_unique<SSTableManager>(fs_, "empty_db");
+    auto empty_manager = std::make_unique<SSTableManager>(fs_, "empty_db", metadata_state_machine_);
 
     // Verify empty stats
     auto stats = empty_manager->GetStats();
@@ -128,7 +131,7 @@ TEST_F(SSTableManagerTest, DirectoryRecovery) {
     }
 
     // Create new manager instance pointing to same directory
-    auto recovered_manager = std::make_unique<SSTableManager>(fs_, "test_db");
+    auto recovered_manager = std::make_unique<SSTableManager>(fs_, "test_db", metadata_state_machine_);
 
     // Verify stats match
     auto original_stats = manager_->GetStats();
@@ -142,7 +145,7 @@ TEST_F(SSTableManagerTest, DirectoryRecovery) {
         std::string key = pond::test::GenerateKey(i);
         auto result = recovered_manager->Get(key);
         ASSERT_TRUE(result.ok());
-        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i % 100));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
     }
 }
 
@@ -306,7 +309,7 @@ TEST_F(SSTableManagerTest, MetadataCacheMultipleLevels) {
     for (size_t key : existing_keys) {
         auto result = manager_->Get(pond::test::GenerateKey(key));
         ASSERT_TRUE(result.ok()) << "Key " << key << " should be found";
-        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(key % 100));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(key));
     }
 }
 
@@ -404,7 +407,7 @@ TEST_F(SSTableManagerTest, MetadataCacheRecovery) {
     }
 
     // Create new manager instance pointing to same directory
-    auto recovered_manager = std::make_unique<SSTableManager>(fs_, "test_db");
+    auto recovered_manager = std::make_unique<SSTableManager>(fs_, "test_db", metadata_state_machine_);
 
     // Verify metadata cache is working in recovered instance
     auto before_range = recovered_manager->Get(pond::test::GenerateKey(-1));
@@ -418,6 +421,88 @@ TEST_F(SSTableManagerTest, MetadataCacheRecovery) {
     auto after_range = recovered_manager->Get(pond::test::GenerateKey(100));
     ASSERT_FALSE(after_range.ok());
     EXPECT_EQ(after_range.error().code(), ErrorCode::NotFound);
+}
+
+TEST_F(SSTableManagerTest, MetadataStateTracking) {
+    // Create initial SSTable
+    {
+        auto memtable = CreateTestMemTable(0, 100);
+        ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
+    }
+
+    // Verify metadata state machine has recorded the operation
+    const auto& sstable_files = metadata_state_machine_->GetSSTableFiles();
+    ASSERT_EQ(sstable_files.size(), 1);
+    EXPECT_TRUE(sstable_files[0].starts_with("L0_"));
+    EXPECT_TRUE(sstable_files[0].ends_with(".sst"));
+
+    // Create another SSTable
+    {
+        auto memtable = CreateTestMemTable(100, 100);
+        ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
+    }
+
+    // Verify both files are tracked
+    EXPECT_EQ(metadata_state_machine_->GetSSTableFiles().size(), 2);
+    EXPECT_GT(metadata_state_machine_->GetTotalSize(), 0);
+
+    // Create new manager instance and verify state is recovered
+    auto new_metadata_state_machine = std::make_shared<TableMetadataStateMachine>(fs_, "test_db_metadata");
+    VERIFY_RESULT(new_metadata_state_machine->Open());
+    auto new_manager = std::make_unique<SSTableManager>(fs_, "test_db", new_metadata_state_machine);
+
+    // Verify state is consistent
+    EXPECT_EQ(new_metadata_state_machine->GetSSTableFiles().size(), 2);
+    EXPECT_EQ(new_metadata_state_machine->GetTotalSize(), metadata_state_machine_->GetTotalSize());
+
+    // Verify files are accessible through new manager
+    auto result = new_manager->Get(pond::test::GenerateKey(50));
+    VERIFY_RESULT(result);
+    EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value50");
+
+    result = new_manager->Get(pond::test::GenerateKey(150));
+    VERIFY_RESULT(result);
+    EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value150");
+}
+
+TEST_F(SSTableManagerTest, MetadataStateCheckpointing) {
+    // Create several SSTables to generate metadata entries
+    for (int i = 0; i < 5; i++) {
+        auto memtable = CreateTestMemTable(i * 100, 100);
+        ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
+    }
+
+    // Create a checkpoint
+    ASSERT_TRUE(metadata_state_machine_->CreateCheckpoint().ok());
+
+    // Verify checkpoint file exists
+    auto list_result = fs_->List("test_db_metadata");
+    ASSERT_TRUE(list_result.ok());
+    bool found_checkpoint = false;
+    for (const auto& file : list_result.value()) {
+        if (file.starts_with(TableMetadataStateMachine::CHECKPOINT_FILE_PREFIX)) {
+            found_checkpoint = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(found_checkpoint);
+
+    // Create new manager instance and verify it recovers from checkpoint
+    auto new_metadata_state_machine = std::make_shared<TableMetadataStateMachine>(fs_, "test_db_metadata");
+    ASSERT_TRUE(new_metadata_state_machine->Open().ok());
+    auto new_manager = std::make_unique<SSTableManager>(fs_, "test_db", new_metadata_state_machine);
+
+    // Verify state is recovered correctly
+    EXPECT_EQ(new_metadata_state_machine->GetSSTableFiles().size(), 5);
+    EXPECT_EQ(new_metadata_state_machine->GetTotalSize(), metadata_state_machine_->GetTotalSize());
+
+    // Verify all data is accessible
+    for (int i = 0; i < 5; i++) {
+        auto key = pond::test::GenerateKey(i * 100 + 50);  // Test middle key from each range
+        auto result = new_manager->Get(key);
+        ASSERT_TRUE(result.ok());
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i * 100 + 50));
+    }
 }
 
 }  // namespace

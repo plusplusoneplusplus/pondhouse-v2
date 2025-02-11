@@ -21,15 +21,15 @@ Table::Table(std::shared_ptr<Schema> schema,
     // Initialize active memtable
     active_memtable_ = std::make_unique<MemTable>(schema_);
 
-    // Initialize SSTable manager
-    sstable_manager_ = std::make_unique<SSTableManager>(fs_, table_name_);
-
     // Initialize metadata state machine
-    metadata_state_machine_ = std::make_unique<TableMetadataStateMachine>(fs_, table_name_ + "_metadata");
+    metadata_state_machine_ = std::make_shared<TableMetadataStateMachine>(fs_, table_name_ + "_metadata");
     auto open_result = metadata_state_machine_->Open();
     if (!open_result.ok()) {
         throw std::runtime_error("Failed to open metadata state machine: " + open_result.error().message());
     }
+
+    // Initialize SSTable manager
+    sstable_manager_ = std::make_unique<SSTableManager>(fs_, table_name_, metadata_state_machine_);
 }
 
 common::Result<void> Table::Put(const Key& key, std::unique_ptr<Record> record, bool acquire_lock) {

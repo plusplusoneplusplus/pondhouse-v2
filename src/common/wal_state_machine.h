@@ -148,6 +148,7 @@ private:
         // Write to WAL first
         auto wal_result = wal_.append(entry);
         if (!wal_result.ok()) {
+            LOG_ERROR("Failed to write to WAL: %s", wal_result.error().message().c_str());
             return Result<void>::failure(wal_result.error());
         }
 

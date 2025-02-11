@@ -72,7 +72,7 @@ private:
     std::unique_ptr<MemTable> active_memtable_;
     std::shared_ptr<common::WAL<KvEntry>> wal_;
     std::unique_ptr<SSTableManager> sstable_manager_;
-    std::unique_ptr<TableMetadataStateMachine> metadata_state_machine_;
+    std::shared_ptr<TableMetadataStateMachine> metadata_state_machine_;
     mutable std::mutex mutex_;  // For thread-safe MemTable switching
     size_t max_wal_size_;
     size_t current_wal_sequence_{0};

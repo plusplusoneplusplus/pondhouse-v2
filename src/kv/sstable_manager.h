@@ -71,6 +71,7 @@ public:
     // Constructor takes filesystem and base directory
     SSTableManager(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
                    const std::string& base_dir,
+                   std::shared_ptr<TableMetadataStateMachine> metadata_state_machine,
                    const Config& config = Config::Default());
     ~SSTableManager();
 

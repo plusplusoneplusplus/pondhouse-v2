@@ -7,6 +7,7 @@
 #include "common/error.h"
 #include "common/log.h"
 #include "kv/memtable.h"
+#include "kv/table_metadata.h"
 
 namespace pond::kv {
 
@@ -19,8 +20,15 @@ std::string MakeSSTableFileName(size_t level, size_t file_number) {
 
 class SSTableManager::Impl {
 public:
-    Impl(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& base_dir, const Config& config)
-        : fs_(std::move(fs)), base_dir_(base_dir), config_(config), cache_(config.block_cache_size) {
+    Impl(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
+         const std::string& base_dir,
+         std::shared_ptr<TableMetadataStateMachine> metadata_state_machine,
+         const Config& config)
+        : fs_(std::move(fs)),
+          base_dir_(base_dir),
+          config_(config),
+          cache_(config.block_cache_size),
+          metadata_state_machine_(std::move(metadata_state_machine)) {
         // Create base directory if it doesn't exist
         if (!fs_->Exists(base_dir_)) {
             auto result = fs_->CreateDirectory(base_dir_);
@@ -29,6 +37,7 @@ public:
                     "Failed to create base directory %s: %s", base_dir_.c_str(), result.error().message().c_str());
             }
         }
+
         LoadExistingSSTables();
     }
 
@@ -133,14 +142,18 @@ public:
             iter->Next();
         }
 
-        // Finish writing
-        auto result = writer.Finish();
-        if (!result.ok()) {
-            return common::Result<FileInfo>::failure(result.error());
+        // Finalize SSTable
+        auto finish_result = writer.Finish();
+        if (!finish_result.ok()) {
+            return common::Result<FileInfo>::failure(finish_result.error());
         }
 
         // Get file size
-        auto size_result = fs_->Size(fs_->OpenFile(file_path).value());
+        auto file_result = fs_->OpenFile(file_path);
+        if (!file_result.ok()) {
+            return common::Result<FileInfo>::failure(file_result.error());
+        }
+        auto size_result = fs_->Size(file_result.value());
         if (!size_result.ok()) {
             return common::Result<FileInfo>::failure(size_result.error());
         }
@@ -169,8 +182,16 @@ public:
         // Update statistics
         UpdateStats();
 
-        // Return file info
+        // Track the operation in metadata state machine
         FileInfo file_info{MakeSSTableFileName(0, file_number), size_result.value()};
+        std::vector<FileInfo> files{file_info};
+        TableMetadataEntry entry(MetadataOpType::CreateSSTable, files);
+        auto track_result = metadata_state_machine_->Apply(entry.Serialize());
+        if (!track_result.ok()) {
+            LOG_ERROR("Failed to track SSTable creation in metadata: %s", track_result.error().message().c_str());
+            // Continue despite tracking failure - the SSTable is still valid
+        }
+
         return common::Result<FileInfo>::success(file_info);
     }
 
@@ -265,6 +286,7 @@ private:
     Config config_;
     SSTableCache cache_;
     MetadataCache metadata_cache_;
+    std::shared_ptr<TableMetadataStateMachine> metadata_state_machine_;
 
     // Protected by mutex_
     mutable std::shared_mutex mutex_;
@@ -275,8 +297,9 @@ private:
 
 SSTableManager::SSTableManager(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
                                const std::string& base_dir,
+                               std::shared_ptr<TableMetadataStateMachine> metadata_state_machine,
                                const Config& config)
-    : impl_(std::make_unique<Impl>(std::move(fs), base_dir, config)) {}
+    : impl_(std::make_unique<Impl>(std::move(fs), base_dir, std::move(metadata_state_machine), config)) {}
 
 SSTableManager::~SSTableManager() = default;
 
