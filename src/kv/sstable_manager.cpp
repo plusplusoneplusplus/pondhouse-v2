@@ -183,7 +183,11 @@ public:
         UpdateStats();
 
         // Track the operation in metadata state machine
-        FileInfo file_info{MakeSSTableFileName(0, file_number), size_result.value()};
+        FileInfo file_info{MakeSSTableFileName(0, file_number),
+                           size_result.value(),
+                           0 /* mem table must be lvl 0 */,
+                           smallest_key,
+                           largest_key};
         std::vector<FileInfo> files{file_info};
         TableMetadataEntry entry(MetadataOpType::CreateSSTable, files);
         auto track_result = metadata_state_machine_->Apply(entry.Serialize());

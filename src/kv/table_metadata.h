@@ -76,25 +76,14 @@ struct FileInfo : public common::ISerializable {
         std::memcpy(&name_size, ptr, sizeof(name_size));
         ptr += sizeof(name_size);
 
-        if (ptr + name_size > end) {
-            return false;
-        }
         name = std::string(reinterpret_cast<const char*>(ptr), name_size);
         ptr += name_size;
 
-        // Deserialize size and level
-        if (ptr + sizeof(size) + sizeof(level) > end) {
-            return false;
-        }
         std::memcpy(&size, ptr, sizeof(size));
         ptr += sizeof(size);
         std::memcpy(&level, ptr, sizeof(level));
         ptr += sizeof(level);
 
-        // Deserialize smallest key
-        if (ptr + sizeof(uint32_t) > end) {
-            return false;
-        }
         uint32_t min_key_size;
         std::memcpy(&min_key_size, ptr, sizeof(min_key_size));
         ptr += sizeof(min_key_size);
@@ -105,17 +94,10 @@ struct FileInfo : public common::ISerializable {
         smallest_key = std::string(reinterpret_cast<const char*>(ptr), min_key_size);
         ptr += min_key_size;
 
-        // Deserialize largest key
-        if (ptr + sizeof(uint32_t) > end) {
-            return false;
-        }
         uint32_t max_key_size;
         std::memcpy(&max_key_size, ptr, sizeof(max_key_size));
         ptr += sizeof(max_key_size);
 
-        if (ptr + max_key_size > end) {
-            return false;
-        }
         largest_key = std::string(reinterpret_cast<const char*>(ptr), max_key_size);
         ptr += max_key_size;
 

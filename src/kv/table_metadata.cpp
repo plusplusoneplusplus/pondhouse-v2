@@ -23,10 +23,9 @@ void TableMetadataEntry::Serialize(common::DataChunk& chunk) const {
 
     // Serialize each file info
     for (const auto& file : files_) {
-        uint32_t name_size = file.name.size();
-        chunk.Append(reinterpret_cast<const uint8_t*>(&name_size), sizeof(name_size));
-        chunk.Append(reinterpret_cast<const uint8_t*>(file.name.data()), name_size);
-        chunk.Append(reinterpret_cast<const uint8_t*>(&file.size), sizeof(file.size));
+        common::DataChunk file_chunk;
+        file.Serialize(file_chunk);
+        chunk.AppendSizedDataChunk(file_chunk);
     }
 }
 
@@ -50,28 +49,18 @@ bool TableMetadataEntry::Deserialize(const common::DataChunk& chunk) {
     // Read each file info
     files_.clear();
     for (uint32_t i = 0; i < num_files; i++) {
-        if (ptr + sizeof(uint32_t) > chunk.Data() + chunk.Size()) {
-            LOG_ERROR("Invalid metadata entry size: {}", chunk.Size());
+        FileInfo file;
+        size_t file_size;
+        std::memcpy(&file_size, ptr, sizeof(file_size));
+        ptr += sizeof(file_size);
+
+        common::DataChunk file_chunk(ptr, file_size);
+        if (!file.Deserialize(file_chunk)) {
             return false;
         }
+        files_.push_back(file);
 
-        uint32_t name_size;
-        std::memcpy(&name_size, ptr, sizeof(name_size));
-        ptr += sizeof(name_size);
-
-        if (ptr + name_size + sizeof(uint64_t) > chunk.Data() + chunk.Size()) {
-            LOG_ERROR("Invalid metadata entry size: {}", chunk.Size());
-            return false;
-        }
-
-        std::string name(reinterpret_cast<const char*>(ptr), name_size);
-        ptr += name_size;
-
-        uint64_t size;
-        std::memcpy(&size, ptr, sizeof(size));
-        ptr += sizeof(size);
-
-        files_.emplace_back(name, size);
+        ptr += file_size;
     }
 
     return true;
@@ -98,6 +87,10 @@ common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChu
     switch (entry.op_type()) {
         case MetadataOpType::CreateSSTable:
             for (const auto& file : entry.files()) {
+                if (sstable_files_.find(file.level) == sstable_files_.end()) {
+                    sstable_files_[file.level] = {};
+                }
+
                 sstable_files_[file.level].push_back(file);
                 level_sizes_[file.level] += file.size;
                 total_size_ += file.size;
@@ -156,7 +149,7 @@ common::Result<common::DataChunk> TableMetadataStateMachine::GetCurrentState() {
 
         // Serialize each file's information using FileInfo's serialization
         for (const auto& file : files) {
-            file.Serialize(state);
+            state.AppendSizedDataChunk(file.Serialize());
         }
     }
 
@@ -200,7 +193,11 @@ common::Result<void> TableMetadataStateMachine::RestoreState(const common::DataC
         // Read each file's information
         for (uint32_t j = 0; j < num_files; j++) {
             FileInfo file;
-            common::DataChunk file_chunk(ptr, end - ptr);
+            size_t file_size;
+            std::memcpy(&file_size, ptr, sizeof(file_size));
+            ptr += sizeof(file_size);
+
+            common::DataChunk file_chunk(ptr, file_size);
             if (!file.Deserialize(file_chunk)) {
                 return common::Result<void>::failure(common::ErrorCode::InvalidArgument,
                                                      "Failed to deserialize file info");

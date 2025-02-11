@@ -144,7 +144,7 @@ TEST_F(SSTableManagerTest, DirectoryRecovery) {
     for (size_t i = 0; i < 200; i++) {
         std::string key = pond::test::GenerateKey(i);
         auto result = recovered_manager->Get(key);
-        ASSERT_TRUE(result.ok());
+        VERIFY_RESULT_MSG(result, "Failed to read key: " + key);
         EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
     }
 }

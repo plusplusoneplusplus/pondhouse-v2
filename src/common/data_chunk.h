@@ -55,6 +55,12 @@ public:
 
     constexpr void Append(const DataChunk &other) { Append(other.Span()); }
 
+    constexpr void AppendSizedDataChunk(const DataChunk &other) {
+        size_t size = other.Size();
+        Append(reinterpret_cast<const uint8_t *>(&size), sizeof(size));
+        Append(other);
+    }
+
     // Clear data
     constexpr void Clear() noexcept { data_.clear(); }
 
