@@ -31,6 +31,7 @@ add_library(pondhouse_common
     src/common/bloom_filter.cpp
     src/common/crc.cpp
     src/kv/kv_entry.cpp
+    src/kv/kv_table.cpp
     src/kv/record.cpp
     src/kv/memtable.cpp
     src/kv/table.cpp
@@ -93,6 +94,7 @@ add_executable(
     tests/kv/record_test.cpp
     tests/kv/memtable_test.cpp
     tests/kv/kv_wal_test.cpp
+    tests/kv/kv_table_test.cpp
     tests/kv/table_test.cpp
     tests/kv/table_metadata_test.cpp
     tests/kv/sstable_manager_test.cpp
