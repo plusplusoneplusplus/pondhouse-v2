@@ -3,81 +3,74 @@
 #include <stdexcept>
 
 #include "common/time.h"
+#include "kv/kv_entry.h"
 
 using namespace pond::common;
 
 namespace pond::kv {
 
-MemTable::MemTable(std::shared_ptr<Schema> schema, size_t max_size)
-    : schema_(std::move(schema)),
-      table_(std::make_unique<common::SkipList<Key, std::unique_ptr<Record>>>()),
-      approximate_memory_usage_(0),
-      max_size_(max_size) {}
+MemTable::MemTable(size_t max_size)
+    : table_(std::make_unique<common::SkipList<Key, Value>>()), approximate_memory_usage_(0), max_size_(max_size) {}
 
-common::Result<void> MemTable::Put(const Key& key, const std::unique_ptr<Record>& record) {
+common::Result<void> MemTable::Put(const Key& key, const Value& value) {
     if (key.size() > MAX_KEY_SIZE) {
         return common::Result<void>::failure(common::ErrorCode::InvalidArgument,
                                              "Key size exceeds maximum allowed size");
     }
-    if (record->schema() != schema_) {
-        return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "Schema mismatch");
+    if (value.Size() > MAX_VALUE_SIZE) {
+        return common::Result<void>::failure(common::ErrorCode::InvalidArgument,
+                                             "Value size exceeds maximum allowed size");
     }
 
-    if (approximate_memory_usage_ > max_size_) {
+    if (ShouldFlush()) {
         return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "MemTable is full");
     }
 
-    size_t entry_size = CalculateEntrySize(key, *record);
+    size_t entry_size = CalculateEntrySize(key, value);
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
+
         // Check if we're replacing an existing entry
-        std::unique_ptr<Record> old_record;
-        if (table_->Get(key, old_record)) {
-            size_t old_size = CalculateEntrySize(key, *old_record);
+        Value old_value;
+        if (table_->Get(key, old_value)) {
+            size_t old_size = CalculateEntrySize(key, old_value);
             approximate_memory_usage_ -= old_size;
         }
 
-        table_->Insert(key, std::make_unique<Record>(*record));
+        table_->Insert(key, std::move(value));
         approximate_memory_usage_ += entry_size;
     }
 
     return common::Result<void>::success();
 }
 
-common::Result<std::unique_ptr<Record>> MemTable::Get(const Key& key) const {
-    std::unique_ptr<Record> record;
+common::Result<MemTable::Value> MemTable::Get(const Key& key) const {
+    Value value;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!table_->Get(key, record)) {
-            return common::Result<std::unique_ptr<Record>>::failure(common::ErrorCode::NotFound, "Key not found");
+        if (!table_->Get(key, value)) {
+            return common::Result<Value>::failure(common::ErrorCode::NotFound, "Key not found");
         }
 
-        // Check if this is a tombstone (all values are null)
-        bool is_tombstone = true;
-        for (size_t i = 0; i < schema_->num_columns(); i++) {
-            if (!record->IsNull(i)) {
-                is_tombstone = false;
-                break;
-            }
-        }
-        if (is_tombstone) {
-            return common::Result<std::unique_ptr<Record>>::failure(common::ErrorCode::NotFound, "Key was deleted");
+        // Check if this is a tombstone (empty value)
+        if (value.Empty()) {
+            return common::Result<Value>::failure(common::ErrorCode::NotFound, "Key was deleted");
         }
     }
-    return common::Result<std::unique_ptr<Record>>::success(std::move(record));
+    return common::Result<Value>::success(std::move(value));
 }
 
 common::Result<void> MemTable::Delete(const Key& key) {
-    auto tombstone = std::make_unique<Record>(schema_);  // Empty record represents a tombstone
-    size_t entry_size = CalculateEntrySize(key, *tombstone);
+    Value tombstone;  // Empty DataChunk represents a tombstone
+    size_t entry_size = CalculateEntrySize(key, tombstone);
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
         // Check if we're replacing an existing entry
-        std::unique_ptr<Record> old_record;
-        if (table_->Get(key, old_record)) {
-            size_t old_size = CalculateEntrySize(key, *old_record);
+        Value old_value;
+        if (table_->Get(key, old_value)) {
+            size_t old_size = CalculateEntrySize(key, old_value);
             approximate_memory_usage_ -= old_size;
         }
 
@@ -90,81 +83,6 @@ common::Result<void> MemTable::Delete(const Key& key) {
     }
 
     return common::Result<void>::success();
-}
-
-common::Result<void> MemTable::UpdateColumn(const Key& key,
-                                            const std::string& column_name,
-                                            const common::DataChunk& value) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    int col_idx = schema_->GetColumnIndex(column_name);
-    if (col_idx == -1) {
-        return common::Result<void>::failure(common::ErrorCode::NotFound, "Column not found");
-    }
-
-    std::unique_ptr<Record> record;
-    if (!table_->Get(key, record)) {
-        record = std::make_unique<Record>(schema_);
-    } else {
-        // Check if this is a tombstone
-        bool is_tombstone = true;
-        for (size_t i = 0; i < schema_->num_columns(); i++) {
-            if (!record->IsNull(i)) {
-                is_tombstone = false;
-                break;
-            }
-        }
-        if (is_tombstone) {
-            record = std::make_unique<Record>(schema_);
-        }
-    }
-
-    record->Set(col_idx, value);
-    size_t entry_size = CalculateEntrySize(key, *record);
-
-    // If we're updating an existing record, we've already subtracted its size
-    // when we retrieved it earlier. If it's a new record, we don't need to subtract anything.
-
-    if (approximate_memory_usage_ + entry_size > max_size_) {
-        return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "MemTable is full");
-    }
-
-    table_->Insert(key, std::move(record));
-    approximate_memory_usage_ += entry_size;
-
-    return common::Result<void>::success();
-}
-
-common::Result<common::DataChunk> MemTable::GetColumn(const Key& key, const std::string& column_name) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    int col_idx = schema_->GetColumnIndex(column_name);
-    if (col_idx == -1) {
-        return common::Result<common::DataChunk>::failure(common::ErrorCode::NotFound, "Column not found");
-    }
-
-    std::unique_ptr<Record> record;
-    if (!table_->Get(key, record)) {
-        return common::Result<common::DataChunk>::failure(common::ErrorCode::NotFound, "Key not found");
-    }
-
-    // Check if this is a tombstone
-    bool is_tombstone = true;
-    for (size_t i = 0; i < schema_->num_columns(); i++) {
-        if (!record->IsNull(i)) {
-            is_tombstone = false;
-            break;
-        }
-    }
-    if (is_tombstone) {
-        return common::Result<common::DataChunk>::failure(common::ErrorCode::NotFound, "Key was deleted");
-    }
-
-    if (record->IsNull(col_idx)) {
-        return common::Result<common::DataChunk>::failure(common::ErrorCode::InvalidOperation, "Column is null");
-    }
-
-    return common::Result<common::DataChunk>::success(record->Get<common::DataChunk>(col_idx).value());
 }
 
 size_t MemTable::ApproximateMemoryUsage() const {
@@ -180,17 +98,17 @@ bool MemTable::ShouldFlush() const {
     return approximate_memory_usage_.load(std::memory_order_relaxed) >= max_size_;
 }
 
-size_t MemTable::CalculateEntrySize(const Key& key, const Record& record) const {
+size_t MemTable::CalculateEntrySize(const Key& key, const Value& value) const {
     // Size calculation includes:
     // 1. Key size (string data + string overhead)
-    // 2. Serialized record size
+    // 2. Serialized value size
     // 3. Skip list node overhead (pointers + height)
     // 4. Memory allocator overhead
     constexpr size_t kStringOverhead = 24;     // std::string overhead on 64-bit systems
     constexpr size_t kNodeOverhead = 64;       // Skip list node overhead (approximate)
     constexpr size_t kAllocatorOverhead = 16;  // Typical memory allocator overhead
 
-    return key.size() + kStringOverhead + record.Serialize().Size() + kNodeOverhead + kAllocatorOverhead;
+    return key.size() + kStringOverhead + value.Size() + kNodeOverhead + kAllocatorOverhead;
 }
 
 // Iterator implementation

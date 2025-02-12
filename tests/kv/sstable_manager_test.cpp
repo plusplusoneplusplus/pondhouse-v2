@@ -7,6 +7,7 @@
 
 #include "common/memory_append_only_fs.h"
 #include "kv/memtable.h"
+#include "kv/record.h"
 #include "test_helper.h"
 
 using namespace pond::common;
@@ -28,13 +29,13 @@ protected:
 
     // Helper to create a MemTable with test data
     std::unique_ptr<MemTable> CreateTestMemTable(size_t start_key, size_t num_entries) {
-        auto memtable = std::make_unique<MemTable>(schema_);
+        auto memtable = std::make_unique<MemTable>();
         for (size_t i = 0; i < num_entries; i++) {
             std::string key = pond::test::GenerateKey(start_key + i);
             std::string value = "value" + std::to_string(start_key + i);
             auto record = std::make_unique<Record>(schema_);
             record->Set(0, value);
-            EXPECT_TRUE(memtable->Put(key, record).ok());
+            EXPECT_TRUE(memtable->Put(key, record->Serialize()).ok());
         }
         return memtable;
     }
@@ -180,14 +181,14 @@ TEST_F(SSTableManagerTest, ConcurrentReads) {
 
 TEST_F(SSTableManagerTest, LargeValues) {
     // Create MemTable with large values
-    auto memtable = std::make_unique<MemTable>(schema_);
+    auto memtable = std::make_unique<MemTable>();
     std::string large_value(1024 * 1024, 'x');  // 1MB value
 
     for (size_t i = 0; i < 10; i++) {
         std::string key = pond::test::GenerateKey(i);
         auto record = std::make_unique<Record>(schema_);
         record->Set(0, large_value + std::to_string(i));
-        ASSERT_TRUE(memtable->Put(key, record).ok());
+        ASSERT_TRUE(memtable->Put(key, record->Serialize()).ok());
     }
 
     // Flush to SSTable
@@ -206,7 +207,7 @@ TEST_F(SSTableManagerTest, LargeValues) {
 
 TEST_F(SSTableManagerTest, InvalidOperations) {
     // Try to create SSTable from empty MemTable
-    auto empty_memtable = std::make_unique<MemTable>(schema_);
+    auto empty_memtable = std::make_unique<MemTable>();
     auto result = manager_->CreateSSTableFromMemTable(*empty_memtable);
     EXPECT_FALSE(result.ok());
 
@@ -315,13 +316,13 @@ TEST_F(SSTableManagerTest, MetadataCacheMultipleLevels) {
 
 TEST_F(SSTableManagerTest, MetadataCacheBloomFilter) {
     // Create a MemTable with specific test data
-    auto memtable = std::make_unique<MemTable>(schema_);
+    auto memtable = std::make_unique<MemTable>();
     std::vector<std::string> test_keys = {"apple", "banana", "cherry", "date"};
 
     for (size_t i = 0; i < test_keys.size(); i++) {
         auto record = std::make_unique<Record>(schema_);
         record->Set(0, "value" + std::to_string(i));
-        ASSERT_TRUE(memtable->Put(test_keys[i], record).ok());
+        ASSERT_TRUE(memtable->Put(test_keys[i], record->Serialize()).ok());
     }
 
     // Create SSTable with bloom filter

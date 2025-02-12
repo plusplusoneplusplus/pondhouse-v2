@@ -19,7 +19,7 @@ Table::Table(std::shared_ptr<Schema> schema,
     }
 
     // Initialize active memtable
-    active_memtable_ = std::make_unique<MemTable>(schema_);
+    active_memtable_ = std::make_unique<MemTable>();
 
     // Initialize metadata state machine
     metadata_state_machine_ = std::make_shared<TableMetadataStateMachine>(fs_, table_name_ + "_metadata");
@@ -54,7 +54,7 @@ common::Result<void> Table::Put(const Key& key, std::unique_ptr<Record> record, 
     }
 
     // Apply to memtable
-    return active_memtable_->Put(key, record);
+    return active_memtable_->Put(key, record->Serialize());
 }
 
 common::Result<std::unique_ptr<Record>> Table::Get(const Key& key, bool acquire_lock) const {
@@ -66,7 +66,7 @@ common::Result<std::unique_ptr<Record>> Table::Get(const Key& key, bool acquire_
     // First try memtable
     auto result = active_memtable_->Get(key);
     if (result.ok()) {
-        return result;
+        return Record::Deserialize(result.value(), schema_);
     }
 
     // If not found in memtable, check SSTables
@@ -169,7 +169,7 @@ common::Result<bool> Table::Recover() {
                         return common::Result<bool>::failure(record_result.error());
                     }
 
-                    auto result = active_memtable_->Put(entry.key, record_result.value());
+                    auto result = active_memtable_->Put(entry.key, record_result.value()->Serialize());
                     if (!result.ok()) {
                         return common::Result<bool>::failure(result.error());
                     }
@@ -249,7 +249,7 @@ common::Result<void> Table::TrackMetadataOp(MetadataOpType op_type, const std::v
 
 common::Result<void> Table::SwitchMemTable() {
     // Create a new memtable
-    auto new_memtable = std::make_unique<MemTable>(schema_);
+    auto new_memtable = std::make_unique<MemTable>();
 
     // Flush current memtable to SSTable
     auto flush_result = sstable_manager_->CreateSSTableFromMemTable(*active_memtable_);

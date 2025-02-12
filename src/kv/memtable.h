@@ -8,9 +8,6 @@
 #include "common/result.h"
 #include "common/skip_list.h"
 #include "common/types.h"
-#include "common/wal.h"
-#include "kv/kv_entry.h"
-#include "kv/record.h"
 
 namespace pond::kv {
 
@@ -20,34 +17,25 @@ static constexpr size_t DEFAULT_MEMTABLE_SIZE = 64 * 1024 * 1024;  // 64MB
 class MemTable {
 public:
     using Key = std::string;
+    using Value = common::DataChunk;
 
-    explicit MemTable(std::shared_ptr<Schema> schema, size_t max_size = DEFAULT_MEMTABLE_SIZE);
+    explicit MemTable(size_t max_size = DEFAULT_MEMTABLE_SIZE);
     ~MemTable() = default;
 
     // Core operations
-    common::Result<bool> Recover();
-    common::Result<void> Put(const Key& key, const std::unique_ptr<Record>& record);
-    common::Result<std::unique_ptr<Record>> Get(const Key& key) const;
+    common::Result<void> Put(const Key& key, const Value& value);
+    common::Result<Value> Get(const Key& key) const;
     common::Result<void> Delete(const Key& key);
-
-    // Column operations
-    common::Result<void> UpdateColumn(const Key& key, const std::string& column_name, const common::DataChunk& value);
-    common::Result<common::DataChunk> GetColumn(const Key& key, const std::string& column_name) const;
 
     // Size management
     size_t ApproximateMemoryUsage() const;
     bool ShouldFlush() const;
-
-    // Schema access
-    const std::shared_ptr<Schema>& schema() const { return schema_; }
-
     size_t GetEntryCount() const;
 
     // Iterator interface
     class Iterator {
     public:
-        explicit Iterator(common::SkipList<Key, std::unique_ptr<Record>>::Iterator* it, std::mutex& mutex)
-            : iter_(it), mutex_(mutex) {}
+        explicit Iterator(common::SkipList<Key, Value>::Iterator* it, std::mutex& mutex) : iter_(it), mutex_(mutex) {}
         ~Iterator() = default;
 
         // Thread-safe operations
@@ -82,29 +70,29 @@ public:
             return common::Result<Key>::success(iter_->key());
         }
 
-        common::Result<std::reference_wrapper<const Record>> record() const {
+        common::Result<std::reference_wrapper<const Value>> value() const {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!iter_->Valid()) {
-                return common::Result<std::reference_wrapper<const Record>>::failure(
-                    common::ErrorCode::InvalidOperation, "Iterator is not valid");
+                return common::Result<std::reference_wrapper<const Value>>::failure(common::ErrorCode::InvalidOperation,
+                                                                                    "Iterator is not valid");
             }
-            return common::Result<std::reference_wrapper<const Record>>::success(std::cref(*iter_->value()));
+            return common::Result<std::reference_wrapper<const Value>>::success(std::cref(iter_->value()));
         }
 
     private:
-        std::unique_ptr<common::SkipList<Key, std::unique_ptr<Record>>::Iterator> iter_;
+        std::unique_ptr<common::SkipList<Key, Value>::Iterator> iter_;
         std::mutex& mutex_;  // Reference to the mutex for thread-safe operations
     };
 
     std::unique_ptr<Iterator> NewIterator() const;
 
 private:
-    std::shared_ptr<Schema> schema_;
-    std::unique_ptr<common::SkipList<Key, std::unique_ptr<Record>>> table_;
-    std::atomic<size_t> approximate_memory_usage_;
-    const size_t max_size_;
-    mutable std::mutex mutex_;  // Mutable to allow locking in const member functions
-    size_t CalculateEntrySize(const Key& key, const Record& record) const;
+    size_t CalculateEntrySize(const Key& key, const Value& value) const;
+
+    std::unique_ptr<common::SkipList<Key, Value>> table_;
+    mutable std::mutex mutex_;
+    std::atomic<size_t> approximate_memory_usage_{0};
+    size_t max_size_;
 };
 
 }  // namespace pond::kv

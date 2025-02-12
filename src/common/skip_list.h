@@ -21,7 +21,7 @@ private:
         const int height;
         std::unique_ptr<NodePtr[]> next;
 
-        Node(const K& k, V&& v, int h) : key(k), value(std::move(v)), height(h), next(new NodePtr[h]) {
+        Node(const K& k, const V&& v, int h) : key(k), value(std::move(v)), height(h), next(new NodePtr[h]) {
             for (int i = 0; i < h; i++) {
                 next[i] = nullptr;
             }
@@ -82,7 +82,7 @@ public:
         }
     }
 
-    void Insert(const K& key, V&& value) {
+    void Insert(const K& key, const V&& value) {
         Node* prev[max_level_];
         Node* x = findGreaterOrEqual(key, prev);
 
@@ -118,7 +118,7 @@ public:
     bool Get(const K& key, V& value) const {
         Node* x = findGreaterOrEqual(key, nullptr);
         if (x && x->key == key) {
-            value = std::make_unique<typename V::element_type>(*x->value);
+            value = x->value;
             return true;
         }
         return false;

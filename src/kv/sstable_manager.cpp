@@ -132,8 +132,7 @@ public:
             }
             largest_key = key;
 
-            auto record = iter->record().value();
-            auto value = record.get().Serialize();
+            auto value = iter->value().value();
             auto result = writer.Add(key, value);
             if (!result.ok()) {
                 return common::Result<FileInfo>::failure(result.error());
