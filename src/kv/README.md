@@ -519,72 +519,71 @@ if (iter->Valid()) {
 }
 ```
 
+## KvTable
+
+The `KvTable` class provides a schema-agnostic key-value store interface that serves as the base storage engine. It manages:
+
+1. **Core Storage Operations**
+   - Raw byte storage using string keys and DataChunk values
+   - No schema validation or column awareness
+   - Thread-safe operations with mutex protection
+
+2. **Storage Components**
+   - MemTable for in-memory storage
+   - Write-Ahead Log (WAL) for durability
+   - SSTable management for persistent storage
+   - Metadata state machine for tracking table state
+
+3. **Key Features**
+   - Thread-safe operations
+   - Crash recovery support
+   - Automatic MemTable flushing
+   - WAL rotation
+   - SSTable organization
+
 ## Table
 
-The `Table` class is the main entry point for the key-value store, managing the lifecycle of MemTables and SSTables while providing a simple interface for data operations.
+The `Table` class inherits from `KvTable` to provide a schema-aware interface. It adds:
 
-### Architecture
+1. **Schema Management**
+   - Schema validation on write operations
+   - Type-safe column operations
+   - Record serialization/deserialization
 
-#### Components
-- Schema management for type-safe operations
-- Active MemTable for in-memory operations
-- Write-Ahead Log (WAL) for durability
-- SSTable management (planned)
-- Filesystem abstraction via `IAppendOnlyFileSystem`
-
-#### Key Features
-
-1. **Data Operations**
-   - Put: Insert or update records
-   - Get: Retrieve records by key
+2. **Schema-Aware Operations**
+   - Put: Insert or update records with schema validation
+   - Get: Retrieve and deserialize records
    - Delete: Remove records
-   - Column-level updates
+   - Column operations: Update/retrieve individual columns
 
-2. **Durability**
-   - Write-Ahead Logging
-   - Crash recovery support
-   - Atomic operations
-
-3. **Resource Management**
-   - MemTable lifecycle
-   - SSTable organization
-   - File system interactions
+3. **Type Safety**
+   - Records must match the table's schema
+   - Column operations validate column names and types
+   - Safe conversion between Records and raw bytes
 
 ### Usage
 
 ```cpp
-// Create a table with schema and filesystem
+// Create a schema-aware table
+auto schema = std::make_shared<Schema>(...);
 Table table(schema, fs, "my_table");
 
-// Basic operations
-table.Put(key, record);
-table.Get(key);
-table.Delete(key);
+// Schema-aware operations
+auto record = std::make_unique<Record>(schema);
+record->Set(0, value1);
+record->Set(1, value2);
+table.Put(key, std::move(record));
 
 // Column operations
-table.UpdateColumn(key, "column_name", value);
+table.UpdateColumn(key, "column_name", new_value);
 
-// Maintenance
-table.Flush();  // Flush MemTable to SSTable
-table.Recover();  // Recover from crash
+// Get with automatic deserialization
+auto result = table.Get(key);
+if (result.ok()) {
+    auto record = std::move(result).value();
+    auto value = record->Get<Type>(column_index);
+}
 ```
-
-### Implementation Details
-
-1. **Write Path**
-   - Writes go to WAL first
-   - Then to active MemTable
-   - Background flush to SSTable when needed
-
-2. **Read Path**
-   - Check active MemTable first
-   - Then search in SSTables
-   - Merge results if needed
-
-3. **Recovery**
-   - Read WAL entries
-   - Rebuild MemTable state
-   - Verify SSTable consistency
 
 ## Testing
 

@@ -1,5 +1,3 @@
-
-
 ## TODO List
 
 ### 1. SSTable Reader Implementation [COMPLETED]
@@ -111,86 +109,63 @@ auto stats = manager.GetStats();
     - [x] Active and immutable table management
     - [x] Thread-safe table transitions
     - [x] Reference counting for safe deletion
-  - [ ] Add flush triggers
-    - [ ] Size-based threshold
+  - [x] Add flush triggers
+    - [x] Size-based threshold
     - [ ] Time-based periodic flushes
-    - [ ] Manual flush support
-  - [ ] Concurrent access handling
-    - [ ] Read/Write synchronization
-    - [ ] Switch coordination
+    - [x] Manual flush support
+  - [x] Concurrent access handling
+    - [x] Read/Write synchronization
+    - [x] Switch coordination
 
-- [ ] Background Flush Mechanism
-  - [ ] Background worker implementation
-    - [ ] Flush thread management
-    - [ ] Work queue handling
-    - [ ] Graceful shutdown
-  - [ ] Flush coordination
-    - [ ] Progress tracking
-    - [ ] Error handling and retry logic
-    - [ ] Temporary file management
+- [x] Background Flush Mechanism
+  - [x] Background worker implementation
+    - [x] Flush thread management
+    - [x] Work queue handling
+    - [x] Graceful shutdown
+  - [x] Flush coordination
+    - [x] Progress tracking
+    - [x] Error handling and retry logic
+    - [x] Temporary file management
   - [ ] Monitoring and metrics
     - [ ] Flush latency tracking
     - [ ] Queue size monitoring
     - [ ] Error rate tracking
 
-- [ ] Sequence Number Management
-  - [ ] Atomic sequence generation
-  - [ ] Integration points
-    - [ ] WAL records
-    - [ ] MemTable entries
-    - [ ] SSTable metadata
-  - [ ] Consistency guarantees
-    - [ ] Cross-table ordering
-    - [ ] Recovery ordering
-
-- [ ] Error Handling and Recovery
-  - [ ] Failure scenarios
-    - [ ] WAL write failures
-    - [ ] Flush failures
-    - [ ] Disk full conditions
-  - [ ] Cleanup policies
-    - [ ] WAL truncation rules
-    - [ ] Temporary file cleanup
-    - [ ] Failed flush recovery
-  - [ ] Monitoring and alerting
-    - [ ] Error rate tracking
-    - [ ] Resource usage alerts
-    - [ ] Performance degradation detection
+- [x] Sequence Number Management
+  - [x] Atomic sequence generation
+  - [x] Integration points
+    - [x] WAL records
+    - [x] MemTable entries
+    - [x] SSTable metadata
+  - [x] Consistency guarantees
+    - [x] Cross-table ordering
+    - [x] Recovery ordering
 
 ### 5. Read Path Integration [HIGH PRIORITY]
-- [ ] Implement merged iteration
-  - [ ] MemTable/SSTable merger
-  - [ ] Version snapshot reading
-  - [ ] Iterator interface
+- [x] Implement merged iteration
+  - [x] MemTable/SSTable merger
+  - [x] Version snapshot reading
+  - [x] Iterator interface
 - [ ] Add block cache management
   - [ ] Cache policy implementation
   - [ ] Memory budget
   - [ ] Eviction strategy
 - [ ] Optimize read patterns
-  - [ ] Bloom filter utilization
+  - [x] Bloom filter utilization
   - [ ] Read-ahead for scans
   - [ ] Cache warmup strategy
 
-### 6. Table Implementation [HIGH PRIORITY]
-- [ ] Complete core Table operations
-  - [ ] Implement SSTable list management
-  - [ ] Add background flush mechanism
-  - [ ] Handle MemTable switching during flush
-  - [ ] Implement proper error handling
-- [ ] Add transaction support
-  - [ ] Begin/Commit/Rollback operations
-  - [ ] MVCC implementation
-  - [ ] Deadlock detection
-- [ ] Implement advanced features
-  - [ ] Range queries
-  - [ ] Batch operations
-  - [ ] Atomic updates
-  - [ ] Secondary indices
-- [ ] Add monitoring and management
-  - [ ] Table statistics
-  - [ ] Resource usage tracking
-  - [ ] Background task management
-  - [ ] Health checks
+### 6. Schema-Agnostic Storage Layer [COMPLETED]
+- [x] Implement KvTable base class
+  - [x] Raw byte storage interface
+  - [x] Thread-safe operations
+  - [x] WAL management
+  - [x] SSTable integration
+- [x] Refactor Table class
+  - [x] Inherit from KvTable
+  - [x] Add schema validation layer
+  - [x] Implement Record serialization
+  - [x] Add column operations
 
 ### 7. Performance Optimization [LOW PRIORITY]
 - [ ] Benchmark suite
@@ -205,3 +180,17 @@ auto stats = manager.GetStats();
   - [ ] Block sizes
   - [ ] Cache sizes
   - [ ] Compression settings
+
+### 8. Future Enhancements [LOW PRIORITY]
+- [ ] Add transaction support
+  - [ ] MVCC implementation
+  - [ ] Deadlock detection
+  - [ ] Isolation levels
+- [ ] Implement advanced features
+  - [ ] Range queries
+  - [ ] Secondary indices
+  - [ ] Column families
+- [ ] Add monitoring and management
+  - [ ] Table statistics
+  - [ ] Resource usage tracking
+  - [ ] Health checks
