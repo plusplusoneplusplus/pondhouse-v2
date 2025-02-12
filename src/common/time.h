@@ -138,4 +138,8 @@ private:
     static constexpr uint16_t MAX_LOGICAL = HybridTime::MAX_LOGICAL;
 };
 
+inline HybridTime GetNextHybridTime() {
+    return HybridTimeManager::Instance().Next();
+}
+
 }  // namespace pond::common

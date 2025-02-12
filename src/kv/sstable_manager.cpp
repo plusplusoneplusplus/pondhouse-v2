@@ -124,7 +124,7 @@ public:
         size_t entry_count = 0;
 
         // Write entries from MemTable
-        auto iter = memtable.NewIterator();
+        std::unique_ptr<MemTable::Iterator> iter = memtable.NewIterator();
         while (iter->Valid()) {
             auto key = iter->key().value();
             if (smallest_key.empty()) {
@@ -132,8 +132,12 @@ public:
             }
             largest_key = key;
 
-            auto value = iter->value().value();
-            auto result = writer.Add(key, value);
+            auto value_result = iter->value();
+            if (!value_result.ok()) {
+                return common::Result<FileInfo>::failure(value_result.error());
+            }
+            const auto& versioned_value = value_result.value().get();
+            auto result = writer.Add(key, versioned_value->value());
             if (!result.ok()) {
                 return common::Result<FileInfo>::failure(result.error());
             }

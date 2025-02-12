@@ -12,7 +12,7 @@ namespace pond::kv {
 MemTable::MemTable(size_t max_size)
     : table_(std::make_unique<common::SkipList<Key, Value>>()), approximate_memory_usage_(0), max_size_(max_size) {}
 
-common::Result<void> MemTable::Put(const Key& key, const Value& value) {
+common::Result<void> MemTable::Put(const Key& key, const RawValue& value, uint64_t txn_id) {
     if (key.size() > MAX_KEY_SIZE) {
         return common::Result<void>::failure(common::ErrorCode::InvalidArgument,
                                              "Key size exceeds maximum allowed size");
@@ -26,61 +26,92 @@ common::Result<void> MemTable::Put(const Key& key, const Value& value) {
         return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "MemTable is full");
     }
 
-    size_t entry_size = CalculateEntrySize(key, value);
+    std::lock_guard<std::mutex> lock(mutex_);
 
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
+    // Get current version chain if it exists
+    Value current_version;
+    table_->Get(key, current_version);
 
-        // Check if we're replacing an existing entry
-        Value old_value;
-        if (table_->Get(key, old_value)) {
-            size_t old_size = CalculateEntrySize(key, old_value);
-            approximate_memory_usage_ -= old_size;
-        }
-
-        table_->Insert(key, std::move(value));
-        approximate_memory_usage_ += entry_size;
+    // Create new version
+    auto version_time = common::GetNextHybridTime();
+    Value new_version;
+    if (current_version) {
+        new_version = current_version->CreateNewVersion(value, version_time, txn_id);
+    } else {
+        new_version = std::make_shared<DataChunkVersionedValue>(value, version_time, txn_id);
     }
+
+    // Calculate size change
+    size_t entry_size = CalculateEntrySize(key, new_version);
+    if (current_version) {
+        size_t old_size = CalculateEntrySize(key, current_version);
+        approximate_memory_usage_ -= old_size;
+    }
+
+    // Insert new version
+    table_->Insert(key, std::move(new_version));
+    approximate_memory_usage_ += entry_size;
 
     return common::Result<void>::success();
 }
 
-common::Result<MemTable::Value> MemTable::Get(const Key& key) const {
-    Value value;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!table_->Get(key, value)) {
-            return common::Result<Value>::failure(common::ErrorCode::NotFound, "Key not found");
-        }
+common::Result<MemTable::RawValue> MemTable::Get(const Key& key, common::HybridTime read_time) const {
+    std::lock_guard<std::mutex> lock(mutex_);
 
-        // Check if this is a tombstone (empty value)
-        if (value.Empty()) {
-            return common::Result<Value>::failure(common::ErrorCode::NotFound, "Key was deleted");
-        }
+    Value version_chain;
+    if (!table_->Get(key, version_chain)) {
+        return common::Result<RawValue>::failure(common::ErrorCode::NotFound, "Key not found");
     }
-    return common::Result<Value>::success(std::move(value));
+
+    auto value_ref = version_chain->GetValueAt(read_time);
+    if (!value_ref) {
+        return common::Result<RawValue>::failure(common::ErrorCode::NotFound, "No visible version at specified time");
+    }
+
+    return common::Result<RawValue>::success(value_ref->get());
 }
 
-common::Result<void> MemTable::Delete(const Key& key) {
-    Value tombstone;  // Empty DataChunk represents a tombstone
-    size_t entry_size = CalculateEntrySize(key, tombstone);
+common::Result<MemTable::RawValue> MemTable::GetForTxn(const Key& key, uint64_t txn_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
 
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        // Check if we're replacing an existing entry
-        Value old_value;
-        if (table_->Get(key, old_value)) {
-            size_t old_size = CalculateEntrySize(key, old_value);
-            approximate_memory_usage_ -= old_size;
-        }
-
-        if (approximate_memory_usage_ + entry_size > max_size_) {
-            return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "MemTable is full");
-        }
-
-        table_->Insert(key, std::move(tombstone));
-        approximate_memory_usage_ += entry_size;
+    Value version_chain;
+    if (!table_->Get(key, version_chain)) {
+        return common::Result<RawValue>::failure(common::ErrorCode::NotFound, "Key not found");
     }
+
+    auto value_ref = version_chain->GetValueForTxn(txn_id);
+    if (!value_ref) {
+        return common::Result<RawValue>::failure(common::ErrorCode::NotFound, "No visible version for transaction");
+    }
+
+    return common::Result<RawValue>::success(value_ref->get());
+}
+
+common::Result<void> MemTable::Delete(const Key& key, uint64_t txn_id) {
+    if (ShouldFlush()) {
+        return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "MemTable is full");
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Get current version chain
+    Value current_version;
+    if (!table_->Get(key, current_version)) {
+        // key not found, just return success
+        return common::Result<void>::success();
+    }
+
+    // Create deletion marker
+    auto version_time = common::GetNextHybridTime();
+    auto deletion_version = current_version->CreateDeletionMarker(version_time, txn_id);
+
+    // Calculate size change
+    size_t old_size = CalculateEntrySize(key, current_version);
+    size_t new_size = CalculateEntrySize(key, deletion_version);
+    approximate_memory_usage_ = approximate_memory_usage_ - old_size + new_size;
+
+    // Insert deletion marker
+    table_->Insert(key, std::move(deletion_version));
 
     return common::Result<void>::success();
 }
@@ -101,14 +132,16 @@ bool MemTable::ShouldFlush() const {
 size_t MemTable::CalculateEntrySize(const Key& key, const Value& value) const {
     // Size calculation includes:
     // 1. Key size (string data + string overhead)
-    // 2. Serialized value size
-    // 3. Skip list node overhead (pointers + height)
-    // 4. Memory allocator overhead
+    // 2. VersionedValue overhead (timestamp, txn_id, etc.)
+    // 3. Value data size
+    // 4. Skip list node overhead (pointers + height)
+    // 5. Memory allocator overhead
     constexpr size_t kStringOverhead = 24;     // std::string overhead on 64-bit systems
+    constexpr size_t kVersionOverhead = 32;    // VersionedValue overhead (approximate)
     constexpr size_t kNodeOverhead = 64;       // Skip list node overhead (approximate)
     constexpr size_t kAllocatorOverhead = 16;  // Typical memory allocator overhead
 
-    return key.size() + kStringOverhead + value.Size() + kNodeOverhead + kAllocatorOverhead;
+    return key.size() + kStringOverhead + kVersionOverhead + value->value().Size() + kNodeOverhead + kAllocatorOverhead;
 }
 
 // Iterator implementation

@@ -7,65 +7,188 @@
 #include <gtest/gtest.h>
 
 #include "kv/kv_entry.h"
+#include "test_helper.h"
 
 namespace pond::kv {
 
 class MemTableTest : public ::testing::Test {
 protected:
-    void SetUp() override { table = std::make_unique<MemTable>(); }
+    void SetUp() override {
+        table = std::make_unique<MemTable>();
+        current_txn_id = 1;
+    }
 
     std::unique_ptr<MemTable> table;
+    uint64_t current_txn_id;
 
     common::DataChunk CreateTestValue(const std::string& str) {
         return common::DataChunk(reinterpret_cast<const uint8_t*>(str.data()), str.size());
     }
+
+    uint64_t NextTxnId() { return current_txn_id++; }
 };
 
-TEST_F(MemTableTest, BasicOperations) {
-    // Test Put
-    auto value = CreateTestValue("value1");
-    auto result = table->Put("key1", value);
-    EXPECT_TRUE(result.ok());
+TEST_F(MemTableTest, BasicVersionedOperations) {
+    auto txn1 = NextTxnId();
+    auto txn2 = NextTxnId();
+    auto read_time = common::HybridTimeManager::Instance().Next();
 
-    // Test Get
-    auto get_result = table->Get("key1");
-    EXPECT_TRUE(get_result.ok());
-    auto retrieved = std::move(get_result).value();
+    // Test Put with first transaction
+    auto value1 = CreateTestValue("value1");
+    auto result = table->Put("key1", value1, txn1);
+    VERIFY_RESULT(result);
+
+    // Test Get with old read time
+    auto get_result = table->Get("key1", read_time);
+    EXPECT_FALSE(get_result.ok());
+    EXPECT_EQ(get_result.error().code(), common::ErrorCode::NotFound);
+    EXPECT_TRUE(get_result.error().message().find("No visible version") != std::string::npos);
+
+    auto get_result2 = table->Get("key1", common::GetNextHybridTime());
+    VERIFY_RESULT(get_result2);
+    auto retrieved = std::move(get_result2).value();
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(retrieved.Data()), retrieved.Size()), "value1");
 
+    // Test Get with transaction ID
+    auto txn_get_result = table->GetForTxn("key1", txn1);
+    VERIFY_RESULT(txn_get_result);
+    auto txn_retrieved = std::move(txn_get_result).value();
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(txn_retrieved.Data()), txn_retrieved.Size()), "value1");
+
     // Test non-existent key
-    get_result = table->Get("key2");
-    EXPECT_FALSE(get_result.ok());
+    auto get_result3 = table->Get("key2", read_time);
+    VERIFY_ERROR_CODE(get_result3, common::ErrorCode::NotFound);
+}
+
+TEST_F(MemTableTest, VersionChainOperations) {
+    auto txn1 = NextTxnId();
+    auto txn2 = NextTxnId();
+
+    // Create initial version
+    auto value1 = CreateTestValue("value1");
+    VERIFY_RESULT(table->Put("key1", value1, txn1));
+    auto time1 = common::HybridTimeManager::Instance().Current();
+
+    // Create second version
+    auto value2 = CreateTestValue("value2");
+    VERIFY_RESULT(table->Put("key1", value2, txn2));
+    auto time2 = common::HybridTimeManager::Instance().Current();
+
+    // Test visibility at different timestamps
+    auto result1 = table->Get("key1", time1);
+    VERIFY_RESULT(result1);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(result1.value().Data()), result1.value().Size()), "value1");
+
+    auto result2 = table->Get("key1", time2);
+    VERIFY_RESULT(result2);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(result2.value().Data()), result2.value().Size()), "value2");
+
+    // Test transaction visibility
+    auto txn1_result = table->GetForTxn("key1", txn1);
+    VERIFY_RESULT(txn1_result);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(txn1_result.value().Data()), txn1_result.value().Size()),
+              "value1");
+
+    auto txn2_result = table->GetForTxn("key1", txn2);
+    VERIFY_RESULT(txn2_result);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(txn2_result.value().Data()), txn2_result.value().Size()),
+              "value2");
+}
+
+TEST_F(MemTableTest, DeletionOperations) {
+    auto txn1 = NextTxnId();
+    auto txn2 = NextTxnId();
+
+    // Create initial version
+    auto value1 = CreateTestValue("value1");
+    VERIFY_RESULT(table->Put("key1", value1, txn1));
+    auto time1 = common::HybridTimeManager::Instance().Current();
+
+    // Delete the key
+    VERIFY_RESULT(table->Delete("key1", txn2));
+    auto time2 = common::HybridTimeManager::Instance().Current();
+
+    // Test visibility before deletion
+    auto result1 = table->Get("key1", time1);
+    VERIFY_RESULT(result1);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(result1.value().Data()), result1.value().Size()), "value1");
+
+    // Test visibility after deletion
+    auto result2 = table->Get("key1", time2);
+    VERIFY_ERROR_CODE(result2, common::ErrorCode::NotFound);
+
+    // Test transaction visibility
+    auto txn1_result = table->GetForTxn("key1", txn1);
+    VERIFY_RESULT(txn1_result);
+    auto txn2_result = table->GetForTxn("key1", txn2);
+    // key has been deleted, so this should fail
+    VERIFY_ERROR_CODE(txn2_result, common::ErrorCode::NotFound);
+}
+
+TEST_F(MemTableTest, ConcurrentVersioning) {
+    const int num_threads = 4;
+    const int num_ops = 100;
+    std::vector<std::thread> threads;
+    std::atomic<uint64_t> next_txn_id(1);
+
+    // Concurrent insertions with different transaction IDs
+    for (int i = 0; i < num_threads; i++) {
+        threads.emplace_back([&, i]() {
+            for (int j = 0; j < num_ops; j++) {
+                std::string key = "key" + std::to_string(i);
+                auto value = CreateTestValue("value" + std::to_string(j));
+                uint64_t txn_id = next_txn_id.fetch_add(1);
+                auto result = table->Put(key, value, txn_id);
+                if (!result.ok()) {
+                    break;
+                }
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Verify version chains
+    for (int i = 0; i < num_threads; i++) {
+        std::string key = "key" + std::to_string(i);
+        auto current_time = common::HybridTimeManager::Instance().Current();
+        auto result = table->Get(key, current_time);
+        VERIFY_RESULT(result);
+    }
 }
 
 TEST_F(MemTableTest, SizeLimits) {
+    auto txn_id = NextTxnId();
     std::string large_key(MAX_KEY_SIZE + 1, 'x');
     auto value = CreateTestValue("value");
 
     // Test key size limit
-    auto result = table->Put(large_key, value);
-    EXPECT_FALSE(result.ok());
+    auto result = table->Put(large_key, value, txn_id);
+    VERIFY_ERROR_CODE(result, common::ErrorCode::InvalidArgument);
 
     // Test value size limit
     std::string large_value_str(MAX_VALUE_SIZE + 1, 'x');
     auto large_value = CreateTestValue(large_value_str);
-    result = table->Put("key1", large_value);
-    EXPECT_FALSE(result.ok());
+    result = table->Put("key1", large_value, txn_id);
+    VERIFY_ERROR_CODE(result, common::ErrorCode::InvalidArgument);
 }
 
 TEST_F(MemTableTest, MemoryUsage) {
+    auto txn_id = NextTxnId();
     const size_t initial_usage = table->ApproximateMemoryUsage();
 
     // Add entries and check memory usage increases
     auto value = CreateTestValue("value1");
-    table->Put("key1", value);
+    table->Put("key1", value, txn_id);
     EXPECT_GT(table->ApproximateMemoryUsage(), initial_usage);
 
     // Add more entries until we reach the limit
     std::string large_value(1024 * 1024, 'x');  // 1MB value
     auto large_chunk = CreateTestValue(large_value);
     for (int i = 0; i < 64; i++) {  // Should fill up a 64MB memtable
-        auto result = table->Put("key" + std::to_string(i), large_chunk);
+        auto result = table->Put("key" + std::to_string(i), large_chunk, txn_id);
         if (!result.ok()) {
             EXPECT_TRUE(table->ShouldFlush());
             break;
@@ -79,7 +202,7 @@ TEST_F(MemTableTest, IteratorBasicOperations) {
 
     for (size_t i = 0; i < keys.size(); i++) {
         auto value = CreateTestValue("value" + std::to_string(i));
-        EXPECT_TRUE(table->Put(keys[i], value).ok());
+        VERIFY_RESULT(table->Put(keys[i], value, 0 /* txn_id */));
     }
 
     // Test iterator
@@ -88,26 +211,27 @@ TEST_F(MemTableTest, IteratorBasicOperations) {
 
     for (; it->Valid();) {
         auto key_result = it->key();
-        EXPECT_TRUE(key_result.ok());
+        VERIFY_RESULT(key_result);
         EXPECT_EQ(key_result.value(), keys[count]);
 
         auto value_result = it->value();
-        EXPECT_TRUE(value_result.ok());
-        const common::DataChunk& value = value_result.value().get();
+        VERIFY_RESULT(value_result);
+        const auto& versioned_value = value_result.value().get();
+        const common::DataChunk& value = versioned_value->value();
         EXPECT_EQ(std::string(reinterpret_cast<const char*>(value.Data()), value.Size()),
                   "value" + std::to_string(count));
 
-        EXPECT_TRUE(it->Next().ok());
+        VERIFY_RESULT(it->Next());
         count++;
     }
     EXPECT_EQ(count, keys.size());
 
     // Test seek
     auto seek_result = it->Seek("key3");
-    EXPECT_TRUE(seek_result.ok());
+    VERIFY_RESULT(seek_result);
     EXPECT_TRUE(it->Valid());
     auto key_result = it->key();
-    EXPECT_TRUE(key_result.ok());
+    VERIFY_RESULT(key_result);
     EXPECT_EQ(key_result.value(), "key3");
 }
 
@@ -142,7 +266,7 @@ TEST_F(MemTableTest, IteratorConcurrency) {
     std::vector<std::string> keys = {"key1", "key2", "key3", "key4", "key5"};
     for (size_t i = 0; i < keys.size(); i++) {
         auto value = CreateTestValue("value" + std::to_string(i));
-        EXPECT_TRUE(table->Put(keys[i], value).ok());
+        VERIFY_RESULT(table->Put(keys[i], value, 0 /* txn_id */));
     }
 
     // Create multiple threads that use the same iterator
@@ -201,7 +325,7 @@ TEST_F(MemTableTest, ConcurrentOperations) {
             for (int j = 0; j < num_ops; j++) {
                 std::string key = "key" + std::to_string(i) + "_" + std::to_string(j);
                 auto value = CreateTestValue("value" + std::to_string(j));
-                auto result = table->Put(key, value);
+                auto result = table->Put(key, value, 0 /* txn_id */);
                 if (!result.ok()) {
                     // Stop if memtable is full
                     break;
@@ -218,7 +342,7 @@ TEST_F(MemTableTest, ConcurrentOperations) {
     for (int i = 0; i < num_threads; i++) {
         for (int j = 0; j < 10; j++) {  // Check first 10 entries from each thread
             std::string key = "key" + std::to_string(i) + "_" + std::to_string(j);
-            auto result = table->Get(key);
+            auto result = table->Get(key, common::GetNextHybridTime());
             if (result.ok()) {
                 auto value = std::move(result).value();
                 EXPECT_EQ(std::string(reinterpret_cast<const char*>(value.Data()), value.Size()),
@@ -231,16 +355,16 @@ TEST_F(MemTableTest, ConcurrentOperations) {
 TEST_F(MemTableTest, DeleteOperations) {
     // Insert and then delete
     auto value = CreateTestValue("value1");
-    EXPECT_TRUE(table->Put("key1", value).ok());
-    EXPECT_TRUE(table->Delete("key1").ok());
+    VERIFY_RESULT(table->Put("key1", value, 0 /* txn_id */));
+    VERIFY_RESULT(table->Delete("key1", 0 /* txn_id */));
 
     // Get should return NotFound
-    auto get_result = table->Get("key1");
+    auto get_result = table->Get("key1", common::GetNextHybridTime());
     EXPECT_FALSE(get_result.ok());
     EXPECT_EQ(get_result.error().code(), common::ErrorCode::NotFound);
 
     // Delete non-existent key should succeed
-    EXPECT_TRUE(table->Delete("key2").ok());
+    VERIFY_RESULT(table->Delete("key2", 0 /* txn_id */));
 }
 
 }  // namespace pond::kv

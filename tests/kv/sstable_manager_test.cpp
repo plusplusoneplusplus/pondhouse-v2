@@ -35,7 +35,7 @@ protected:
             std::string value = "value" + std::to_string(start_key + i);
             auto record = std::make_unique<Record>(schema_);
             record->Set(0, value);
-            EXPECT_TRUE(memtable->Put(key, record->Serialize()).ok());
+            EXPECT_TRUE(memtable->Put(key, record->Serialize(), 0 /* txn_id */).ok());
         }
         return memtable;
     }
@@ -188,7 +188,7 @@ TEST_F(SSTableManagerTest, LargeValues) {
         std::string key = pond::test::GenerateKey(i);
         auto record = std::make_unique<Record>(schema_);
         record->Set(0, large_value + std::to_string(i));
-        ASSERT_TRUE(memtable->Put(key, record->Serialize()).ok());
+        ASSERT_TRUE(memtable->Put(key, record->Serialize(), 0 /* txn_id */).ok());
     }
 
     // Flush to SSTable
@@ -322,7 +322,7 @@ TEST_F(SSTableManagerTest, MetadataCacheBloomFilter) {
     for (size_t i = 0; i < test_keys.size(); i++) {
         auto record = std::make_unique<Record>(schema_);
         record->Set(0, "value" + std::to_string(i));
-        ASSERT_TRUE(memtable->Put(test_keys[i], record->Serialize()).ok());
+        ASSERT_TRUE(memtable->Put(test_keys[i], record->Serialize(), 0 /* txn_id */).ok());
     }
 
     // Create SSTable with bloom filter

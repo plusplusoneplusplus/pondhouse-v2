@@ -7,7 +7,9 @@
 #include "common/data_chunk.h"
 #include "common/result.h"
 #include "common/skip_list.h"
+#include "common/time.h"
 #include "common/types.h"
+#include "kv/versioned_value.h"
 
 namespace pond::kv {
 
@@ -17,15 +19,17 @@ static constexpr size_t DEFAULT_MEMTABLE_SIZE = 64 * 1024 * 1024;  // 64MB
 class MemTable {
 public:
     using Key = std::string;
-    using Value = common::DataChunk;
+    using RawValue = common::DataChunk;
+    using Value = std::shared_ptr<DataChunkVersionedValue>;
 
     explicit MemTable(size_t max_size = DEFAULT_MEMTABLE_SIZE);
     ~MemTable() = default;
 
     // Core operations
-    common::Result<void> Put(const Key& key, const Value& value);
-    common::Result<Value> Get(const Key& key) const;
-    common::Result<void> Delete(const Key& key);
+    common::Result<void> Put(const Key& key, const RawValue& value, uint64_t txn_id);
+    common::Result<RawValue> Get(const Key& key, common::HybridTime read_time) const;
+    common::Result<RawValue> GetForTxn(const Key& key, uint64_t txn_id) const;
+    common::Result<void> Delete(const Key& key, uint64_t txn_id);
 
     // Size management
     size_t ApproximateMemoryUsage() const;

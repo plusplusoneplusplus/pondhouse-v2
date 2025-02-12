@@ -51,7 +51,7 @@ common::Result<void> KvTable::Put(const std::string& key, const common::DataChun
     }
 
     // Add to memtable
-    return active_memtable_->Put(key, value);
+    return active_memtable_->Put(key, value, 0 /* txn_id */);
 }
 
 common::Result<common::DataChunk> KvTable::Get(const std::string& key, bool acquire_lock) const {
@@ -61,7 +61,7 @@ common::Result<common::DataChunk> KvTable::Get(const std::string& key, bool acqu
     }
 
     // Try memtable first
-    auto result = active_memtable_->Get(key);
+    auto result = active_memtable_->Get(key, common::GetNextHybridTime());
     if (result.ok()) {
         return result;
     }
@@ -84,7 +84,7 @@ common::Result<void> KvTable::Delete(const std::string& key, bool acquire_lock) 
     }
 
     // Add to memtable
-    return active_memtable_->Delete(key);
+    return active_memtable_->Delete(key, 0 /* txn_id */);
 }
 
 common::Result<void> KvTable::BatchPut(const std::vector<std::pair<std::string, common::DataChunk>>& entries) {
@@ -178,10 +178,10 @@ common::Result<bool> KvTable::Recover() {
         for (const auto& entry : entries.value()) {
             switch (entry.type) {
                 case EntryType::Put:
-                    active_memtable_->Put(entry.key, entry.value);
+                    active_memtable_->Put(entry.key, entry.value, 0 /* txn_id */);
                     break;
                 case EntryType::Delete:
-                    active_memtable_->Delete(entry.key);
+                    active_memtable_->Delete(entry.key, 0 /* txn_id */);
                     break;
                 default:
                     return common::Result<bool>::failure(common::ErrorCode::InvalidOperation, "Unknown WAL entry type");
