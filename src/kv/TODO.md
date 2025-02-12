@@ -194,3 +194,131 @@ auto stats = manager.GetStats();
   - [ ] Table statistics
   - [ ] Resource usage tracking
   - [ ] Health checks
+
+### 9. MVCC Implementation [HIGH PRIORITY]
+
+#### Phase 1: Version Chain Structure
+- [ ] Implement `VersionedValue` class
+  - [ ] Version number
+  - [ ] Timestamp
+  - [ ] Transaction ID
+  - [ ] Deletion marker
+  - [ ] Value data
+  - [ ] Previous version pointer
+- [ ] Add version chain support to MemTable
+  - [ ] Modify SkipList to store `VersionedValue`
+  - [ ] Add version visibility logic
+  - [ ] Update memory usage calculation
+
+#### Phase 2: Transaction Management
+- [ ] Implement `Transaction` class
+  - [ ] Transaction ID generation
+  - [ ] Start timestamp
+  - [ ] Commit timestamp
+  - [ ] Write set tracking
+  - [ ] Read set tracking
+  - [ ] Status (active/committed/aborted)
+- [ ] Add transaction manager to KvTable
+  - [ ] Active transaction tracking
+  - [ ] Timestamp allocation
+  - [ ] Deadlock detection
+  - [ ] Cleanup of old versions
+
+#### Phase 3: MVCC Operations
+- [ ] Modify KvTable operations
+  - [ ] Add transaction context to Put/Get/Delete
+  - [ ] Implement snapshot reads
+  - [ ] Add version visibility checks
+  - [ ] Handle write conflicts
+- [ ] Add new transaction operations
+  - [ ] Begin transaction
+  - [ ] Commit transaction
+  - [ ] Rollback transaction
+  - [ ] Create snapshot
+
+#### Phase 4: SSTable Integration
+- [ ] Extend SSTable format
+  - [ ] Add version information to entries
+  - [ ] Modify block format for version chains
+  - [ ] Update bloom filters for versions
+- [ ] Update SSTable writer
+  - [ ] Write version information
+  - [ ] Handle version chains
+  - [ ] Optimize version storage
+- [ ] Update SSTable reader
+  - [ ] Read version information
+  - [ ] Filter versions by timestamp
+  - [ ] Handle version visibility
+
+#### Phase 5: Garbage Collection
+- [ ] Implement version GC
+  - [ ] Track oldest active transaction
+  - [ ] Identify obsolete versions
+  - [ ] Safe version removal
+  - [ ] Background cleanup process
+- [ ] Add GC policies
+  - [ ] Time-based cleanup
+  - [ ] Space-based cleanup
+  - [ ] Version chain length limits
+
+#### Phase 6: Recovery & Durability
+- [ ] Update WAL format
+  - [ ] Add transaction records
+  - [ ] Store version information
+  - [ ] Track transaction status
+- [ ] Enhance recovery process
+  - [ ] Transaction status recovery
+  - [ ] Version chain reconstruction
+  - [ ] Handle in-doubt transactions
+
+#### Phase 7: Testing & Validation
+- [ ] Unit tests
+  - [ ] Version chain operations
+  - [ ] Transaction scenarios
+  - [ ] Concurrent transactions
+  - [ ] Recovery scenarios
+- [ ] Integration tests
+  - [ ] Multi-version SSTable
+  - [ ] GC effectiveness
+  - [ ] Recovery correctness
+- [ ] Performance tests
+  - [ ] Version chain overhead
+  - [ ] Transaction throughput
+  - [ ] GC impact
+
+### Expected Usage Example:
+```cpp
+// Start a transaction
+auto txn = table.BeginTransaction();
+
+// Read with snapshot isolation
+auto snapshot = table.CreateSnapshot();
+auto value1 = table.Get("key1", snapshot);
+
+// Write within transaction
+table.Put("key2", value2, txn);
+
+// Commit or rollback
+if (success) {
+    txn.Commit();
+} else {
+    txn.Rollback();
+}
+
+// Read latest committed version
+auto latest = table.Get("key2");
+
+// Read specific version
+auto old_version = table.Get("key2", timestamp);
+```
+
+### Implementation Order:
+1. Version chain structure (foundation)
+2. Basic transaction management
+3. MVCC read/write operations
+4. SSTable format updates
+5. Garbage collection
+6. Recovery enhancements
+7. Testing and optimization
+
+This will be implemented incrementally, with each phase building on the previous ones while maintaining backward compatibility with existing functionality.
