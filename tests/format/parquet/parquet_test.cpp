@@ -53,7 +53,7 @@ protected:
 
 TEST_F(ParquetTest, BasicWriteRead) {
     const std::string path = "test.parquet";
-    auto _ = fs_->deleteFiles({path});
+    auto _ = fs_->DeleteFiles({path});
 
     // Write the table
     auto writer_result = ParquetWriter::create(fs_, path, schema_);
@@ -90,7 +90,7 @@ TEST_F(ParquetTest, BasicWriteRead) {
 
 TEST_F(ParquetTest, ColumnSelection) {
     const std::string path = "column_selection.parquet";
-    auto _ = fs_->deleteFiles({path});
+    auto _ = fs_->DeleteFiles({path});
 
     // Write the table
     auto writer_result = ParquetWriter::create(fs_, path, schema_);
@@ -122,7 +122,7 @@ TEST_F(ParquetTest, ColumnSelection) {
 
 TEST_F(ParquetTest, RecordBatchWrite) {
     const std::string path = "record_batch.parquet";
-    auto _ = fs_->deleteFiles({path});
+    auto _ = fs_->DeleteFiles({path});
 
     // Convert table to record batch
     std::vector<std::shared_ptr<arrow::Array>> arrays;
@@ -156,7 +156,7 @@ TEST_F(ParquetTest, RecordBatchWrite) {
 
 TEST_F(ParquetTest, RowGroupOperations) {
     const std::string path = "row_groups.parquet";
-    auto _ = fs_->deleteFiles({path});
+    auto _ = fs_->DeleteFiles({path});
 
     // Create a larger table with more rows
     arrow::Int64Builder id_builder;
@@ -219,7 +219,7 @@ TEST_F(ParquetTest, RowGroupOperations) {
 
 TEST_F(ParquetTest, ErrorHandling) {
     const std::string path = "nonexistent.parquet";
-    auto _ = fs_->deleteFiles({path});
+    auto _ = fs_->DeleteFiles({path});
 
     // Try to read non-existent file
     auto reader_result = ParquetReader::create(fs_, path);
