@@ -136,25 +136,77 @@ common::Result<bool> KvTable::Recover() {
         return common::Result<bool>::failure(metadata_result.error());
     }
 
-    // Recover WAL entries
-    auto wal_result = wal_->read(0);  // Read all entries from the beginning
-    if (!wal_result.ok()) {
-        return common::Result<bool>::failure(wal_result.error());
+    if (!wal_) {
+        return common::Result<bool>::success(false);
     }
 
-    // Apply recovered entries to memtable
-    for (const auto& entry : wal_result.value()) {
-        switch (entry.type) {
-            case EntryType::Put:
-                active_memtable_->Put(entry.key, entry.value);
-                break;
-            case EntryType::Delete:
-                active_memtable_->Delete(entry.key);
-                break;
-            default:
-                // Unknown entry type, skip
-                break;
+    // Find all WAL files
+    std::vector<std::string> wal_files;
+    size_t max_sequence = 0;
+    for (size_t i = 0; i < 1000; i++) {  // Limit to prevent infinite loop
+        std::string wal_path = GetWALPath(i);
+        auto exists = fs_->Exists(wal_path);
+        if (!exists) {
+            break;
         }
+        wal_files.push_back(wal_path);
+        max_sequence = i;
+    }
+
+    if (wal_files.empty()) {
+        return common::Result<bool>::success(false);
+    }
+
+    // Set current sequence number to the highest found
+    current_wal_sequence_ = max_sequence;
+
+    // Replay WAL files in order
+    for (const auto& wal_path : wal_files) {
+        // Open WAL file
+        auto open_result = wal_->open(wal_path);
+        if (!open_result.ok()) {
+            return common::Result<bool>::failure(open_result.error());
+        }
+
+        // Read all entries
+        auto entries = wal_->read(0);
+        if (!entries.ok()) {
+            return common::Result<bool>::failure(entries.error());
+        }
+
+        // Replay entries
+        for (const auto& entry : entries.value()) {
+            switch (entry.type) {
+                case EntryType::Put:
+                    active_memtable_->Put(entry.key, entry.value);
+                    break;
+                case EntryType::Delete:
+                    active_memtable_->Delete(entry.key);
+                    break;
+                default:
+                    return common::Result<bool>::failure(common::ErrorCode::InvalidOperation, "Unknown WAL entry type");
+            }
+
+            // Check if memtable needs to be flushed
+            if (active_memtable_->ShouldFlush()) {
+                auto switch_result = SwitchMemTable();
+                if (!switch_result.ok()) {
+                    return common::Result<bool>::failure(switch_result.error());
+                }
+            }
+        }
+
+        // Close WAL file
+        auto close_result = wal_->close();
+        if (!close_result.ok()) {
+            return common::Result<bool>::failure(close_result.error());
+        }
+    }
+
+    // Open the latest WAL file for writing
+    auto result = wal_->open(GetWALPath(current_wal_sequence_));
+    if (!result.ok()) {
+        return common::Result<bool>::failure(result.error());
     }
 
     return common::Result<bool>::success(true);

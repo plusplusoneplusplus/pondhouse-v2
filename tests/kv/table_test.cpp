@@ -161,7 +161,7 @@ TEST_F(TableTest, WALRotation) {
     for (int i = 0; i < 20; i++) {
         std::string key = pond::test::GenerateKey(i);
         auto record = CreateTestRecord(i, "test" + std::to_string(i), large_value);
-        VERIFY_RESULT(table->Put(key, std::move(record)));
+        VERIFY_RESULT_MSG(table->Put(key, std::move(record)), "Failed to put record " + key);
         keys.push_back(key);
     }
 
@@ -193,7 +193,7 @@ TEST_F(TableTest, WALRotation) {
     // Verify all records are still accessible after recovery
     for (const auto& key : keys) {
         auto result = recovered_table->Get(key);
-        VERIFY_RESULT(result);
+        VERIFY_RESULT_MSG(result, "Failed to get record " + key);
         auto& record = result.value();
         EXPECT_EQ(record->Get<common::DataChunk>(2).value().Size(), large_value.size());
     }
