@@ -208,12 +208,16 @@ auto stats = manager.GetStats();
   - [x] Value visibility by transaction ID
   - [x] Version chain creation and management
   - [x] Comprehensive test coverage
-- [ ] Add version chain support to MemTable
-  - [ ] Modify SkipList to store `VersionedValue`
-  - [ ] Add version visibility logic
-  - [ ] Update memory usage calculation
+- [x] Add version chain support to MemTable
+  - [x] Store `VersionedValue` in SkipList
+  - [x] Add version visibility logic
+  - [x] Update memory usage calculation
+  - [x] Thread-safe version chain operations
+  - [x] Support for deletion markers
+  - [x] Iterator support for versioned values
+  - [x] Comprehensive test coverage
 
-#### Phase 2: Transaction Management
+#### Phase 2: Transaction Management [IN PROGRESS]
 - [ ] Implement `Transaction` class
   - [ ] Transaction ID generation
   - [ ] Start timestamp
