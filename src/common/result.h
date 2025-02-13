@@ -10,12 +10,21 @@
 
 #include "error.h"
 
-#define RETURN_IF_ERROR(expr)    \
-    do {                         \
-        auto result = (expr);    \
-        if (result.hasError()) { \
-            return result;       \
-        }                        \
+#define RETURN_IF_ERROR(expr)        \
+    do {                             \
+        auto result_tmp = (expr);    \
+        if (result_tmp.hasError()) { \
+            return result_tmp;       \
+        }                            \
+    } while (false)
+
+#define RETURN_IF_ERROR_T(T, expr)                                                      \
+    do {                                                                                \
+        auto result_tmp = (expr);                                                       \
+        if (result_tmp.hasError()) {                                                    \
+            LOG_ERROR("Failed to %s: %s", #expr, result_tmp.error().message().c_str()); \
+            return pond::common::as_result_type_t<T>::failure(result_tmp.error());      \
+        }                                                                               \
     } while (false)
 
 namespace pond::common {
@@ -120,5 +129,30 @@ public:
 private:
     std::variant<std::monostate, Error> data_;
 };
+
+// Detect if a type is already a common::Result.
+template <typename T>
+struct is_result_type : std::false_type {};
+
+template <typename U>
+struct is_result_type<Result<U>> : std::true_type {};
+
+// Given a type T, if it's already a common::Result, leave it;
+// otherwise, wrap it.
+template <typename T, bool = is_result_type<T>::value>
+struct as_result_type;
+
+template <typename T>
+struct as_result_type<T, true> {
+    using type = T;
+};
+
+template <typename T>
+struct as_result_type<T, false> {
+    using type = Result<T>;
+};
+
+template <typename T>
+using as_result_type_t = typename as_result_type<T>::type;
 
 }  // namespace pond::common

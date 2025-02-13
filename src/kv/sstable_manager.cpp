@@ -106,6 +106,7 @@ public:
     }
 
     common::Result<FileInfo> CreateSSTableFromMemTable(const MemTable& memtable) {
+        using ReturnType = common::Result<FileInfo>;
         std::unique_lock<std::shared_mutex> lock(mutex_);
 
         // Get next file number for L0
@@ -133,33 +134,23 @@ public:
             largest_key = key;
 
             auto value_result = iter->value();
-            if (!value_result.ok()) {
-                return common::Result<FileInfo>::failure(value_result.error());
-            }
+            RETURN_IF_ERROR_T(ReturnType, value_result);
             const auto& versioned_value = value_result.value().get();
             auto result = writer.Add(key, versioned_value->value());
-            if (!result.ok()) {
-                return common::Result<FileInfo>::failure(result.error());
-            }
+            RETURN_IF_ERROR_T(ReturnType, result);
             entry_count++;
             iter->Next();
         }
 
         // Finalize SSTable
         auto finish_result = writer.Finish();
-        if (!finish_result.ok()) {
-            return common::Result<FileInfo>::failure(finish_result.error());
-        }
+        RETURN_IF_ERROR_T(ReturnType, finish_result);
 
         // Get file size
         auto file_result = fs_->OpenFile(file_path);
-        if (!file_result.ok()) {
-            return common::Result<FileInfo>::failure(file_result.error());
-        }
+        RETURN_IF_ERROR_T(ReturnType, file_result);
         auto size_result = fs_->Size(file_result.value());
-        if (!size_result.ok()) {
-            return common::Result<FileInfo>::failure(size_result.error());
-        }
+        RETURN_IF_ERROR_T(ReturnType, size_result);
 
         // Create metadata for the new SSTable
         auto reader = std::make_shared<SSTableReader>(fs_, file_path);

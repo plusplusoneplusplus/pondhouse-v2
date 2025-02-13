@@ -30,6 +30,7 @@ KvTable::KvTable(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::s
 }
 
 common::Result<void> KvTable::Put(const std::string& key, const common::DataChunk& value, bool acquire_lock) {
+    using ReturnType = common::Result<void>;
     std::optional<std::lock_guard<std::mutex>> lock;
     if (acquire_lock) {
         lock.emplace(mutex_);
@@ -38,16 +39,12 @@ common::Result<void> KvTable::Put(const std::string& key, const common::DataChun
     // Create and write WAL entry first
     KvEntry entry(key, value, common::INVALID_LSN, common::now(), EntryType::Put);
     auto wal_result = WriteToWAL(entry);
-    if (!wal_result.ok()) {
-        return common::Result<void>::failure(wal_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, wal_result);
 
     // Check if memtable needs to be flushed
     if (active_memtable_->ShouldFlush()) {
         auto switch_result = SwitchMemTable();
-        if (!switch_result.ok()) {
-            return switch_result;
-        }
+        RETURN_IF_ERROR_T(ReturnType, switch_result);
     }
 
     // Add to memtable
@@ -71,6 +68,7 @@ common::Result<common::DataChunk> KvTable::Get(const std::string& key, bool acqu
 }
 
 common::Result<void> KvTable::Delete(const std::string& key, bool acquire_lock) {
+    using ReturnType = common::Result<void>;
     std::optional<std::lock_guard<std::mutex>> lock;
     if (acquire_lock) {
         lock.emplace(mutex_);
@@ -79,9 +77,7 @@ common::Result<void> KvTable::Delete(const std::string& key, bool acquire_lock) 
     // Create and write WAL entry
     KvEntry entry(key, common::DataChunk(), common::INVALID_LSN, common::now(), EntryType::Delete);
     auto wal_result = WriteToWAL(entry);
-    if (!wal_result.ok()) {
-        return common::Result<void>::failure(wal_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, wal_result);
 
     // Add to memtable
     return active_memtable_->Delete(key, 0 /* txn_id */);
@@ -115,26 +111,24 @@ common::Result<std::vector<common::Result<common::DataChunk>>> KvTable::BatchGet
 }
 
 common::Result<void> KvTable::BatchDelete(const std::vector<std::string>& keys) {
+    using ReturnType = common::Result<void>;
     std::lock_guard<std::mutex> lock(mutex_);
 
     for (const auto& key : keys) {
         auto result = Delete(key, false /* acquire_lock */);
-        if (!result.ok()) {
-            return result;
-        }
+        RETURN_IF_ERROR_T(ReturnType, result);
     }
 
     return common::Result<void>::success();
 }
 
 common::Result<bool> KvTable::Recover() {
+    using ReturnType = common::Result<bool>;
     std::lock_guard<std::mutex> lock(mutex_);
 
     // First recover metadata state
     auto metadata_result = metadata_state_machine_->Open();
-    if (!metadata_result.ok()) {
-        return common::Result<bool>::failure(metadata_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, metadata_result);
 
     if (!wal_) {
         return common::Result<bool>::success(false);
@@ -164,15 +158,11 @@ common::Result<bool> KvTable::Recover() {
     for (const auto& wal_path : wal_files) {
         // Open WAL file
         auto open_result = wal_->open(wal_path);
-        if (!open_result.ok()) {
-            return common::Result<bool>::failure(open_result.error());
-        }
+        RETURN_IF_ERROR_T(ReturnType, open_result);
 
         // Read all entries
         auto entries = wal_->read(0);
-        if (!entries.ok()) {
-            return common::Result<bool>::failure(entries.error());
-        }
+        RETURN_IF_ERROR_T(ReturnType, entries);
 
         // Replay entries
         for (const auto& entry : entries.value()) {
@@ -198,16 +188,12 @@ common::Result<bool> KvTable::Recover() {
 
         // Close WAL file
         auto close_result = wal_->close();
-        if (!close_result.ok()) {
-            return common::Result<bool>::failure(close_result.error());
-        }
+        RETURN_IF_ERROR_T(ReturnType, close_result);
     }
 
     // Open the latest WAL file for writing
     auto result = wal_->open(GetWALPath(current_wal_sequence_));
-    if (!result.ok()) {
-        return common::Result<bool>::failure(result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, result);
 
     return common::Result<bool>::success(true);
 }
@@ -218,44 +204,36 @@ common::Result<void> KvTable::Flush() {
 }
 
 common::Result<common::LSN> KvTable::WriteToWAL(KvEntry& entry) {
+    using ReturnType = common::Result<common::LSN>;
     // Check if WAL needs rotation
     auto size_result = fs_->Size(wal_->handle());
-    if (!size_result.ok()) {
-        return common::Result<common::LSN>::failure(size_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, size_result);
 
     if (size_result.value() >= max_wal_size_) {
         auto rotate_result = RotateWAL();
-        if (!rotate_result.ok()) {
-            return common::Result<common::LSN>::failure(rotate_result.error());
-        }
+        RETURN_IF_ERROR_T(ReturnType, rotate_result);
     }
 
     auto result = wal_->append(entry);
-    if (!result.ok()) {
-        return common::Result<common::LSN>::failure(result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, result);
 
     return common::Result<common::LSN>::success(entry.lsn());
 }
 
 common::Result<void> KvTable::SwitchMemTable() {
+    using ReturnType = common::Result<void>;
     // Create a new memtable
     auto new_memtable = std::make_unique<MemTable>();
 
     // Flush current memtable to SSTable
     auto flush_result = sstable_manager_->CreateSSTableFromMemTable(*active_memtable_);
-    if (!flush_result.ok()) {
-        return common::Result<void>::failure(flush_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, flush_result);
 
     // Track the flush operation in metadata
     std::vector<FileInfo> files;
     files.emplace_back(flush_result.value());
     auto track_result = TrackMetadataOp(MetadataOpType::FlushMemTable, files);
-    if (!track_result.ok()) {
-        return track_result;
-    }
+    RETURN_IF_ERROR_T(ReturnType, track_result);
 
     // Switch to new memtable
     active_memtable_ = std::move(new_memtable);
@@ -264,24 +242,19 @@ common::Result<void> KvTable::SwitchMemTable() {
 }
 
 common::Result<void> KvTable::RotateWAL() {
+    using ReturnType = common::Result<void>;
     // Track the WAL rotation in metadata
     auto track_result = TrackMetadataOp(MetadataOpType::RotateWAL);
-    if (!track_result.ok()) {
-        return track_result;
-    }
+    RETURN_IF_ERROR_T(ReturnType, track_result);
 
     // Close current WAL
     auto close_result = wal_->close();
-    if (!close_result.ok()) {
-        return common::Result<void>::failure(close_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, close_result);
 
     // Increment sequence number and open new WAL
     current_wal_sequence_++;
     auto open_result = wal_->open(GetWALPath(current_wal_sequence_));
-    if (!open_result.ok()) {
-        return common::Result<void>::failure(open_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, open_result);
 
     return common::Result<void>::success();
 }
