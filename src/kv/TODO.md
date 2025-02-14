@@ -17,8 +17,10 @@
   - [x] Concurrent access tests
 
 ### 2. Version Management [MEDIUM PRIORITY]
-- [ ] Implement version tracking
-  - [ ] SSTable versioning
+- [x] Implement version tracking
+  - [x] SSTable versioning with InternalKey
+  - [x] Version-aware reads and writes
+  - [x] Iterator support for versions
   - [ ] Level management
   - [ ] Manifest file format
 - [ ] Add recovery mechanisms
@@ -26,9 +28,14 @@
   - [ ] Consistency checking
   - [ ] Error recovery
 - [ ] Handle concurrent operations
-  - [ ] Version changes during reads
+  - [x] Version handling during reads
   - [ ] Garbage collection
   - [ ] File cleanup
+- [x] Add version-specific features
+  - [x] Time-travel queries
+  - [x] Version iteration
+  - [x] Default version handling
+  - [x] Version comparison
 
 ### 3. SSTableManager Implementation [IN PROGRESS]
 

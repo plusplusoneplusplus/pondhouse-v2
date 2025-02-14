@@ -149,10 +149,12 @@ TEST_F(SSTableFormatTest, BlockFooterSerialization) {
 
 TEST_F(SSTableFormatTest, DataBlockEntrySerialization) {
     DataBlockEntry entry;
-    entry.key_length = 5;
+    std::string user_key = "hello";
+    HybridTime version(1000, 1);
+    InternalKey key(user_key, version);
+    entry.key_length = key.size();
     entry.value_length = 10;
 
-    std::string key = "hello";
     DataChunk value = DataChunk::FromString("world12345");
 
     // Test header serialization
@@ -161,7 +163,7 @@ TEST_F(SSTableFormatTest, DataBlockEntrySerialization) {
 
     DataBlockEntry new_entry;
     ASSERT_TRUE(new_entry.DeserializeHeader(header.data(), header.size()));
-    EXPECT_EQ(new_entry.key_length, 5);
+    EXPECT_EQ(new_entry.key_length, key.size());
     EXPECT_EQ(new_entry.value_length, 10);
 
     // Test full serialization
@@ -169,10 +171,12 @@ TEST_F(SSTableFormatTest, DataBlockEntrySerialization) {
     ASSERT_EQ(full.size(), DataBlockEntry::kHeaderSize + key.size() + value.Size());
 
     // Verify the serialized data
-    std::string serialized_key(full.begin() + DataBlockEntry::kHeaderSize,
-                               full.begin() + DataBlockEntry::kHeaderSize + key.size());
+    InternalKey decoded_key;
+    ASSERT_TRUE(decoded_key.Deserialize(full.data() + DataBlockEntry::kHeaderSize, new_entry.key_length));
+    EXPECT_EQ(decoded_key.user_key(), user_key);
+    EXPECT_EQ(decoded_key.version(), version);
+
     std::vector<uint8_t> serialized_value(full.begin() + DataBlockEntry::kHeaderSize + key.size(), full.end());
-    EXPECT_EQ(serialized_key, key);
     EXPECT_EQ(std::vector<uint8_t>(value.Data(), value.Data() + value.Size()), serialized_value);
 }
 
@@ -217,8 +221,8 @@ TEST_F(SSTableFormatTest, DataBlockBuilder) {
     // Add entries
     DataChunk value1 = DataChunk::FromString("val1");
     DataChunk value2 = DataChunk::FromString("val2");
-    EXPECT_TRUE(builder.Add("key1", value1));
-    EXPECT_TRUE(builder.Add("key2", value2));
+    EXPECT_TRUE(builder.Add("key1", InvalidHybridTime(), value1));
+    EXPECT_TRUE(builder.Add("key2", InvalidHybridTime(), value2));
     EXPECT_FALSE(builder.Empty());
 
     // Build block
@@ -275,10 +279,10 @@ TEST_F(SSTableFormatTest, DataBlockBuilderSizeLimit) {
     DataChunk small_value = DataChunk::FromString("val1");
 
     // First entry should succeed
-    EXPECT_TRUE(builder.Add("key1", small_value));
+    EXPECT_TRUE(builder.Add("key1", InvalidHybridTime(), small_value));
 
     // Adding an entry that would exceed the target size should fail
-    EXPECT_FALSE(builder.Add("key2", large_value));
+    EXPECT_FALSE(builder.Add("key2", InvalidHybridTime(), large_value));
 
     // Builder should still contain the first entry
     auto block = builder.Finish();
@@ -296,7 +300,8 @@ TEST_F(SSTableFormatTest, DataBlockBuilderTargetSize) {
     // Block also has BlockFooter::kFooterSize at the end
     const size_t header_size = DataBlockEntry::kHeaderSize;
     const std::string key = "key";
-    const size_t key_overhead = key.size() + 1 /*actual key is with a number suffix*/;
+    const size_t key_overhead =
+        key.size() + 1 /*actual key is with a number suffix*/ + sizeof(HybridTime) /*hybrid time version overhead*/;
     const size_t total_overhead_per_entry = header_size + key_overhead;
 
     // Target about 900KB per entry to fit 4 entries (including headers) in 4MB
@@ -308,13 +313,13 @@ TEST_F(SSTableFormatTest, DataBlockBuilderTargetSize) {
     DataChunk value = DataChunk::FromString(std::string(value_size, 'x'));
 
     // Should be able to add 4 entries of ~900KB each
-    EXPECT_TRUE(builder.Add(key + "1", value));
-    EXPECT_TRUE(builder.Add(key + "2", value));
-    EXPECT_TRUE(builder.Add(key + "3", value));
-    EXPECT_TRUE(builder.Add(key + "4", value));
+    EXPECT_TRUE(builder.Add(key + "1", InvalidHybridTime(), value));
+    EXPECT_TRUE(builder.Add(key + "2", InvalidHybridTime(), value));
+    EXPECT_TRUE(builder.Add(key + "3", InvalidHybridTime(), value));
+    EXPECT_TRUE(builder.Add(key + "4", InvalidHybridTime(), value));
 
     // Fifth entry should fail as it would exceed 4MB
-    EXPECT_FALSE(builder.Add(key + "5", value));
+    EXPECT_FALSE(builder.Add(key + "5", InvalidHybridTime(), value));
 
     // Verify the block contains exactly 4 entries
     auto block = builder.Finish();
@@ -430,6 +435,127 @@ TEST_F(SSTableFormatTest, MetadataBlockBuilder) {
     builder.Reset();
     auto empty_block = builder.Finish();
     ASSERT_FALSE(empty_block.empty());  // Should still contain empty stats and props
+}
+
+TEST_F(SSTableFormatTest, InternalKeySerialization) {
+    std::string user_key = "test_key";
+    HybridTime version(1000, 42);  // timestamp 1000, logical counter 42
+    InternalKey key(user_key, version);
+
+    // Test serialization
+    auto serialized = key.Serialize();
+    ASSERT_EQ(serialized.size(), user_key.size() + sizeof(uint64_t));
+
+    // Test deserialization
+    InternalKey new_key;
+    ASSERT_TRUE(new_key.Deserialize(serialized.data(), serialized.size()));
+    EXPECT_EQ(new_key.user_key(), user_key);
+    EXPECT_EQ(new_key.version(), version);
+}
+
+TEST_F(SSTableFormatTest, InternalKeyComparison) {
+    std::string key1 = "key1";
+    std::string key2 = "key2";
+    HybridTime version1(1000, 0);
+    HybridTime version2(2000, 0);
+
+    // Different user keys
+    InternalKey a(key1, version1);
+    InternalKey b(key2, version1);
+    EXPECT_TRUE(a < b);  // key1 < key2
+    EXPECT_FALSE(b < a);
+
+    // Same user key, different versions (newer version should come first)
+    InternalKey c(key1, version1);
+    InternalKey d(key1, version2);
+    EXPECT_TRUE(c > d);  // version1 < version2, but we want newer versions first
+    EXPECT_FALSE(d > c);
+
+    // Equal keys
+    InternalKey e(key1, version1);
+    InternalKey f(key1, version1);
+    EXPECT_FALSE(e < f);
+    EXPECT_FALSE(f < e);
+    EXPECT_TRUE(e == f);
+}
+
+TEST_F(SSTableFormatTest, DataBlockEntryWithInternalKey) {
+    std::string user_key = "test_key";
+    HybridTime version(1000, 42);
+    InternalKey key(user_key, version);
+    DataChunk value = DataChunk::FromString("test_value");
+
+    DataBlockEntry entry{static_cast<uint32_t>(key.size()), static_cast<uint32_t>(value.Size())};
+    auto serialized = entry.Serialize(key, value);
+
+    // Verify size
+    EXPECT_EQ(serialized.size(), DataBlockEntry::kHeaderSize + key.size() + value.Size());
+
+    // Verify header
+    DataBlockEntry new_entry;
+    ASSERT_TRUE(new_entry.DeserializeHeader(serialized.data(), DataBlockEntry::kHeaderSize));
+    EXPECT_EQ(new_entry.key_length, key.size());
+    EXPECT_EQ(new_entry.value_length, value.Size());
+
+    // Verify key
+    InternalKey decoded_key;
+    ASSERT_TRUE(decoded_key.Deserialize(serialized.data() + DataBlockEntry::kHeaderSize, new_entry.key_length));
+    EXPECT_EQ(decoded_key.user_key(), user_key);
+    EXPECT_EQ(decoded_key.version(), version);
+
+    // Verify value
+    std::string decoded_value(
+        reinterpret_cast<const char*>(serialized.data() + DataBlockEntry::kHeaderSize + new_entry.key_length),
+        new_entry.value_length);
+    EXPECT_EQ(decoded_value, "test_value");
+}
+
+TEST_F(SSTableFormatTest, DataBlockBuilderWithVersioning) {
+    DataBlockBuilder builder;
+
+    // Add entries with different versions of the same key
+    std::string key = "test_key";
+    HybridTime version1(1000, 0);
+    HybridTime version2(2000, 0);
+    DataChunk value1 = DataChunk::FromString("value1");
+    DataChunk value2 = DataChunk::FromString("value2");
+
+    EXPECT_TRUE(builder.Add(key, version2, value2));  // Newer version
+    EXPECT_TRUE(builder.Add(key, version1, value1));  // Older version
+
+    auto block = builder.Finish();
+    ASSERT_FALSE(block.empty());
+
+    // Verify block footer
+    BlockFooter footer;
+    size_t footer_offset = block.size() - BlockFooter::kFooterSize;
+    ASSERT_TRUE(footer.Deserialize(block.data() + footer_offset, BlockFooter::kFooterSize));
+    EXPECT_EQ(footer.entry_count, 2);
+
+    // Verify entries are stored in version order
+    size_t offset = 0;
+    for (int i = 0; i < 2; i++) {
+        DataBlockEntry entry;
+        ASSERT_TRUE(entry.DeserializeHeader(block.data() + offset, DataBlockEntry::kHeaderSize));
+        offset += DataBlockEntry::kHeaderSize;
+
+        InternalKey decoded_key;
+        ASSERT_TRUE(decoded_key.Deserialize(block.data() + offset, entry.key_length));
+        offset += entry.key_length;
+
+        std::string decoded_value(reinterpret_cast<const char*>(block.data() + offset), entry.value_length);
+        offset += entry.value_length;
+
+        if (i == 0) {
+            // First entry should be newer version
+            EXPECT_EQ(decoded_key.version(), version2);
+            EXPECT_EQ(decoded_value, "value2");
+        } else {
+            // Second entry should be older version
+            EXPECT_EQ(decoded_key.version(), version1);
+            EXPECT_EQ(decoded_value, "value1");
+        }
+    }
 }
 
 }  // namespace

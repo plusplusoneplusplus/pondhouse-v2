@@ -47,9 +47,11 @@ public:
     /**
      * Get a value by key.
      * @param key The key to look up
+     * @param version Optional version to look up. If not provided, returns the latest version.
      * @return Result<DataChunk> containing the value if found, or empty if not found
      */
-    [[nodiscard]] common::Result<common::DataChunk> Get(const std::string& key);
+    [[nodiscard]] common::Result<common::DataChunk> Get(const std::string& key,
+                                                        common::HybridTime version = common::InvalidHybridTime());
 
     /**
      * Check if a key might exist in the SSTable.

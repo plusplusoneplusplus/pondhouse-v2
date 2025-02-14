@@ -268,8 +268,9 @@ bool DataBlockEntry::DeserializeHeader(const uint8_t* data, size_t size) {
     return true;
 }
 
-std::vector<uint8_t> DataBlockEntry::Serialize(const std::string& key, const common::DataChunk& value) const {
-    assert(key.size() == key_length);
+std::vector<uint8_t> DataBlockEntry::Serialize(const InternalKey& key, const common::DataChunk& value) const {
+    auto serialized_key = key.Serialize();
+    assert(serialized_key.size() == key_length);
     assert(value.Size() == value_length);
 
     std::vector<uint8_t> buffer;
@@ -280,7 +281,7 @@ std::vector<uint8_t> DataBlockEntry::Serialize(const std::string& key, const com
     buffer.insert(buffer.end(), header.begin(), header.end());
 
     // Add key
-    buffer.insert(buffer.end(), key.begin(), key.end());
+    buffer.insert(buffer.end(), serialized_key.begin(), serialized_key.end());
 
     // Add value
     buffer.insert(buffer.end(), value.Data(), value.Data() + value.Size());
@@ -354,13 +355,15 @@ std::vector<uint8_t> IndexBlockEntry::Serialize(const std::string& largest_key) 
     return buffer;
 }
 
-bool DataBlockBuilder::Add(const std::string& key, const common::DataChunk& value) {
-    size_t entry_size = DataBlockEntry::kHeaderSize + key.size() + value.Size();
+bool DataBlockBuilder::Add(const std::string& user_key, common::HybridTime version, const common::DataChunk& value) {
+    InternalKey internal_key(user_key, version);
+    size_t entry_size = DataBlockEntry::kHeaderSize + internal_key.size() + value.Size();
+
     if (!Empty() && current_size_ + entry_size > kTargetBlockSize) {
         return false;
     }
 
-    entries_.push_back({key, value});
+    entries_.push_back({std::move(internal_key), value});
     current_size_ += entry_size;
     return true;
 }
@@ -455,6 +458,15 @@ std::vector<uint8_t> IndexBlockBuilder::Finish() {
 
 void IndexBlockBuilder::Reset() {
     entries_.clear();
+}
+
+std::vector<std::string> DataBlockBuilder::GetKeys() const {
+    std::vector<std::string> keys;
+    keys.reserve(entries_.size());
+    for (const auto& entry : entries_) {
+        keys.push_back(entry.key.user_key());
+    }
+    return keys;
 }
 
 std::vector<uint8_t> MetadataStats::Serialize() const {
@@ -662,6 +674,55 @@ bool MetadataBlockFooter::Deserialize(const uint8_t* data, size_t size) {
     reserved = util::LittleEndianToHost32(le_reserved);
 
     return true;
+}
+
+// InternalKey implementations
+InternalKey::InternalKey(std::string user_key, common::HybridTime version)
+    : user_key_(std::move(user_key)), version_(version) {}
+
+std::vector<uint8_t> InternalKey::Serialize() const {
+    std::vector<uint8_t> result;
+    result.reserve(user_key_.size() + sizeof(uint64_t));
+    result.insert(result.end(), user_key_.begin(), user_key_.end());
+    uint64_t encoded_version = version_.encoded();
+    result.insert(result.end(),
+                  reinterpret_cast<uint8_t*>(&encoded_version),
+                  reinterpret_cast<uint8_t*>(&encoded_version) + sizeof(encoded_version));
+    return result;
+}
+
+bool InternalKey::Deserialize(const uint8_t* data, size_t size) {
+    if (size < sizeof(uint64_t))
+        return false;
+    user_key_ = std::string(reinterpret_cast<const char*>(data), size - sizeof(uint64_t));
+    uint64_t encoded_version;
+    std::memcpy(&encoded_version, data + size - sizeof(uint64_t), sizeof(uint64_t));
+    version_ = common::HybridTime(encoded_version);
+    return true;
+}
+
+bool InternalKey::operator<(const InternalKey& other) const {
+    int cmp = user_key_.compare(other.user_key_);
+    if (cmp != 0)
+        return cmp < 0;
+    // For same user key, newer versions come first
+    return version_ > other.version_;
+}
+
+bool InternalKey::operator<=(const InternalKey& other) const {
+    return *this < other || *this == other;
+}
+
+bool InternalKey::operator>(const InternalKey& other) const {
+    return !(*this <= other);
+}
+
+bool InternalKey::operator>=(const InternalKey& other) const {
+    return *this > other || *this == other;
+}
+
+bool InternalKey::operator==(const InternalKey& other) const {
+    return user_key_ == other.user_key_ && version_ == other.version_;
 }
 
 }  // namespace pond::kv

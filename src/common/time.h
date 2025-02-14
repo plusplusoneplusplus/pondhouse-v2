@@ -142,4 +142,8 @@ inline HybridTime GetNextHybridTime() {
     return HybridTimeManager::Instance().Next();
 }
 
+inline HybridTime InvalidHybridTime() {
+    return HybridTime(HybridTime::INVALID_TIME);
+}
+
 }  // namespace pond::common

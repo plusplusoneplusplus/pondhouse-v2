@@ -150,9 +150,13 @@ public:
             return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid first data entry");
         }
 
-        smallest_key_ =
-            std::string(reinterpret_cast<const char*>(first_block_data.Data() + DataBlockEntry::kHeaderSize),
-                        first_entry.key_length);
+        InternalKey smallest;
+        if (!smallest.Deserialize(first_block_data.Data() + DataBlockEntry::kHeaderSize, first_entry.key_length)) {
+            return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid first data entry");
+        }
+
+        smallest_key_ = smallest.user_key();
+
         largest_key_ = index_entries_.back().largest_key;
 
         // Read bloom filter if present
@@ -182,7 +186,8 @@ public:
         return common::Result<bool>::success(true);
     }
 
-    common::Result<common::DataChunk> Get(const std::string& key) {
+    common::Result<common::DataChunk> Get(const std::string& key,
+                                          common::HybridTime version = common::InvalidHybridTime()) {
         if (file_handle_ == common::INVALID_HANDLE) {
             return common::Result<common::DataChunk>::failure(common::ErrorCode::InvalidOperation, "Reader not opened");
         }
@@ -217,7 +222,11 @@ public:
         auto block_data = block_result.value();
         size_t pos = 0;
 
-        // Iterate through data block entries, can be optimized to binary search if needed
+        // Track the best matching version found so far
+        common::DataChunk best_value;
+        bool found_any = false;
+
+        // Iterate through data block entries
         while (pos + DataBlockEntry::kHeaderSize <= block_data.Size() - BlockFooter::kFooterSize) {
             DataBlockEntry entry;
             if (!entry.DeserializeHeader(block_data.Data() + pos, DataBlockEntry::kHeaderSize)) {
@@ -231,19 +240,38 @@ public:
                                                                   "Invalid data entry lengths");
             }
 
-            std::string current_key(
-                reinterpret_cast<const char*>(block_data.Data() + pos + DataBlockEntry::kHeaderSize), entry.key_length);
+            // Deserialize internal key
+            InternalKey current_key;
+            if (!current_key.Deserialize(block_data.Data() + pos + DataBlockEntry::kHeaderSize, entry.key_length)) {
+                return common::Result<common::DataChunk>::failure(common::ErrorCode::SSTableInvalid,
+                                                                  "Invalid internal key");
+            }
 
-            if (current_key == key) {
-                // Found the key
-                const uint8_t* value_ptr = block_data.Data() + pos + DataBlockEntry::kHeaderSize + entry.key_length;
-                return common::Result<common::DataChunk>::success(common::DataChunk(value_ptr, entry.value_length));
-            } else if (current_key > key) {
-                // Key not found (we've gone past it)
+            if (current_key.user_key() == key) {
+                // Found matching key
+                if (version == common::InvalidHybridTime() || current_key.version() == version) {
+                    // If no specific version requested or exact version match, return immediately
+                    const uint8_t* value_ptr = block_data.Data() + pos + DataBlockEntry::kHeaderSize + entry.key_length;
+                    return common::Result<common::DataChunk>::success(common::DataChunk(value_ptr, entry.value_length));
+                } else if (version == common::InvalidHybridTime()) {
+                    // If no specific version requested, track the newest version seen
+                    if (!found_any || current_key.version() > version) {
+                        const uint8_t* value_ptr =
+                            block_data.Data() + pos + DataBlockEntry::kHeaderSize + entry.key_length;
+                        best_value = common::DataChunk(value_ptr, entry.value_length);
+                        found_any = true;
+                    }
+                }
+            } else if (current_key.user_key() > key) {
+                // Gone past the key we're looking for
                 break;
             }
 
             pos += DataBlockEntry::kHeaderSize + entry.key_length + entry.value_length;
+        }
+
+        if (found_any) {
+            return common::Result<common::DataChunk>::success(best_value);
         }
 
         // Key not found
@@ -347,8 +375,9 @@ common::Result<bool> SSTableReader::Open() {
     return impl_->Open();
 }
 
-common::Result<common::DataChunk> SSTableReader::Get(const std::string& key) {
-    return impl_->Get(key);
+common::Result<common::DataChunk> SSTableReader::Get(const std::string& key,
+                                                     common::HybridTime version /*= common::InvalidHybridTime()*/) {
+    return impl_->Get(key, version);
 }
 
 common::Result<bool> SSTableReader::MayContain(const std::string& key) {
@@ -389,9 +418,14 @@ public:
 
     bool Valid() const { return valid_; }
 
-    const std::string& key() const {
+    const std::string& user_key() const {
         assert(valid_);
-        return current_key_;
+        return current_internal_key_.user_key();
+    }
+
+    common::HybridTime version() const {
+        assert(valid_);
+        return current_internal_key_.version();
     }
 
     const common::DataChunk& value() const {
@@ -455,7 +489,7 @@ public:
                 return;
             }
 
-            if (current_key_ >= target) {
+            if (current_internal_key_.user_key() >= target) {
                 return;
             }
 
@@ -495,9 +529,12 @@ private:
             return false;
         }
 
-        const char* key_ptr =
-            reinterpret_cast<const char*>(current_block_.Data() + block_pos_ + DataBlockEntry::kHeaderSize);
-        current_key_ = std::string(key_ptr, current_entry_.key_length);
+        // Deserialize internal key
+        if (!current_internal_key_.Deserialize(current_block_.Data() + block_pos_ + DataBlockEntry::kHeaderSize,
+                                               current_entry_.key_length)) {
+            valid_ = false;
+            return false;
+        }
 
         const uint8_t* value_ptr =
             current_block_.Data() + block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length;
@@ -513,7 +550,7 @@ private:
     common::DataChunk current_block_;
     size_t block_pos_{0};
     DataBlockEntry current_entry_;
-    std::string current_key_;
+    InternalKey current_internal_key_;
     common::DataChunk current_value_;
 };
 
@@ -536,7 +573,7 @@ bool SSTableReader::Iterator::Valid() const {
 }
 
 const std::string& SSTableReader::Iterator::key() const {
-    return impl_->key();
+    return impl_->user_key();
 }
 
 const common::DataChunk& SSTableReader::Iterator::value() const {

@@ -72,7 +72,7 @@ TEST_F(SSTableManagerTest, BasicOperations) {
     for (size_t i = 0; i < 100; i++) {
         std::string key = pond::test::GenerateKey(i);
         auto result = manager_->Get(key);
-        ASSERT_TRUE(result.ok());
+        VERIFY_RESULT_MSG(result, "Failed to read key: " + key);
         EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
     }
 

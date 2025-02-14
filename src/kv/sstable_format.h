@@ -8,8 +8,37 @@
 #include "common/bloom_filter.h"
 #include "common/crc.h"
 #include "common/data_chunk.h"
+#include "common/time.h"
 
 namespace pond::kv {
+
+// Internal key format used in SSTable
+// Combines user key with version information
+class InternalKey {
+public:
+    InternalKey() = default;
+    InternalKey(std::string user_key, common::HybridTime version);
+
+    // Serialization
+    std::vector<uint8_t> Serialize() const;
+    bool Deserialize(const uint8_t* data, size_t size);
+
+    // Accessors
+    const std::string& user_key() const { return user_key_; }
+    common::HybridTime version() const { return version_; }
+    size_t size() const { return user_key_.size() + sizeof(uint64_t); }
+
+    // Comparison operators
+    bool operator<(const InternalKey& other) const;
+    bool operator<=(const InternalKey& other) const;
+    bool operator>(const InternalKey& other) const;
+    bool operator>=(const InternalKey& other) const;
+    bool operator==(const InternalKey& other) const;
+
+private:
+    std::string user_key_;
+    common::HybridTime version_;
+};
 
 // All multi-byte integers are stored in little-endian format
 struct FileHeader {
@@ -79,20 +108,21 @@ static_assert(sizeof(BlockFooter) == BlockFooter::kFooterSize, "BlockFooter size
 
 // Entry in a data block
 struct DataBlockEntry {
-    uint32_t key_length{0};
-    uint32_t value_length{0};
-    // Followed by key_length bytes of key
+    uint32_t key_length{0};    // Length of internal key
+    uint32_t value_length{0};  // Length of value
+    // Followed by key_length bytes of internal key
     // Then value_length bytes of value
 
     static constexpr size_t kHeaderSize = 8;  // key_length + value_length
 
     // Serializes just the header (caller must append key and value data)
     std::vector<uint8_t> SerializeHeader() const;
+
     // Deserializes just the header (caller must read key and value data)
     bool DeserializeHeader(const uint8_t* data, size_t size);
 
     // Full serialization including key and value
-    std::vector<uint8_t> Serialize(const std::string& key, const common::DataChunk& value) const;
+    std::vector<uint8_t> Serialize(const InternalKey& key, const common::DataChunk& value) const;
 };
 
 // Entry in an index block
@@ -120,7 +150,7 @@ public:
     static constexpr size_t kTargetBlockSize = 4 * 1024 * 1024;  // 4MB target
 
     // Returns false if block would exceed target size
-    bool Add(const std::string& key, const common::DataChunk& value);
+    bool Add(const std::string& user_key, common::HybridTime version, const common::DataChunk& value);
 
     // Finalize block and get its contents
     std::vector<uint8_t> Finish();
@@ -131,19 +161,12 @@ public:
     size_t CurrentSize() const { return current_size_; }
     bool Empty() const { return entries_.empty(); }
 
-    // Get all keys in this block
-    std::vector<std::string> GetKeys() const {
-        std::vector<std::string> keys;
-        keys.reserve(entries_.size());
-        for (const auto& entry : entries_) {
-            keys.push_back(entry.key);
-        }
-        return keys;
-    }
+    // Get all user keys in this block
+    std::vector<std::string> GetKeys() const;
 
 private:
     struct Entry {
-        std::string key;
+        InternalKey key;
         common::DataChunk value;
     };
 

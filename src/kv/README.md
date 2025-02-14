@@ -144,6 +144,10 @@ The SSTable implementation follows a block-based design with the following compo
 
 #### 2. Data Blocks
 - Variable-sized blocks containing sorted key-value pairs
+- Each entry contains:
+  - InternalKey (user key + version)
+  - Value data
+  - Entry header with lengths
 - Each block has a footer with:
   - Entry count
   - Block size

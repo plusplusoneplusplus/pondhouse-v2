@@ -6,6 +6,8 @@
 #include "common/error.h"
 #include "common/log.h"
 
+using namespace pond::common;
+
 namespace pond::kv {
 
 class SSTableWriter::Impl {
@@ -55,7 +57,7 @@ public:
         }
 
         // Try to add to current data block
-        if (!data_builder_.Add(key, value)) {
+        if (!data_builder_.Add(key, InvalidHybridTime(), value)) {
             // Current block is full, flush it
             auto flush_result = FlushDataBlock();
             if (!flush_result.ok()) {
@@ -63,7 +65,7 @@ public:
             }
 
             // Try again with empty block
-            if (!data_builder_.Add(key, value)) {
+            if (!data_builder_.Add(key, InvalidHybridTime(), value)) {
                 return common::Result<bool>::failure(common::ErrorCode::InvalidArgument, "Entry too large for block");
             }
         }
