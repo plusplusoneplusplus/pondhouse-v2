@@ -25,9 +25,13 @@ public:
         }
     }
 
-    common::Result<bool> Add(const std::string& key, const common::DataChunk& value) {
+    common::Result<bool> Add(const std::string& key, const common::DataChunk& value, common::HybridTime version) {
         if (finished_) {
             return common::Result<bool>::failure(common::ErrorCode::InvalidOperation, "Writer is already finished");
+        }
+
+        if (version == common::InvalidHybridTime()) {
+            return common::Result<bool>::failure(common::ErrorCode::InvalidArgument, "Invalid version");
         }
 
         if (!file_handle_) {
@@ -51,13 +55,19 @@ public:
         }
 
         // Validate key order
-        if (!last_key_.empty() && key <= last_key_) {
-            return common::Result<bool>::failure(common::ErrorCode::InvalidArgument,
-                                                 "Keys must be added in sorted order");
+        if (!last_key_.empty()) {
+            if (key < last_key_) {
+                return common::Result<bool>::failure(common::ErrorCode::InvalidArgument,
+                                                     "Keys must be added in sorted order");
+            }
+            if (key == last_key_ && version >= last_version_) {
+                return common::Result<bool>::failure(common::ErrorCode::InvalidArgument,
+                                                     "Versions of the same key must be added in descending order");
+            }
         }
 
         // Try to add to current data block
-        if (!data_builder_.Add(key, InvalidHybridTime(), value)) {
+        if (!data_builder_.Add(key, version, value)) {
             // Current block is full, flush it
             auto flush_result = FlushDataBlock();
             if (!flush_result.ok()) {
@@ -65,7 +75,7 @@ public:
             }
 
             // Try again with empty block
-            if (!data_builder_.Add(key, InvalidHybridTime(), value)) {
+            if (!data_builder_.Add(key, version, value)) {
                 return common::Result<bool>::failure(common::ErrorCode::InvalidArgument, "Entry too large for block");
             }
         }
@@ -75,6 +85,7 @@ public:
 
         // Update state
         last_key_ = key;
+        last_version_ = version;
         if (smallest_key_.empty()) {
             smallest_key_ = key;
         }
@@ -211,6 +222,7 @@ private:
 
     // State tracking
     std::string last_key_;
+    common::HybridTime last_version_;
     std::string smallest_key_;
     std::string largest_key_;
     size_t num_entries_{0};
@@ -221,8 +233,10 @@ SSTableWriter::SSTableWriter(std::shared_ptr<common::IAppendOnlyFileSystem> fs, 
 
 SSTableWriter::~SSTableWriter() = default;
 
-common::Result<bool> SSTableWriter::Add(const std::string& key, const common::DataChunk& value) {
-    return impl_->Add(key, value);
+common::Result<bool> SSTableWriter::Add(const std::string& key,
+                                        const common::DataChunk& value,
+                                        common::HybridTime version) {
+    return impl_->Add(key, value, version);
 }
 
 common::Result<bool> SSTableWriter::Finish() {

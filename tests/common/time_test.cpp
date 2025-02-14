@@ -12,16 +12,20 @@ TEST(HybridTimeTest, Construction) {
     HybridTime t1;
     EXPECT_EQ(t1.encoded(), HybridTime::INVALID_TIME);
 
+    // Test max hybrid time
+    HybridTime t2 = MaxHybridTime();
+    EXPECT_EQ(t2.encoded(), HybridTime::MAX_TIME);
+
     // Test explicit construction
-    HybridTime t2(1000, 42);
-    EXPECT_EQ(t2.physical_time(), 1000);
-    EXPECT_EQ(t2.logical_counter(), 42);
+    HybridTime t3(1000, 42);
+    EXPECT_EQ(t3.physical_time(), 1000);
+    EXPECT_EQ(t3.logical_counter(), 42);
 
     // Test encoded constructor
     uint64_t encoded = (1000ULL << HybridTime::LOGICAL_BITS) | 42;
-    HybridTime t3(encoded);
-    EXPECT_EQ(t3.physical_time(), 1000);
-    EXPECT_EQ(t3.logical_counter(), 42);
+    HybridTime t4(encoded);
+    EXPECT_EQ(t4.physical_time(), 1000);
+    EXPECT_EQ(t4.logical_counter(), 42);
 }
 
 TEST(HybridTimeTest, Comparison) {

@@ -221,8 +221,8 @@ TEST_F(SSTableFormatTest, DataBlockBuilder) {
     // Add entries
     DataChunk value1 = DataChunk::FromString("val1");
     DataChunk value2 = DataChunk::FromString("val2");
-    EXPECT_TRUE(builder.Add("key1", InvalidHybridTime(), value1));
-    EXPECT_TRUE(builder.Add("key2", InvalidHybridTime(), value2));
+    EXPECT_TRUE(builder.Add("key1", MinHybridTime(), value1));
+    EXPECT_TRUE(builder.Add("key2", MinHybridTime(), value2));
     EXPECT_FALSE(builder.Empty());
 
     // Build block
@@ -279,10 +279,10 @@ TEST_F(SSTableFormatTest, DataBlockBuilderSizeLimit) {
     DataChunk small_value = DataChunk::FromString("val1");
 
     // First entry should succeed
-    EXPECT_TRUE(builder.Add("key1", InvalidHybridTime(), small_value));
+    EXPECT_TRUE(builder.Add("key1", MinHybridTime(), small_value));
 
     // Adding an entry that would exceed the target size should fail
-    EXPECT_FALSE(builder.Add("key2", InvalidHybridTime(), large_value));
+    EXPECT_FALSE(builder.Add("key2", MinHybridTime(), large_value));
 
     // Builder should still contain the first entry
     auto block = builder.Finish();
@@ -313,13 +313,13 @@ TEST_F(SSTableFormatTest, DataBlockBuilderTargetSize) {
     DataChunk value = DataChunk::FromString(std::string(value_size, 'x'));
 
     // Should be able to add 4 entries of ~900KB each
-    EXPECT_TRUE(builder.Add(key + "1", InvalidHybridTime(), value));
-    EXPECT_TRUE(builder.Add(key + "2", InvalidHybridTime(), value));
-    EXPECT_TRUE(builder.Add(key + "3", InvalidHybridTime(), value));
-    EXPECT_TRUE(builder.Add(key + "4", InvalidHybridTime(), value));
+    EXPECT_TRUE(builder.Add(key + "1", MinHybridTime(), value));
+    EXPECT_TRUE(builder.Add(key + "2", MinHybridTime(), value));
+    EXPECT_TRUE(builder.Add(key + "3", MinHybridTime(), value));
+    EXPECT_TRUE(builder.Add(key + "4", MinHybridTime(), value));
 
     // Fifth entry should fail as it would exceed 4MB
-    EXPECT_FALSE(builder.Add(key + "5", InvalidHybridTime(), value));
+    EXPECT_FALSE(builder.Add(key + "5", MinHybridTime(), value));
 
     // Verify the block contains exactly 4 entries
     auto block = builder.Finish();

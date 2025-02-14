@@ -619,4 +619,225 @@ TEST_F(SSTableReaderTest, IteratorSTLCompatibility) {
     }
 }
 
+TEST_F(SSTableReaderTest, IteratorWithTimestamp) {
+    // Create test data with multiple versions of keys
+    SSTableWriter writer(fs_, "test.sst");
+
+    HybridTime t1(100);
+    HybridTime t2(200);
+    HybridTime t3(300);
+
+    // Add entries with different versions
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v3"), t3));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t2));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1));
+    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v1"), t1));
+    VERIFY_RESULT(writer.Finish());
+
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+
+    // Test reading at different timestamps
+    {
+        // Read at t1 should see first versions
+        auto iter = reader.NewIterator(t1);
+        iter->SeekToFirst();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key1");
+        EXPECT_EQ(iter->value().ToString(), "value1_v1");
+        EXPECT_EQ(iter->version(), t1);
+
+        iter->Next();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key2");
+        EXPECT_EQ(iter->value().ToString(), "value2_v1");
+        EXPECT_EQ(iter->version(), t1);
+
+        iter->Next();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key3");
+        EXPECT_EQ(iter->value().ToString(), "value3_v1");
+        EXPECT_EQ(iter->version(), t1);
+
+        iter->Next();
+        EXPECT_FALSE(iter->Valid());
+    }
+
+    {
+        // Read at t2 should see second versions where available
+        auto iter = reader.NewIterator(t2);
+        iter->SeekToFirst();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key1");
+        EXPECT_EQ(iter->value().ToString(), "value1_v2");
+        EXPECT_EQ(iter->version(), t2);
+
+        iter->Next();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key2");
+        EXPECT_EQ(iter->value().ToString(), "value2_v2");
+        EXPECT_EQ(iter->version(), t2);
+
+        iter->Next();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key3");
+        EXPECT_EQ(iter->value().ToString(), "value3_v1");  // Only has version at t1
+        EXPECT_EQ(iter->version(), t1);
+
+        iter->Next();
+        EXPECT_FALSE(iter->Valid());
+    }
+
+    {
+        // Read at t3 should see latest versions
+        auto iter = reader.NewIterator(t3);
+        iter->SeekToFirst();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key1");
+        EXPECT_EQ(iter->value().ToString(), "value1_v3");
+        EXPECT_EQ(iter->version(), t3);
+
+        iter->Next();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key2");
+        EXPECT_EQ(iter->value().ToString(), "value2_v2");  // Latest version at t2
+        EXPECT_EQ(iter->version(), t2);
+
+        iter->Next();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key3");
+        EXPECT_EQ(iter->value().ToString(), "value3_v1");  // Only has version at t1
+        EXPECT_EQ(iter->version(), t1);
+
+        iter->Next();
+        EXPECT_FALSE(iter->Valid());
+    }
+
+    {
+        // Read with MaxHybridTime should see latest versions
+        auto iter = reader.NewIterator();
+        iter->SeekToFirst();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key1");
+        EXPECT_EQ(iter->value().ToString(), "value1_v3");
+        EXPECT_EQ(iter->version(), t3);
+
+        iter->Next();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key2");
+        EXPECT_EQ(iter->value().ToString(), "value2_v2");
+        EXPECT_EQ(iter->version(), t2);
+
+        iter->Next();
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key3");
+        EXPECT_EQ(iter->value().ToString(), "value3_v1");
+        EXPECT_EQ(iter->version(), t1);
+
+        iter->Next();
+        EXPECT_FALSE(iter->Valid());
+    }
+}
+
+TEST_F(SSTableReaderTest, IteratorSeekWithTimestamp) {
+    // Create test data with multiple versions
+    SSTableWriter writer(fs_, "test.sst");
+
+    HybridTime t1(100);
+    HybridTime t2(200);
+
+    // Add entries with different versions
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1));
+    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v2"), t2));
+    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v1"), t1));
+    VERIFY_RESULT(writer.Finish());
+
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+
+    // Test seeking at different timestamps
+    {
+        // Seek at t1
+        auto iter = reader.NewIterator(t1);
+
+        iter->Seek("key2");
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key2");
+        EXPECT_EQ(iter->value().ToString(), "value2_v1");
+        EXPECT_EQ(iter->version(), t1);
+
+        iter->Seek("key3");
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key3");
+        EXPECT_EQ(iter->value().ToString(), "value3_v1");
+        EXPECT_EQ(iter->version(), t1);
+
+        // Seek to non-existent key should land on next key
+        iter->Seek("key1.5");
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key2");
+        EXPECT_EQ(iter->value().ToString(), "value2_v1");
+        EXPECT_EQ(iter->version(), t1);
+    }
+
+    {
+        // Seek at t2
+        auto iter = reader.NewIterator(t2);
+
+        iter->Seek("key1");
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key1");
+        EXPECT_EQ(iter->value().ToString(), "value1_v2");
+        EXPECT_EQ(iter->version(), t2);
+
+        iter->Seek("key3");
+        ASSERT_TRUE(iter->Valid());
+        EXPECT_EQ(iter->key(), "key3");
+        EXPECT_EQ(iter->value().ToString(), "value3_v2");
+        EXPECT_EQ(iter->version(), t2);
+
+        // Seek past all keys
+        iter->Seek("key4");
+        EXPECT_FALSE(iter->Valid());
+    }
+}
+
+TEST_F(SSTableReaderTest, IteratorRangeBasedForWithTimestamp) {
+    // Create test data with multiple versions
+    SSTableWriter writer(fs_, "test.sst");
+
+    HybridTime t1(100);
+    HybridTime t2(200);
+
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t2));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1));
+    VERIFY_RESULT(writer.Finish());
+
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+
+    // Test range-based for loop at t1
+    {
+        std::vector<std::tuple<std::string, std::string, HybridTime>> expected = {
+            {"key1", "value1_v1", t1},
+            {"key2", "value2_v1", t1},
+        };
+
+        size_t count = 0;
+        for (const auto& [key, value] : reader) {  // Uses MaxHybridTime by default
+            ASSERT_LT(count, expected.size());
+            EXPECT_EQ(key, std::get<0>(expected[count]));
+            EXPECT_EQ(value.ToString(), std::get<1>(expected[count]));
+            count++;
+        }
+        EXPECT_EQ(count, expected.size());
+    }
+}
+
 }  // namespace

@@ -4,9 +4,11 @@
 
 #include "common/memory_append_only_fs.h"
 #include "kv/sstable_format.h"
+#include "test_helper.h"
 
 using namespace pond::common;
 using namespace pond::kv;
+using namespace pond::test;
 
 namespace {
 
@@ -204,6 +206,154 @@ TEST_F(SSTableWriterTest, BlockBoundaries) {
     ASSERT_TRUE(index_footer.Deserialize(index_block.Data() + index_block.Size() - BlockFooter::kFooterSize,
                                          BlockFooter::kFooterSize));
     EXPECT_GT(index_footer.entry_count, 1);
+}
+
+TEST_F(SSTableWriterTest, MultiVersionBasic) {
+    SSTableWriter writer(fs_, "test.sst");
+
+    // Add multiple versions of the same key
+    HybridTime t1(100);
+    HybridTime t2(200);
+    HybridTime t3(300);
+
+    std::vector<TestKvEntry> entries = {
+        GenerateTestKvEntry("key1", t3, "value1_v3"),
+        GenerateTestKvEntry("key1", t2, "value1_v2"),
+        GenerateTestKvEntry("key1", t1, "value1_v1"),
+        GenerateTestKvEntry("key2", t2, "value2_v2"),
+        GenerateTestKvEntry("key2", t1, "value2_v1"),
+    };
+
+    for (const auto& entry : entries) {
+        VERIFY_RESULT_MSG(writer.Add(entry.key, entry.value, entry.version),
+                          "Failed to add entry " + std::string(entry.key));
+    }
+
+    VERIFY_RESULT(writer.Finish());
+
+    // Read file and verify structure
+    auto read_result = readEntireFile("test.sst");
+    VERIFY_RESULT(read_result);
+    auto data = read_result.value();
+
+    // Verify file header
+    FileHeader header;
+    ASSERT_TRUE(header.Deserialize(data.Data(), FileHeader::kHeaderSize));
+    EXPECT_EQ(header.version, 1);
+
+    // Verify footer
+    Footer footer;
+    ASSERT_TRUE(footer.Deserialize(data.Data() + data.Size() - Footer::kFooterSize, Footer::kFooterSize));
+    EXPECT_GT(footer.index_block_offset, FileHeader::kHeaderSize);
+}
+
+TEST_F(SSTableWriterTest, InvalidVersion) {
+    SSTableWriter writer(fs_, "test.sst");
+
+    auto result = writer.Add("key1", stringToChunk("value1"), InvalidHybridTime());
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
+}
+
+TEST_F(SSTableWriterTest, MultiVersionOrderDescending) {
+    SSTableWriter writer(fs_, "test.sst");
+
+    // Test that versions of the same key can be added in any order
+    HybridTime t1(100);
+    HybridTime t2(200);
+    HybridTime t3(300);
+
+    std::vector<TestKvEntry> entries = {
+        GenerateTestKvEntry("key1", t2, "value1_v2"),
+        GenerateTestKvEntry("key1", t1, "value1_v1"),
+        GenerateTestKvEntry("key1", t3, "value1_v3"),
+        GenerateTestKvEntry("key2", t2, "value2_v2"),
+        GenerateTestKvEntry("key2", t1, "value2_v1"),
+    };
+
+    auto i = 0;
+    // Add versions out of order
+    for (const auto& entry : entries) {
+        if (i == 2) {  // expect failure since the order is not descending
+            EXPECT_FALSE(writer.Add(entry.key, entry.value, entry.version).ok());
+        } else {
+            VERIFY_RESULT_MSG(writer.Add(entry.key, entry.value, entry.version),
+                              "Failed to add entry " + std::string(entry.key));
+        }
+        i++;
+    }
+
+    VERIFY_RESULT(writer.Finish());
+}
+
+TEST_F(SSTableWriterTest, MultiVersionWithFilter) {
+    SSTableWriter writer(fs_, "test.sst");
+
+    // Enable bloom filter
+    writer.EnableFilter(10);
+
+    HybridTime t1(100);
+    HybridTime t2(200);
+
+    // Add multiple versions of keys
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t2));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t1));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t2));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t1));
+
+    VERIFY_RESULT(writer.Finish());
+
+    // Verify filter block is present
+    auto read_result = readEntireFile("test.sst");
+    VERIFY_RESULT(read_result);
+    auto data = read_result.value();
+
+    FileHeader header;
+    ASSERT_TRUE(header.Deserialize(data.Data(), FileHeader::kHeaderSize));
+    EXPECT_TRUE(header.HasFilter());
+
+    Footer footer;
+    ASSERT_TRUE(footer.Deserialize(data.Data() + data.Size() - Footer::kFooterSize, Footer::kFooterSize));
+    EXPECT_GT(footer.filter_block_offset, FileHeader::kHeaderSize);
+}
+
+TEST_F(SSTableWriterTest, MultiVersionLargeValues) {
+    SSTableWriter writer(fs_, "test.sst");
+
+    // Create large values to force multiple blocks
+    std::string large_value_base(512 * 1024, 'x');  // 512KB base value
+
+    HybridTime t1(100);
+    HybridTime t2(200);
+
+    // Add multiple versions with large values
+    for (int i = 0; i < 3; i++) {
+        std::string key = "key" + std::to_string(i);
+        std::string value1 = large_value_base + "_v1_" + std::to_string(i);
+        std::string value2 = large_value_base + "_v2_" + std::to_string(i);
+
+        VERIFY_RESULT(writer.Add(key, stringToChunk(value1), t2));
+        VERIFY_RESULT(writer.Add(key, stringToChunk(value2), t1));
+    }
+
+    VERIFY_RESULT(writer.Finish());
+
+    // Verify multiple blocks were created
+    auto read_result = readEntireFile("test.sst");
+    VERIFY_RESULT(read_result);
+    auto data = read_result.value();
+
+    Footer footer;
+    ASSERT_TRUE(footer.Deserialize(data.Data() + data.Size() - Footer::kFooterSize, Footer::kFooterSize));
+
+    // Read index block
+    DataChunk index_block(data.Data() + footer.index_block_offset,
+                          data.Size() - footer.index_block_offset - Footer::kFooterSize);
+
+    BlockFooter index_footer;
+    ASSERT_TRUE(index_footer.Deserialize(index_block.Data() + index_block.Size() - BlockFooter::kFooterSize,
+                                         BlockFooter::kFooterSize));
+    EXPECT_GT(index_footer.entry_count, 1);  // Should have multiple blocks
 }
 
 }  // namespace

@@ -51,7 +51,7 @@ public:
      * @return Result<DataChunk> containing the value if found, or empty if not found
      */
     [[nodiscard]] common::Result<common::DataChunk> Get(const std::string& key,
-                                                        common::HybridTime version = common::InvalidHybridTime());
+                                                        common::HybridTime version = common::MinHybridTime());
 
     /**
      * Check if a key might exist in the SSTable.
@@ -102,15 +102,17 @@ public:
     /**
      * Create a new iterator for scanning the SSTable.
      * The caller takes ownership of the returned iterator.
+     * @param read_time Optional timestamp to get a consistent view of data up to this time
      * @return A new iterator instance
      */
-    [[nodiscard]] std::unique_ptr<Iterator> NewIterator();
+    [[nodiscard]] std::unique_ptr<Iterator> NewIterator(common::HybridTime read_time = common::MaxHybridTime());
 
     /**
      * Get an iterator pointing to the beginning of the SSTable.
+     * @param read_time Optional timestamp to get a consistent view of data up to this time
      * @return An iterator pointing to the first entry
      */
-    [[nodiscard]] Iterator begin();
+    [[nodiscard]] Iterator begin(common::HybridTime read_time = common::MaxHybridTime());
 
     /**
      * Get an iterator representing the end of the SSTable.
@@ -127,11 +129,10 @@ public:
         // Iterator traits for STL compatibility
         using iterator_category = std::forward_iterator_tag;
         using value_type = std::pair<const std::string&, const common::DataChunk&>;
-        using difference_type = std::ptrdiff_t;
         using pointer = const value_type*;
         using reference = const value_type&;
 
-        explicit Iterator(SSTableReader* reader);
+        explicit Iterator(SSTableReader* reader, common::HybridTime read_time = common::MaxHybridTime());
         ~Iterator();
 
         Iterator(const Iterator&);
@@ -162,6 +163,13 @@ public:
         [[nodiscard]] const common::DataChunk& value() const;
 
         /**
+         * Get the version (timestamp) at the current position.
+         * Must only be called when Valid() returns true.
+         * @return The current version
+         */
+        [[nodiscard]] common::HybridTime version() const;
+
+        /**
          * Advance to the next entry.
          * Must only be called when Valid() returns true.
          */
@@ -178,7 +186,7 @@ public:
          */
         void Seek(const std::string& target);
 
-        // STL iterator interface
+        // STL iterator support
         Iterator& operator++() {
             Next();
             return *this;

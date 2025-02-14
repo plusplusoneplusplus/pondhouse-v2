@@ -33,7 +33,18 @@ public:
      * Keys must be added in sorted order.
      * @return Result<bool> indicating success or failure
      */
-    [[nodiscard]] common::Result<bool> Add(const std::string& key, const common::DataChunk& value);
+    [[nodiscard]] common::Result<bool> Add(const std::string& key, const common::DataChunk& value) {
+        return Add(key, value, common::MinHybridTime());
+    }
+
+    /**
+     * Add a key-value pair with version to the SSTable.
+     * Keys must be added in sorted order.
+     * @return Result<bool> indicating success or failure
+     */
+    [[nodiscard]] common::Result<bool> Add(const std::string& key,
+                                           const common::DataChunk& value,
+                                           common::HybridTime version);
 
     /**
      * Finalize the SSTable and write all remaining data to disk.

@@ -30,6 +30,8 @@ public:
     static constexpr uint64_t MAX_LOGICAL = (1ULL << LOGICAL_BITS) - 1;
     static constexpr uint64_t PHYSICAL_MASK = (1ULL << PHYSICAL_BITS) - 1;
     static constexpr uint64_t INVALID_TIME = 0;
+    static constexpr uint64_t MIN_TIME = 1ULL << PHYSICAL_BITS;
+    static constexpr uint64_t MAX_TIME = UINT64_MAX;
 
     HybridTime() : time_(INVALID_TIME) {}
     explicit HybridTime(uint64_t encoded_time) : time_(encoded_time) {}
@@ -144,6 +146,14 @@ inline HybridTime GetNextHybridTime() {
 
 inline HybridTime InvalidHybridTime() {
     return HybridTime(HybridTime::INVALID_TIME);
+}
+
+inline HybridTime MinHybridTime() {
+    return HybridTime(HybridTime::MIN_TIME);
+}
+
+inline HybridTime MaxHybridTime() {
+    return HybridTime(HybridTime::MAX_TIME);
 }
 
 }  // namespace pond::common

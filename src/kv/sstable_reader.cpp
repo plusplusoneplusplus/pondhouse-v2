@@ -187,7 +187,7 @@ public:
     }
 
     common::Result<common::DataChunk> Get(const std::string& key,
-                                          common::HybridTime version = common::InvalidHybridTime()) {
+                                          common::HybridTime version = common::MinHybridTime()) {
         if (file_handle_ == common::INVALID_HANDLE) {
             return common::Result<common::DataChunk>::failure(common::ErrorCode::InvalidOperation, "Reader not opened");
         }
@@ -249,11 +249,11 @@ public:
 
             if (current_key.user_key() == key) {
                 // Found matching key
-                if (version == common::InvalidHybridTime() || current_key.version() == version) {
+                if (current_key.version() == version) {
                     // If no specific version requested or exact version match, return immediately
                     const uint8_t* value_ptr = block_data.Data() + pos + DataBlockEntry::kHeaderSize + entry.key_length;
                     return common::Result<common::DataChunk>::success(common::DataChunk(value_ptr, entry.value_length));
-                } else if (version == common::InvalidHybridTime()) {
+                } else {
                     // If no specific version requested, track the newest version seen
                     if (!found_any || current_key.version() > version) {
                         const uint8_t* value_ptr =
@@ -376,7 +376,7 @@ common::Result<bool> SSTableReader::Open() {
 }
 
 common::Result<common::DataChunk> SSTableReader::Get(const std::string& key,
-                                                     common::HybridTime version /*= common::InvalidHybridTime()*/) {
+                                                     common::HybridTime version /*= common::MinHybridTime()*/) {
     return impl_->Get(key, version);
 }
 
@@ -414,89 +414,91 @@ common::Result<std::unique_ptr<common::BloomFilter>> SSTableReader::GetBloomFilt
 
 class SSTableReader::Iterator::Impl {
 public:
-    explicit Impl(SSTableReader* reader) : reader_(reader), valid_(false) {}
+    Impl(SSTableReader* reader, common::HybridTime read_time)
+        : reader_(reader), read_time_(read_time), valid_(false), current_block_idx_(0), block_pos_(0) {
+        SeekToFirst();
+    }
+
+    ~Impl() = default;
 
     bool Valid() const { return valid_; }
 
-    const std::string& user_key() const {
-        assert(valid_);
-        return current_internal_key_.user_key();
-    }
-
-    common::HybridTime version() const {
-        assert(valid_);
-        return current_internal_key_.version();
-    }
-
-    const common::DataChunk& value() const {
-        assert(valid_);
-        return current_value_;
-    }
-
-    void Next() {
-        assert(valid_);
-
-        // If we're at the end of the current block, move to next block
-        if (block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length
-            >= current_block_.Size() - BlockFooter::kFooterSize) {
-            if (current_block_idx_ + 1 >= reader_->impl_->index_entries_.size()) {
-                valid_ = false;
-                return;
-            }
-            LoadBlock(++current_block_idx_);
-            block_pos_ = 0;
-        } else {
-            // Move to next entry in current block
-            block_pos_ += DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length;
-        }
-
-        ParseCurrentEntry();
-    }
-
     void SeekToFirst() {
-        if (reader_->impl_->index_entries_.empty()) {
-            valid_ = false;
-            return;
-        }
-
         current_block_idx_ = 0;
-        LoadBlock(current_block_idx_);
         block_pos_ = 0;
-        ParseCurrentEntry();
+        valid_ = LoadBlock(0) && ParseCurrentEntry();
     }
 
     void Seek(const std::string& target) {
-        // Find the block that may contain the target key
+        valid_ = false;
+
+        // Binary search through index entries
         auto it = std::upper_bound(
             reader_->impl_->index_entries_.begin(),
             reader_->impl_->index_entries_.end(),
             target,
-            [](const std::string& k, const SSTableReader::Impl::IndexEntry& e) { return k <= e.largest_key; });
+            [](const std::string& k, const SSTableReader::Impl::IndexEntry& e) { return k < e.largest_key; });
 
-        if (it == reader_->impl_->index_entries_.end()) {
-            valid_ = false;
-            return;
+        if (it != reader_->impl_->index_entries_.begin()) {
+            --it;
         }
 
         current_block_idx_ = std::distance(reader_->impl_->index_entries_.begin(), it);
-        LoadBlock(current_block_idx_);
-        block_pos_ = 0;
-
-        // Scan through entries in the block until we find the first key >= target
-        while (block_pos_ + DataBlockEntry::kHeaderSize <= current_block_.Size() - BlockFooter::kFooterSize) {
-            if (!ParseCurrentEntry()) {
-                valid_ = false;
-                return;
-            }
-
-            if (current_internal_key_.user_key() >= target) {
-                return;
-            }
-
-            block_pos_ += DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length;
+        if (!LoadBlock(current_block_idx_)) {
+            return;
         }
 
+        // Linear scan within block
+        block_pos_ = 0;
+        while (ParseCurrentEntry()) {
+            if (current_internal_key_.user_key() >= target) {
+                valid_ = true;
+                AdvanceToNextValidEntry();
+                return;
+            }
+            block_pos_ += DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length;
+        }
         valid_ = false;
+    }
+
+    void Next() {
+        if (!valid_)
+            return;
+
+        // Advance to next entry
+        AdvanceToNextEntry();
+
+        // Try to parse the next entry
+        valid_ = ParseCurrentEntry();
+        if (valid_) {
+            AdvanceToNextValidEntry();
+        } else {
+            // If we can't parse the next entry in current block, try next block
+            if (current_block_idx_ + 1 < reader_->impl_->index_entries_.size()) {
+                current_block_idx_++;
+                block_pos_ = 0;
+                valid_ = LoadBlock(current_block_idx_) && ParseCurrentEntry();
+                if (valid_) {
+                    AdvanceToNextValidEntry();
+                }
+            }
+        }
+    }
+
+    void AdvanceToNextEntry() {
+        block_pos_ += DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length;
+    }
+
+    const std::string& key() const { return current_internal_key_.user_key(); }
+
+    const common::DataChunk& value() const { return current_entry_value_; }
+
+    common::HybridTime version() const {
+        if (!valid_) {
+            return common::InvalidHybridTime();
+        }
+
+        return current_internal_key_.version();
     }
 
 private:
@@ -504,58 +506,132 @@ private:
         const auto& index_entry = reader_->impl_->index_entries_[block_idx];
         auto block_result =
             reader_->impl_->fs_->Read(reader_->impl_->file_handle_, index_entry.offset, index_entry.size);
+
         if (!block_result.ok()) {
             valid_ = false;
             return false;
         }
         current_block_ = block_result.value();
+
+        // Verify block footer
+        kv::BlockFooter footer;
+        if (current_block_.Size() < kv::BlockFooter::kFooterSize) {
+            valid_ = false;
+            return false;
+        }
+
+        const uint8_t* footer_data = current_block_.Data() + current_block_.Size() - kv::BlockFooter::kFooterSize;
+        if (!footer.Deserialize(footer_data, kv::BlockFooter::kFooterSize)) {
+            valid_ = false;
+            return false;
+        }
+
+        // Validate block size matches footer
+        if (current_block_.Size() != footer.block_size) {
+            valid_ = false;
+            return false;
+        }
+
+        // Verify checksum (exclude footer itself)
+        const uint32_t computed_crc =
+            common::Crc32(current_block_.Data(), current_block_.Size() - kv::BlockFooter::kFooterSize);
+        if (computed_crc != footer.checksum) {
+            valid_ = false;
+            return false;
+        }
+
         return true;
     }
 
     bool ParseCurrentEntry() {
-        if (block_pos_ + DataBlockEntry::kHeaderSize > current_block_.Size() - BlockFooter::kFooterSize) {
-            valid_ = false;
+        const size_t block_data_size = current_block_.Size() - kv::BlockFooter::kFooterSize;
+
+        if (block_pos_ + DataBlockEntry::kHeaderSize > block_data_size) {
             return false;
         }
 
+        // Deserialize header
         if (!current_entry_.DeserializeHeader(current_block_.Data() + block_pos_, DataBlockEntry::kHeaderSize)) {
-            valid_ = false;
             return false;
         }
 
-        if (block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length
-            > current_block_.Size() - BlockFooter::kFooterSize) {
-            valid_ = false;
+        // Validate entry fits in block
+        const size_t entry_size = DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length;
+        if (block_pos_ + entry_size > block_data_size) {
             return false;
         }
 
         // Deserialize internal key
         if (!current_internal_key_.Deserialize(current_block_.Data() + block_pos_ + DataBlockEntry::kHeaderSize,
                                                current_entry_.key_length)) {
-            valid_ = false;
             return false;
         }
 
+        // Copy value data
         const uint8_t* value_ptr =
             current_block_.Data() + block_pos_ + DataBlockEntry::kHeaderSize + current_entry_.key_length;
-        current_value_ = common::DataChunk(value_ptr, current_entry_.value_length);
+        current_entry_value_ = common::DataChunk(value_ptr, current_entry_.value_length);
 
-        valid_ = true;
         return true;
     }
 
+    void AdvanceToNextValidEntry() {
+        common::HybridTime best_version = common::InvalidHybridTime();
+        size_t best_version_pos = 0;
+        common::DataChunk best_value;
+        bool found_valid_entry = false;
+
+        while (valid_) {
+            // Visibility check
+            if (current_internal_key_.version() <= read_time_) {
+                // Take first visible version we find
+                best_version_pos = block_pos_;
+                best_value = current_entry_value_;
+                found_valid_entry = true;
+                break;
+            }
+
+            // Save current key
+            const std::string next_key = current_internal_key_.user_key();
+
+            // Advance to next entry
+            AdvanceToNextEntry();
+
+            if (!ParseCurrentEntry() || current_internal_key_.user_key() != next_key) {
+                if (found_valid_entry) {
+                    block_pos_ = best_version_pos;
+                    current_entry_value_ = std::move(best_value);
+                    valid_ = true;
+                    return;
+                }
+                found_valid_entry = false;
+            }
+        }
+
+        if (found_valid_entry) {
+            block_pos_ = best_version_pos;
+            current_entry_value_ = std::move(best_value);
+            valid_ = true;
+            return;
+        }
+
+        valid_ = false;
+    }
+
     SSTableReader* reader_;
+    common::HybridTime read_time_;
     bool valid_;
-    size_t current_block_idx_{0};
+    size_t current_block_idx_;
     common::DataChunk current_block_;
-    size_t block_pos_{0};
+    size_t block_pos_;
     DataBlockEntry current_entry_;
     InternalKey current_internal_key_;
-    common::DataChunk current_value_;
+    common::DataChunk current_entry_value_;
 };
 
 // Iterator implementation
-SSTableReader::Iterator::Iterator(SSTableReader* reader) : impl_(std::make_unique<Impl>(reader)) {}
+SSTableReader::Iterator::Iterator(SSTableReader* reader, common::HybridTime read_time)
+    : impl_(std::make_unique<Impl>(reader, read_time)) {}
 
 SSTableReader::Iterator::~Iterator() = default;
 
@@ -573,7 +649,11 @@ bool SSTableReader::Iterator::Valid() const {
 }
 
 const std::string& SSTableReader::Iterator::key() const {
-    return impl_->user_key();
+    return impl_->key();
+}
+
+common::HybridTime SSTableReader::Iterator::version() const {
+    return impl_->version();
 }
 
 const common::DataChunk& SSTableReader::Iterator::value() const {
@@ -592,13 +672,12 @@ void SSTableReader::Iterator::Seek(const std::string& target) {
     impl_->Seek(target);
 }
 
-// Add NewIterator method to SSTableReader
-std::unique_ptr<SSTableReader::Iterator> SSTableReader::NewIterator() {
-    return std::make_unique<Iterator>(this);
+std::unique_ptr<SSTableReader::Iterator> SSTableReader::NewIterator(common::HybridTime read_time) {
+    return std::make_unique<Iterator>(this, read_time);
 }
 
-SSTableReader::Iterator SSTableReader::begin() {
-    auto iter = Iterator(this);
+SSTableReader::Iterator SSTableReader::begin(common::HybridTime read_time) {
+    auto iter = Iterator(this, read_time);
     iter.SeekToFirst();
     return iter;
 }

@@ -16,4 +16,8 @@ std::vector<std::string> GenerateKeys(int count, int width) {
     return keys;
 }
 
+TestKvEntry GenerateTestKvEntry(const std::string& key, common::HybridTime version, const std::string& value) {
+    return TestKvEntry{key, version, common::DataChunk::FromString(value)};
+}
+
 }  // namespace pond::test

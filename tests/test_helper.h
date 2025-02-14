@@ -2,7 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include "common/data_chunk.h"
 #include "common/result.h"
+#include "common/time.h"
 
 // Macro to verify Result<T> objects with better error messages
 #define VERIFY_RESULT(result) ASSERT_TRUE((result).ok()) << "Operation failed: " << (result).error().to_string()
@@ -17,8 +19,16 @@
 
 namespace pond::test {
 
+struct TestKvEntry {
+    std::string key;
+    common::HybridTime version;
+    common::DataChunk value;
+};
+
 std::string GenerateKey(int i, int width = 3);
 
 std::vector<std::string> GenerateKeys(int count, int width = 3);
+
+TestKvEntry GenerateTestKvEntry(const std::string& key, common::HybridTime version, const std::string& value);
 
 }  // namespace pond::test
