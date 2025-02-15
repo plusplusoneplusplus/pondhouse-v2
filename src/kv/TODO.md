@@ -21,6 +21,7 @@
   - [x] SSTable versioning with InternalKey
   - [x] Version-aware reads and writes
   - [x] Iterator support for versions
+  - [x] Version ordering in SSTable
   - [ ] Level management
   - [ ] Manifest file format
 - [ ] Add recovery mechanisms
@@ -29,13 +30,15 @@
   - [ ] Error recovery
 - [ ] Handle concurrent operations
   - [x] Version handling during reads
+  - [x] Version ordering validation
   - [ ] Garbage collection
   - [ ] File cleanup
 - [x] Add version-specific features
   - [x] Time-travel queries
   - [x] Version iteration
-  - [x] Default version handling
   - [x] Version comparison
+  - [x] Multi-version SSTable support
+  - [x] Version visibility filtering
 
 ### 3. SSTableManager Implementation [IN PROGRESS]
 
@@ -46,6 +49,7 @@ The `SSTableManager` class manages the lifecycle and organization of SSTables wi
 - Thread-safe operations with shared mutex protection
 - Block cache management
 - File system abstraction via `IAppendOnlyFileSystem`
+- Multi-version support with timestamp-based visibility
 
 #### Key Features
 
@@ -66,18 +70,21 @@ The `SSTableManager` class manages the lifecycle and organization of SSTables wi
    - L0 search from newest to oldest
    - Level-based search with range filtering
    - Block cache integration
+   - Version-aware reads with timestamp filtering
 
 4. **Write Path**
    - Atomic MemTable to SSTable conversion
    - Protected file number allocation
    - Safe L0 table addition
    - Automatic statistics update
+   - Version preservation during flush
 
-5. **Statistics Tracking**
-   - Per-level file count and size tracking
-   - Total SSTable statistics
-   - Cache performance metrics
-   - Thread-safe stats updates
+5. **Version Management**
+   - Descending version order within SSTable
+   - Version visibility based on read timestamp
+   - Efficient version filtering during reads
+   - Version-aware iterator implementation
+   - Skip optimization for invisible versions
 
 #### Implementation Status
 - [x] Basic SSTable organization
@@ -85,21 +92,23 @@ The `SSTableManager` class manages the lifecycle and organization of SSTables wi
 - [x] Thread-safe write operations
 - [x] Statistics tracking
 - [x] Directory recovery
+- [x] Multi-version support
 - [ ] Background compaction
 - [ ] Level size limits
 - [ ] Automatic compaction triggering
+- [ ] Version garbage collection
 
 #### Usage Example
 ```cpp
 // Create manager with configuration
 SSTableManager manager(fs, "db_path", config);
 
-// Thread-safe read operations
-auto result = manager.Get(key);
+// Thread-safe read operations with version
+auto result = manager.Get(key, timestamp);
 
-// Thread-safe write operations
+// Thread-safe write operations with version
 auto memtable = CreateMemTable();
-manager.CreateSSTableFromMemTable(memtable);
+manager.CreateSSTableFromMemTable(memtable);  // Preserves versions
 
 // Get current statistics
 auto stats = manager.GetStats();
