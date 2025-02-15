@@ -333,6 +333,8 @@ public:
             std::make_unique<common::BloomFilter>(*filter_));
     }
 
+    bool IsOpen() const { return opened_; }
+
     struct IndexEntry {
         std::string largest_key;
         uint64_t offset;
@@ -414,9 +416,11 @@ common::Result<std::unique_ptr<common::BloomFilter>> SSTableReader::GetBloomFilt
 
 class SSTableReader::Iterator::Impl {
 public:
-    Impl(SSTableReader* reader, common::HybridTime read_time)
+    Impl(SSTableReader* reader, common::HybridTime read_time, bool seek_to_first = true)
         : reader_(reader), read_time_(read_time), valid_(false), current_block_idx_(0), block_pos_(0) {
-        SeekToFirst();
+        if (seek_to_first) {
+            SeekToFirst();
+        }
     }
 
     ~Impl() = default;
@@ -424,12 +428,23 @@ public:
     bool Valid() const { return valid_; }
 
     void SeekToFirst() {
+        if (!reader_->impl_->IsOpen()) {
+            valid_ = false;
+            return;
+        }
+
         current_block_idx_ = 0;
         block_pos_ = 0;
         valid_ = LoadBlock(0) && ParseCurrentEntry();
+        AdvanceToNextValidEntry();
     }
 
     void Seek(const std::string& target) {
+        if (!reader_->impl_->IsOpen()) {
+            valid_ = false;
+            return;
+        }
+
         valid_ = false;
 
         // Binary search through index entries
@@ -461,31 +476,51 @@ public:
         valid_ = false;
     }
 
-    void Next() {
-        if (!valid_)
-            return;
+    bool Next() {
+        if (!valid_) {
+            return false;
+        }
 
-        // Advance to next entry
-        AdvanceToNextEntry();
+        // Save current key to detect key changes
+        const std::string current_key = current_internal_key_.user_key();
 
-        // Try to parse the next entry
-        valid_ = ParseCurrentEntry();
-        if (valid_) {
-            AdvanceToNextValidEntry();
-        } else {
-            // If we can't parse the next entry in current block, try next block
-            if (current_block_idx_ + 1 < reader_->impl_->index_entries_.size()) {
-                current_block_idx_++;
-                block_pos_ = 0;
-                valid_ = LoadBlock(current_block_idx_) && ParseCurrentEntry();
-                if (valid_) {
-                    AdvanceToNextValidEntry();
+        // Skip all remaining versions of the current key since we already have the best version
+        while (true) {
+            AdvanceToNextBlockPosition();
+
+            // Try to parse the next entry
+            if (!ParseCurrentEntry()) {
+                // If we can't parse the next entry in current block, try next block
+                if (current_block_idx_ + 1 < reader_->impl_->index_entries_.size()) {
+                    current_block_idx_++;
+                    block_pos_ = 0;
+                    if (!LoadBlock(current_block_idx_)) {
+                        valid_ = false;
+                        return false;
+                    }
+                    if (!ParseCurrentEntry()) {
+                        valid_ = false;
+                        return false;
+                    }
+                } else {
+                    valid_ = false;
+                    return false;
                 }
             }
+
+            // If we've moved to a different key, stop skipping
+            if (current_internal_key_.user_key() != current_key) {
+                break;
+            }
         }
+
+        // Now we're at a new key, find its best valid version
+        valid_ = true;
+        AdvanceToNextValidEntry();
+        return valid_;
     }
 
-    void AdvanceToNextEntry() {
+    void AdvanceToNextBlockPosition() {
         block_pos_ += DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length;
     }
 
@@ -595,7 +630,7 @@ private:
             const std::string next_key = current_internal_key_.user_key();
 
             // Advance to next entry
-            AdvanceToNextEntry();
+            AdvanceToNextBlockPosition();
 
             if (!ParseCurrentEntry() || current_internal_key_.user_key() != next_key) {
                 if (found_valid_entry) {
@@ -630,8 +665,8 @@ private:
 };
 
 // Iterator implementation
-SSTableReader::Iterator::Iterator(SSTableReader* reader, common::HybridTime read_time)
-    : impl_(std::make_unique<Impl>(reader, read_time)) {}
+SSTableReader::Iterator::Iterator(SSTableReader* reader, common::HybridTime read_time, bool seek_to_first)
+    : impl_(std::make_unique<Impl>(reader, read_time, seek_to_first)) {}
 
 SSTableReader::Iterator::~Iterator() = default;
 
@@ -660,8 +695,8 @@ const common::DataChunk& SSTableReader::Iterator::value() const {
     return impl_->value();
 }
 
-void SSTableReader::Iterator::Next() {
-    impl_->Next();
+bool SSTableReader::Iterator::Next() {
+    return impl_->Next();
 }
 
 void SSTableReader::Iterator::SeekToFirst() {
@@ -678,12 +713,11 @@ std::unique_ptr<SSTableReader::Iterator> SSTableReader::NewIterator(common::Hybr
 
 SSTableReader::Iterator SSTableReader::begin(common::HybridTime read_time) {
     auto iter = Iterator(this, read_time);
-    iter.SeekToFirst();
     return iter;
 }
 
 SSTableReader::Iterator SSTableReader::end() {
-    return Iterator(this);  // Creates an invalid iterator representing the end
+    return Iterator(this, common::MaxHybridTime(), false);  // Don't seek, create invalid iterator
 }
 
 }  // namespace pond::kv

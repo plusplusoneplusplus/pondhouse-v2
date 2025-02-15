@@ -132,7 +132,9 @@ public:
         using pointer = const value_type*;
         using reference = const value_type&;
 
-        explicit Iterator(SSTableReader* reader, common::HybridTime read_time = common::MaxHybridTime());
+        explicit Iterator(SSTableReader* reader,
+                          common::HybridTime read_time = common::MaxHybridTime(),
+                          bool seek_to_first = true);
         ~Iterator();
 
         Iterator(const Iterator&);
@@ -172,8 +174,9 @@ public:
         /**
          * Advance to the next entry.
          * Must only be called when Valid() returns true.
+         * @return true if successful, false if we've reached the end
          */
-        void Next();
+        bool Next();
 
         /**
          * Position at the first entry in the table.

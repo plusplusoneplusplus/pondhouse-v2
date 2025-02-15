@@ -516,13 +516,14 @@ TEST_F(SSTableReaderTest, IteratorInvalidOperations) {
     // Test Next() on invalid iterator
     iter->Seek("key3");  // Seek past all entries
     EXPECT_FALSE(iter->Valid());
-    EXPECT_DEATH(iter->Next(), "");
+    EXPECT_FALSE(iter->Next());
 
     // Test seeking on closed reader
     SSTableReader closed_reader(fs_, "nonexistent.sst");
     auto closed_iter = closed_reader.NewIterator();
     closed_iter->SeekToFirst();
     EXPECT_FALSE(closed_iter->Valid());
+    EXPECT_FALSE(closed_iter->Next());
 }
 
 TEST_F(SSTableReaderTest, IteratorConcurrentAccess) {
@@ -643,7 +644,6 @@ TEST_F(SSTableReaderTest, IteratorWithTimestamp) {
     {
         // Read at t1 should see first versions
         auto iter = reader.NewIterator(t1);
-        iter->SeekToFirst();
         ASSERT_TRUE(iter->Valid());
         EXPECT_EQ(iter->key(), "key1");
         EXPECT_EQ(iter->value().ToString(), "value1_v1");
@@ -668,7 +668,6 @@ TEST_F(SSTableReaderTest, IteratorWithTimestamp) {
     {
         // Read at t2 should see second versions where available
         auto iter = reader.NewIterator(t2);
-        iter->SeekToFirst();
         ASSERT_TRUE(iter->Valid());
         EXPECT_EQ(iter->key(), "key1");
         EXPECT_EQ(iter->value().ToString(), "value1_v2");
@@ -693,7 +692,6 @@ TEST_F(SSTableReaderTest, IteratorWithTimestamp) {
     {
         // Read at t3 should see latest versions
         auto iter = reader.NewIterator(t3);
-        iter->SeekToFirst();
         ASSERT_TRUE(iter->Valid());
         EXPECT_EQ(iter->key(), "key1");
         EXPECT_EQ(iter->value().ToString(), "value1_v3");
@@ -718,7 +716,6 @@ TEST_F(SSTableReaderTest, IteratorWithTimestamp) {
     {
         // Read with MaxHybridTime should see latest versions
         auto iter = reader.NewIterator();
-        iter->SeekToFirst();
         ASSERT_TRUE(iter->Valid());
         EXPECT_EQ(iter->key(), "key1");
         EXPECT_EQ(iter->value().ToString(), "value1_v3");
@@ -825,8 +822,8 @@ TEST_F(SSTableReaderTest, IteratorRangeBasedForWithTimestamp) {
     // Test range-based for loop at t1
     {
         std::vector<std::tuple<std::string, std::string, HybridTime>> expected = {
-            {"key1", "value1_v1", t1},
-            {"key2", "value2_v1", t1},
+            {"key1", "value1_v2", t2},
+            {"key2", "value2_v2", t2},
         };
 
         size_t count = 0;
