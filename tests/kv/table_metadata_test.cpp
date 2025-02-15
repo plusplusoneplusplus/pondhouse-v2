@@ -21,7 +21,7 @@ TEST_F(TableMetadataTest, MetadataEntrySerialization) {
         {"file2.sst", 2000},
         {"file3.sst", 3000},
     };
-    TableMetadataEntry entry(MetadataOpType::CreateSSTable, files);
+    TableMetadataEntry entry(MetadataOpType::CreateSSTable, files, {});
 
     // Serialize
     auto data = entry.Serialize();
@@ -33,13 +33,13 @@ TEST_F(TableMetadataTest, MetadataEntrySerialization) {
 
     // Verify contents
     EXPECT_EQ(deserialized.op_type(), MetadataOpType::CreateSSTable);
-    ASSERT_EQ(deserialized.files().size(), 3);
-    EXPECT_EQ(deserialized.files()[0].name, "file1.sst");
-    EXPECT_EQ(deserialized.files()[0].size, 1000);
-    EXPECT_EQ(deserialized.files()[1].name, "file2.sst");
-    EXPECT_EQ(deserialized.files()[1].size, 2000);
-    EXPECT_EQ(deserialized.files()[2].name, "file3.sst");
-    EXPECT_EQ(deserialized.files()[2].size, 3000);
+    ASSERT_EQ(deserialized.added_files().size(), 3);
+    EXPECT_EQ(deserialized.added_files()[0].name, "file1.sst");
+    EXPECT_EQ(deserialized.added_files()[0].size, 1000);
+    EXPECT_EQ(deserialized.added_files()[1].name, "file2.sst");
+    EXPECT_EQ(deserialized.added_files()[1].size, 2000);
+    EXPECT_EQ(deserialized.added_files()[2].name, "file3.sst");
+    EXPECT_EQ(deserialized.added_files()[2].size, 3000);
 }
 
 TEST_F(TableMetadataTest, MetadataEntryEmptyFiles) {
@@ -55,7 +55,8 @@ TEST_F(TableMetadataTest, MetadataEntryEmptyFiles) {
 
     // Verify contents
     EXPECT_EQ(deserialized.op_type(), MetadataOpType::RotateWAL);
-    EXPECT_TRUE(deserialized.files().empty());
+    EXPECT_TRUE(deserialized.added_files().empty());
+    EXPECT_TRUE(deserialized.deleted_files().empty());
 }
 
 TEST_F(TableMetadataTest, MetadataEntryInvalidData) {
@@ -93,12 +94,12 @@ TEST_F(TableMetadataTest, StateMachineDeleteOperations) {
         {"file2.sst", 2000},
         {"file3.sst", 3000},
     };
-    TableMetadataEntry create_entry(MetadataOpType::CreateSSTable, files);
+    TableMetadataEntry create_entry(MetadataOpType::CreateSSTable, files, {});
     VERIFY_RESULT(state_machine.Apply(create_entry.Serialize()));
 
     // Delete one file
     std::vector<FileInfo> delete_files = {{"file2.sst", 2000}};
-    TableMetadataEntry delete_entry(MetadataOpType::DeleteSSTable, delete_files);
+    TableMetadataEntry delete_entry(MetadataOpType::DeleteSSTable, {}, delete_files);
     VERIFY_RESULT(state_machine.Apply(delete_entry.Serialize()));
 
     // Verify state
@@ -295,6 +296,55 @@ TEST_F(TableMetadataTest, StateMachineStateSerialization) {
     // Verify level sizes
     EXPECT_EQ(recovered.GetLevelSize(0), 3000);
     EXPECT_EQ(recovered.GetLevelSize(1), 3000);
+}
+
+TEST_F(TableMetadataTest, StateMachineCompactionOperations) {
+    TableMetadataStateMachine state_machine(fs_, "test_metadata");
+    VERIFY_RESULT(state_machine.Open());
+
+    // Create initial files in L0
+    std::vector<FileInfo> l0_files = {FileInfo("L0_1.sst", 1000, 0, "a", "m"), FileInfo("L0_2.sst", 2000, 0, "n", "z")};
+    TableMetadataEntry create_entry(MetadataOpType::CreateSSTable, l0_files);
+    VERIFY_RESULT(state_machine.Apply(create_entry.Serialize()));
+
+    // Verify initial state
+    EXPECT_EQ(state_machine.GetSSTableFiles(0).size(), 2);
+    EXPECT_EQ(state_machine.GetTotalSize(), 3000);
+    EXPECT_EQ(state_machine.GetLevelSize(0), 3000);
+
+    // Simulate compaction: L0 files are compacted into a single L1 file
+    std::vector<FileInfo> compacted_file = {
+        FileInfo("L1_1.sst", 2800, 1, "a", "z")  // Slightly smaller due to compaction
+    };
+    TableMetadataEntry compact_entry(MetadataOpType::CompactFiles, compacted_file, l0_files);
+    VERIFY_RESULT(state_machine.Apply(compact_entry.Serialize()));
+
+    // Verify state after compaction
+    EXPECT_EQ(state_machine.GetSSTableFiles(0).size(), 0);  // L0 files should be gone
+    EXPECT_EQ(state_machine.GetSSTableFiles(1).size(), 1);  // One L1 file
+    EXPECT_EQ(state_machine.GetTotalSize(), 2800);          // New total size
+    EXPECT_EQ(state_machine.GetLevelSize(0), 0);            // L0 is empty
+    EXPECT_EQ(state_machine.GetLevelSize(1), 2800);         // L1 has the compacted file
+
+    // Verify the compacted file details
+    const auto& l1_files = state_machine.GetSSTableFiles(1);
+    ASSERT_EQ(l1_files.size(), 1);
+    EXPECT_EQ(l1_files[0].name, "L1_1.sst");
+    EXPECT_EQ(l1_files[0].size, 2800);
+    EXPECT_EQ(l1_files[0].level, 1);
+    EXPECT_EQ(l1_files[0].smallest_key, "a");
+    EXPECT_EQ(l1_files[0].largest_key, "z");
+
+    // Create new state machine and verify state is recovered correctly
+    TableMetadataStateMachine recovered(fs_, "test_metadata");
+    VERIFY_RESULT(recovered.Open());
+
+    // Verify recovered state matches
+    EXPECT_EQ(recovered.GetSSTableFiles(0).size(), 0);
+    EXPECT_EQ(recovered.GetSSTableFiles(1).size(), 1);
+    EXPECT_EQ(recovered.GetTotalSize(), 2800);
+    EXPECT_EQ(recovered.GetLevelSize(0), 0);
+    EXPECT_EQ(recovered.GetLevelSize(1), 2800);
 }
 
 }  // namespace pond::kv

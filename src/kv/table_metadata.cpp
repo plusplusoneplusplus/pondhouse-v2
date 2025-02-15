@@ -13,20 +13,51 @@ common::DataChunk TableMetadataEntry::Serialize() const {
     return chunk;
 }
 
-void TableMetadataEntry::Serialize(common::DataChunk& chunk) const {
-    // Serialize operation type
-    chunk.Append(reinterpret_cast<const uint8_t*>(&op_type_), sizeof(op_type_));
-
-    // Serialize number of files
-    uint32_t num_files = files_.size();
+void TableMetadataEntry::SerializeFiles(const std::vector<FileInfo>& files, common::DataChunk& chunk) const {
+    uint32_t num_files = files.size();
     chunk.Append(reinterpret_cast<const uint8_t*>(&num_files), sizeof(num_files));
 
-    // Serialize each file info
-    for (const auto& file : files_) {
+    for (const auto& file : files) {
         common::DataChunk file_chunk;
         file.Serialize(file_chunk);
         chunk.AppendSizedDataChunk(file_chunk);
     }
+}
+
+void TableMetadataEntry::Serialize(common::DataChunk& chunk) const {
+    // Serialize operation type
+    chunk.Append(reinterpret_cast<const uint8_t*>(&op_type_), sizeof(op_type_));
+
+    // Serialize added files
+    SerializeFiles(added_files_, chunk);
+
+    // Serialize deleted files
+    SerializeFiles(deleted_files_, chunk);
+}
+
+bool TableMetadataEntry::DeserializeFiles(const uint8_t*& ptr, std::vector<FileInfo>& files) {
+    uint32_t num_files;
+    std::memcpy(&num_files, ptr, sizeof(num_files));
+    ptr += sizeof(num_files);
+
+    // Read each file info
+    files.clear();
+    for (uint32_t i = 0; i < num_files; i++) {
+        FileInfo file;
+        size_t file_size;
+        std::memcpy(&file_size, ptr, sizeof(file_size));
+        ptr += sizeof(file_size);
+
+        common::DataChunk file_chunk(ptr, file_size);
+        if (!file.Deserialize(file_chunk)) {
+            return false;
+        }
+        files.push_back(file);
+
+        ptr += file_size;
+    }
+
+    return true;
 }
 
 bool TableMetadataEntry::Deserialize(const common::DataChunk& chunk) {
@@ -42,25 +73,12 @@ bool TableMetadataEntry::Deserialize(const common::DataChunk& chunk) {
     ptr += sizeof(op_type_);
 
     // Read number of files
-    uint32_t num_files;
-    std::memcpy(&num_files, ptr, sizeof(num_files));
-    ptr += sizeof(num_files);
+    if (!DeserializeFiles(ptr, added_files_)) {
+        return false;
+    }
 
-    // Read each file info
-    files_.clear();
-    for (uint32_t i = 0; i < num_files; i++) {
-        FileInfo file;
-        size_t file_size;
-        std::memcpy(&file_size, ptr, sizeof(file_size));
-        ptr += sizeof(file_size);
-
-        common::DataChunk file_chunk(ptr, file_size);
-        if (!file.Deserialize(file_chunk)) {
-            return false;
-        }
-        files_.push_back(file);
-
-        ptr += file_size;
+    if (!DeserializeFiles(ptr, deleted_files_)) {
+        return false;
     }
 
     return true;
@@ -77,6 +95,35 @@ common::Result<std::unique_ptr<common::ISerializable>> TableMetadataEntry::Deser
     return common::Result<std::unique_ptr<common::ISerializable>>::success(std::make_unique<TableMetadataEntry>(entry));
 }
 
+void TableMetadataStateMachine::AddFiles(const std::vector<FileInfo>& files) {
+    for (const auto& file : files) {
+        if (sstable_files_.find(file.level) == sstable_files_.end()) {
+            sstable_files_[file.level] = {};
+        }
+
+        sstable_files_[file.level].push_back(file);
+        level_sizes_[file.level] += file.size;
+        total_size_ += file.size;
+    }
+}
+
+void TableMetadataStateMachine::RemoveFiles(const std::vector<FileInfo>& files) {
+    for (const auto& file : files) {
+        auto& level_files = sstable_files_[file.level];
+        auto it = std::find_if(
+            level_files.begin(), level_files.end(), [&](const FileInfo& f) { return f.name == file.name; });
+        if (it != level_files.end()) {
+            level_sizes_[file.level] -= it->size;
+            total_size_ -= it->size;
+            level_files.erase(it);
+        }
+        if (level_files.empty()) {
+            sstable_files_.erase(file.level);
+            level_sizes_.erase(file.level);
+        }
+    }
+}
+
 common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChunk& entry_data) {
     TableMetadataEntry entry;
     if (!entry.Deserialize(entry_data)) {
@@ -86,37 +133,21 @@ common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChu
 
     switch (entry.op_type()) {
         case MetadataOpType::CreateSSTable:
-            for (const auto& file : entry.files()) {
-                if (sstable_files_.find(file.level) == sstable_files_.end()) {
-                    sstable_files_[file.level] = {};
-                }
-
-                sstable_files_[file.level].push_back(file);
-                level_sizes_[file.level] += file.size;
-                total_size_ += file.size;
-            }
+            AddFiles(entry.added_files());
             break;
         case MetadataOpType::DeleteSSTable:
-            for (const auto& file : entry.files()) {
-                auto& level_files = sstable_files_[file.level];
-                auto it = std::find_if(
-                    level_files.begin(), level_files.end(), [&](const FileInfo& f) { return f.name == file.name; });
-                if (it != level_files.end()) {
-                    level_sizes_[file.level] -= it->size;
-                    total_size_ -= it->size;
-                    level_files.erase(it);
-                }
-                if (level_files.empty()) {
-                    sstable_files_.erase(file.level);
-                    level_sizes_.erase(file.level);
-                }
-            }
+            RemoveFiles(entry.deleted_files());
             break;
+        case MetadataOpType::CompactFiles:
+            AddFiles(entry.added_files());
+            RemoveFiles(entry.deleted_files());
+            break;
+
         case MetadataOpType::UpdateStats:
             // For UpdateStats, we expect files to contain per-level size information
             total_size_ = 0;
             level_sizes_.clear();
-            for (const auto& file : entry.files()) {
+            for (const auto& file : entry.added_files()) {
                 level_sizes_[file.level] = file.size;
                 total_size_ += file.size;
             }

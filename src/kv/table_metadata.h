@@ -18,6 +18,7 @@ enum class MetadataOpType {
     UpdateStats,    // Update table statistics
     FlushMemTable,  // MemTable flushed to SSTable
     RotateWAL,      // WAL rotation
+    CompactFiles,   // Compact files
 };
 
 // File information for metadata operations
@@ -119,21 +120,27 @@ struct FileInfo : public common::ISerializable {
 class TableMetadataEntry : public common::WalEntry {
 public:
     TableMetadataEntry() = default;
-    TableMetadataEntry(MetadataOpType op_type, const std::vector<FileInfo>& files = {})
-        : op_type_(op_type), files_(files) {}
+    TableMetadataEntry(MetadataOpType op_type,
+                       const std::vector<FileInfo>& added_files = {},
+                       const std::vector<FileInfo>& deleted_files = {})
+        : op_type_(op_type), added_files_(added_files), deleted_files_(deleted_files) {}
 
     common::DataChunk Serialize() const override;
     void Serialize(common::DataChunk& chunk) const override;
     bool Deserialize(const common::DataChunk& chunk) override;
     common::Result<std::unique_ptr<common::ISerializable>> DeserializeAsUniquePtr(
         const common::DataChunk& chunk) const override;
+    void SerializeFiles(const std::vector<FileInfo>& files, common::DataChunk& chunk) const;
+    bool DeserializeFiles(const uint8_t*& ptr, std::vector<FileInfo>& files);
 
     MetadataOpType op_type() const { return op_type_; }
-    const std::vector<FileInfo>& files() const { return files_; }
+    const std::vector<FileInfo>& added_files() const { return added_files_; }
+    const std::vector<FileInfo>& deleted_files() const { return deleted_files_; }
 
 private:
     MetadataOpType op_type_{MetadataOpType::CreateSSTable};
-    std::vector<FileInfo> files_;
+    std::vector<FileInfo> added_files_;
+    std::vector<FileInfo> deleted_files_;
 };
 
 // Table metadata state machine
@@ -166,6 +173,10 @@ public:
     common::Result<void> ApplyEntry(const common::DataChunk& entry_data) override;
     common::Result<common::DataChunk> GetCurrentState() override;
     common::Result<void> RestoreState(const common::DataChunk& state_data) override;
+
+private:
+    void AddFiles(const std::vector<FileInfo>& files);
+    void RemoveFiles(const std::vector<FileInfo>& files);
 
 private:
     std::unordered_map<size_t, std::vector<FileInfo>> sstable_files_;  // Level -> Files mapping
