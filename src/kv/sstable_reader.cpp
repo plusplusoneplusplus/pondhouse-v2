@@ -39,7 +39,7 @@ public:
         }
 
         // Read and validate header
-        auto header_result = fs_->Read(file_handle_, 0, FileHeader::kHeaderSize);
+        auto header_result = ReadBlock(0, FileHeader::kHeaderSize);
         if (!header_result.ok()) {
             return common::Result<bool>::failure(header_result.error());
         }
@@ -49,7 +49,7 @@ public:
         }
 
         // Read and validate footer
-        auto footer_result = fs_->Read(file_handle_, file_size_ - Footer::kFooterSize, Footer::kFooterSize);
+        auto footer_result = ReadBlock(file_size_ - Footer::kFooterSize, Footer::kFooterSize);
         if (!footer_result.ok()) {
             return common::Result<bool>::failure(footer_result.error());
         }
@@ -62,7 +62,7 @@ public:
         if (footer_.metadata_block_offset > 0) {
             // Read metadata block
             auto metadata_size = footer_.metadata_block_size;
-            auto read_result = fs_->Read(file_handle_, footer_.metadata_block_offset, metadata_size);
+            auto read_result = ReadBlock(footer_.metadata_block_offset, metadata_size);
             if (!read_result.ok()) {
                 return common::Result<bool>::failure(read_result.error());
             }
@@ -83,7 +83,6 @@ public:
             }
 
             // Parse metadata sections
-
             if (!stats_.Deserialize(metadata_data.Data(), metadata_footer.stats_size)) {
                 return common::Result<bool>::failure(common::ErrorCode::SSTableInvalid, "Invalid metadata stats");
             }
@@ -97,7 +96,7 @@ public:
         // Read filter block if present
         if (footer_.filter_block_offset > 0) {
             auto filter_size = footer_.filter_block_size;
-            auto read_result = fs_->Read(file_handle_, footer_.filter_block_offset, filter_size);
+            auto read_result = ReadBlock(footer_.filter_block_offset, filter_size);
             if (!read_result.ok()) {
                 return common::Result<bool>::failure(read_result.error());
             }
@@ -106,7 +105,7 @@ public:
 
         // Read index block
         auto index_size = footer_.index_block_size;
-        auto read_result = fs_->Read(file_handle_, footer_.index_block_offset, index_size);
+        auto read_result = ReadBlock(footer_.index_block_offset, index_size);
         if (!read_result.ok()) {
             return common::Result<bool>::failure(read_result.error());
         }
@@ -139,7 +138,7 @@ public:
         }
 
         // Read first data block to get the smallest key
-        auto first_block_result = fs_->Read(file_handle_, index_entries_[0].offset, index_entries_[0].size);
+        auto first_block_result = ReadBlock(index_entries_[0].offset, index_entries_[0].size);
         if (!first_block_result.ok()) {
             return common::Result<bool>::failure(first_block_result.error());
         }
@@ -156,13 +155,12 @@ public:
         }
 
         smallest_key_ = smallest.user_key();
-
         largest_key_ = index_entries_.back().largest_key;
 
         // Read bloom filter if present
         if (header_.HasFilter() && footer_.filter_block_offset > 0) {
             auto filter_size = footer_.index_block_offset - footer_.filter_block_offset;
-            auto filter_result = fs_->Read(file_handle_, footer_.filter_block_offset, filter_size);
+            auto filter_result = ReadBlock(footer_.filter_block_offset, filter_size);
             if (!filter_result.ok()) {
                 return common::Result<bool>::failure(filter_result.error());
             }
@@ -213,7 +211,7 @@ public:
         }
 
         // Read data block
-        auto block_result = fs_->Read(file_handle_, it->offset, it->size);
+        auto block_result = ReadBlock(it->offset, it->size);
         if (!block_result.ok()) {
             return common::Result<common::DataChunk>::failure(block_result.error());
         }
@@ -360,6 +358,8 @@ public:
         return usage + kEstimatedBufferSize;
     }
 
+    size_t GetBytesRead() const { return bytes_read_.load(std::memory_order_relaxed); }
+
     struct IndexEntry {
         std::string largest_key;
         uint64_t offset;
@@ -373,6 +373,7 @@ public:
     common::FileHandle file_handle_{common::INVALID_HANDLE};
     size_t file_size_;
     size_t num_entries_;
+    std::atomic<size_t> bytes_read_{0};  // Track total bytes read from disk
 
     // File components
     FileHeader header_;
@@ -391,6 +392,19 @@ public:
     // Metadata block data
     common::DataChunk filter_data_;
     common::DataChunk index_data_;
+
+    common::Result<common::DataChunk> ReadBlock(uint64_t offset, uint32_t size) {
+        if (file_handle_ == common::INVALID_HANDLE) {
+            return common::Result<common::DataChunk>::failure(common::ErrorCode::InvalidOperation,
+                                                              "File handle is invalid");
+        }
+
+        auto result = fs_->Read(file_handle_, offset, size);
+        if (result.ok()) {
+            bytes_read_ += size;  // Track bytes read
+        }
+        return result;
+    }
 
 private:
     static constexpr size_t kEstimatedBufferSize = 32 * 1024;  // 32KB for internal buffers
@@ -444,6 +458,10 @@ common::Result<std::unique_ptr<common::BloomFilter>> SSTableReader::GetBloomFilt
 
 size_t SSTableReader::GetMemoryUsage() const {
     return impl_->GetMemoryUsage();
+}
+
+size_t SSTableReader::GetBytesRead() const {
+    return impl_->GetBytesRead();
 }
 
 class SSTableReader::Iterator::Impl {
@@ -571,8 +589,7 @@ public:
 private:
     bool LoadBlock(size_t block_idx) {
         const auto& index_entry = reader_->impl_->index_entries_[block_idx];
-        auto block_result =
-            reader_->impl_->fs_->Read(reader_->impl_->file_handle_, index_entry.offset, index_entry.size);
+        auto block_result = reader_->impl_->ReadBlock(index_entry.offset, index_entry.size);
 
         if (!block_result.ok()) {
             valid_ = false;

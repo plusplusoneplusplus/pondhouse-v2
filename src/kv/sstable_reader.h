@@ -124,6 +124,13 @@ public:
     [[nodiscard]] size_t GetMemoryUsage() const;
 
     /**
+     * Get the total number of bytes read from disk.
+     * This includes all data read during Get operations and scans.
+     * @return The total number of bytes read
+     */
+    [[nodiscard]] size_t GetBytesRead() const;
+
+    /**
      * Iterator provides sequential access to entries in the SSTable.
      * Supports seeking to specific keys and sequential scanning.
      */

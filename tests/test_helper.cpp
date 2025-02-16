@@ -1,5 +1,7 @@
 #include "test_helper.h"
 
+using namespace pond::common;
+
 namespace pond::test {
 
 std::string GenerateKey(int i, int width) {
@@ -16,8 +18,8 @@ std::vector<std::string> GenerateKeys(int count, int width) {
     return keys;
 }
 
-TestKvEntry GenerateTestKvEntry(const std::string& key, common::HybridTime version, const std::string& value) {
-    return TestKvEntry{key, version, common::DataChunk::FromString(value)};
+TestKvEntry GenerateTestKvEntry(const std::string& key, HybridTime version, const std::string& value) {
+    return TestKvEntry{key, version, DataChunk::FromString(value)};
 }
 
 }  // namespace pond::test

@@ -1,0 +1,12 @@
+---
+description: Test case rule
+globs: *_test.cpp
+---
+When generating test cases, make sure add comments like below
+
+//
+// Test Setup:
+//      <<what are the preparations of the test cases, less than 5 lines>>
+// Test Result:
+//      <<what are the result expectations, less than 5 lines>>
+//

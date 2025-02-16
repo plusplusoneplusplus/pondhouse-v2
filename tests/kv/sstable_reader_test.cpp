@@ -39,6 +39,15 @@ protected:
     std::shared_ptr<MemoryAppendOnlyFileSystem> fs_;
 };
 
+//
+// Test Setup:
+//      Create a simple SSTable with basic key-value pairs
+//      Perform basic read operations and metadata checks
+// Test Result:
+//      Verify basic read operations work correctly
+//      Confirm metadata values are accurate
+//      Check error handling for non-existent keys
+//
 TEST_F(SSTableReaderTest, BasicOperations) {
     // Create test data
     std::vector<std::pair<std::string, std::string>> entries = {
@@ -72,6 +81,14 @@ TEST_F(SSTableReaderTest, BasicOperations) {
     EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
 }
 
+//
+// Test Setup:
+//      Create an SSTable with bloom filter enabled
+//      Test key existence checks using the filter
+// Test Result:
+//      Verify bloom filter correctly identifies existing keys
+//      Confirm bloom filter correctly filters non-existent keys
+//
 TEST_F(SSTableReaderTest, WithBloomFilter) {
     // Create test data with bloom filter
     std::vector<std::pair<std::string, std::string>> entries = {
@@ -97,6 +114,14 @@ TEST_F(SSTableReaderTest, WithBloomFilter) {
     EXPECT_FALSE(result.value());
 }
 
+//
+// Test Setup:
+//      Create an SSTable with large values (1MB each)
+//      Test reading and verifying large value integrity
+// Test Result:
+//      Verify large values are read correctly
+//      Confirm data integrity for large values
+//
 TEST_F(SSTableReaderTest, LargeValues) {
     // Create test data with large values
     std::string large_value(1024 * 1024, 'x');  // 1MB value
@@ -120,6 +145,14 @@ TEST_F(SSTableReaderTest, LargeValues) {
     }
 }
 
+//
+// Test Setup:
+//      Create an SSTable and test key range boundaries
+//      Attempt reads outside the key range
+// Test Result:
+//      Verify keys outside range return NotFound
+//      Confirm proper error handling at range boundaries
+//
 TEST_F(SSTableReaderTest, KeyRange) {
     std::vector<std::pair<std::string, std::string>> entries = {
         {"key1", "value1"},
@@ -141,6 +174,14 @@ TEST_F(SSTableReaderTest, KeyRange) {
     EXPECT_EQ(result2.error().code(), ErrorCode::NotFound);
 }
 
+//
+// Test Setup:
+//      Test error handling for invalid file operations
+//      Attempt operations on non-existent files
+// Test Result:
+//      Verify proper error handling for missing files
+//      Confirm operations on unopened readers fail appropriately
+//
 TEST_F(SSTableReaderTest, InvalidFile) {
     // Try to open non-existent file
     SSTableReader reader(fs_, "nonexistent.sst");
@@ -152,6 +193,14 @@ TEST_F(SSTableReaderTest, InvalidFile) {
     EXPECT_EQ(result.error().code(), ErrorCode::InvalidOperation);
 }
 
+//
+// Test Setup:
+//      Create an SSTable with empty keys and values
+//      Test handling of edge cases with empty data
+// Test Result:
+//      Verify empty keys can be stored and retrieved
+//      Confirm empty values are handled correctly
+//
 TEST_F(SSTableReaderTest, EmptyKeyValue) {
     // Create test data with empty key/value
     std::vector<std::pair<std::string, std::string>> entries = {
@@ -175,6 +224,14 @@ TEST_F(SSTableReaderTest, EmptyKeyValue) {
     EXPECT_EQ(result2.value().Size(), 0);
 }
 
+//
+// Test Setup:
+//      Create an SSTable with multiple data blocks
+//      Test random access across block boundaries
+// Test Result:
+//      Verify reads across multiple blocks work correctly
+//      Confirm data integrity for cross-block reads
+//
 TEST_F(SSTableReaderTest, MultipleBlocks) {
     // Create enough entries to span multiple blocks
     std::vector<std::pair<std::string, std::string>> entries;
@@ -198,6 +255,14 @@ TEST_F(SSTableReaderTest, MultipleBlocks) {
     }
 }
 
+//
+// Test Setup:
+//      Create multiple readers for the same SSTable
+//      Test concurrent read operations
+// Test Result:
+//      Verify concurrent reads work correctly
+//      Confirm data consistency across readers
+//
 TEST_F(SSTableReaderTest, WriterReaderInteraction) {
     // Create a writer
     SSTableWriter writer(fs_, "test.sst");
@@ -232,6 +297,14 @@ TEST_F(SSTableReaderTest, WriterReaderInteraction) {
     }
 }
 
+//
+// Test Setup:
+//      Create an SSTable with many entries
+//      Test concurrent read operations under stress
+// Test Result:
+//      Verify data consistency under stress
+//      Confirm no data corruption during concurrent access
+//
 TEST_F(SSTableReaderTest, WriterReaderStress) {
     const int kNumEntries = 1000;
     const int kValueSize = 1024;  // 1KB values
@@ -620,6 +693,14 @@ TEST_F(SSTableReaderTest, IteratorSTLCompatibility) {
     }
 }
 
+//
+// Test Setup:
+//      Create an SSTable with multiple versions of keys
+//      Test iteration with different timestamps
+// Test Result:
+//      Verify correct version visibility at different timestamps
+//      Confirm proper version ordering during iteration
+//
 TEST_F(SSTableReaderTest, IteratorWithTimestamp) {
     // Create test data with multiple versions of keys
     SSTableWriter writer(fs_, "test.sst");
@@ -738,6 +819,14 @@ TEST_F(SSTableReaderTest, IteratorWithTimestamp) {
     }
 }
 
+//
+// Test Setup:
+//      Create an SSTable with multiple versions of keys at different timestamps
+//      Test seeking behavior with different timestamps
+// Test Result:
+//      Verify correct version visibility at different timestamps
+//      Confirm proper seek behavior for existing and non-existent keys
+//
 TEST_F(SSTableReaderTest, IteratorSeekWithTimestamp) {
     // Create test data with multiple versions
     SSTableWriter writer(fs_, "test.sst");
@@ -803,6 +892,14 @@ TEST_F(SSTableReaderTest, IteratorSeekWithTimestamp) {
     }
 }
 
+//
+// Test Setup:
+//      Create an SSTable with multiple versions of keys
+//      Test range-based for loop iteration
+// Test Result:
+//      Verify correct iteration over latest versions
+//      Confirm proper handling of multiple versions in for-loop
+//
 TEST_F(SSTableReaderTest, IteratorRangeBasedForWithTimestamp) {
     // Create test data with multiple versions
     SSTableWriter writer(fs_, "test.sst");
@@ -835,6 +932,151 @@ TEST_F(SSTableReaderTest, IteratorRangeBasedForWithTimestamp) {
         }
         EXPECT_EQ(count, expected.size());
     }
+}
+
+//
+// Test Setup:
+//      Create an SSTable with multiple entries and a bloom filter
+//      Read data in various patterns to track bytes read
+// Test Result:
+//      Verify bytes read increases appropriately for different operations
+//      Confirm bloom filter prevents unnecessary disk reads
+//
+TEST_F(SSTableReaderTest, BytesReadTracking) {
+    // Create test data with bloom filter
+    std::vector<std::pair<std::string, std::string>> entries;
+
+    std::string value(1024 * 10,
+                      'x');  // 10KB value, to make sure we have multiple blocks (default data block size is 4MB)
+
+    for (int i = 0; i < 500; i++) {
+        entries.push_back({pond::test::GenerateKey(i), value + std::to_string(i)});
+    }
+
+    createTestSSTable("test.sst", entries, true);
+
+    // Test bytes read during Open()
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+    size_t bytes_after_open = reader.GetBytesRead();
+    EXPECT_GT(bytes_after_open, 0) << "Should have read some bytes during Open()";
+
+    // Test bytes read during Get()
+    auto result1 = reader.Get(entries[0].first);
+    VERIFY_RESULT(result1);
+    size_t bytes_after_first_get = reader.GetBytesRead();
+    EXPECT_GT(bytes_after_first_get, bytes_after_open) << "Should have read more bytes after Get()";
+
+    // Test bytes read during MayContain() (should not increase since we have filter data in memory)
+    VERIFY_RESULT(reader.MayContain(entries[1].first));
+    size_t bytes_after_may_contain = reader.GetBytesRead();
+    EXPECT_EQ(bytes_after_may_contain, bytes_after_first_get)
+        << "MayContain should not read more bytes with loaded filter";
+
+    // Test bytes read during iteration
+    {
+        auto iter = reader.NewIterator();
+        iter->SeekToFirst();
+        size_t bytes_after_seek = reader.GetBytesRead();
+        EXPECT_GT(bytes_after_seek, bytes_after_may_contain) << "Should have read more bytes after seek";
+
+        while (iter->Valid()) {
+            iter->Next();
+        }
+        size_t bytes_after_iteration = reader.GetBytesRead();
+        EXPECT_GT(bytes_after_iteration, bytes_after_seek) << "Should have read more bytes after full iteration";
+    }
+}
+
+//
+// Test Setup:
+//      Create an SSTable without a bloom filter
+//      Perform read operations and track bytes read
+// Test Result:
+//      Verify bytes read increases for disk operations
+//      Confirm MayContain doesn't affect bytes read without filter
+//
+TEST_F(SSTableReaderTest, BytesReadTrackingWithoutFilter) {
+    // Create test data without bloom filter
+    std::vector<std::pair<std::string, std::string>> entries = {
+        {"key1", "value1"},
+        {"key2", "value2"},
+        {"key3", "value3"},
+    };
+    createTestSSTable("test.sst", entries, false);
+
+    // Test bytes read during Open()
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+    size_t bytes_after_open = reader.GetBytesRead();
+    EXPECT_GT(bytes_after_open, 0) << "Should have read some bytes during Open()";
+
+    // Test bytes read during Get()
+    auto result1 = reader.Get("key1");
+    VERIFY_RESULT(result1);
+    size_t bytes_after_first_get = reader.GetBytesRead();
+    EXPECT_GT(bytes_after_first_get, bytes_after_open) << "Should have read more bytes after Get()";
+
+    // Test bytes read during MayContain() (should not increase since we don't have a filter)
+    VERIFY_RESULT(reader.MayContain("key2"));
+    size_t bytes_after_may_contain = reader.GetBytesRead();
+    EXPECT_EQ(bytes_after_may_contain, bytes_after_first_get) << "MayContain should not read more bytes without filter";
+}
+
+//
+// Test Setup:
+//      Create an SSTable with large values (64KB each) across multiple blocks
+//      Compare sequential vs random access patterns
+// Test Result:
+//      Verify random access reads more bytes than sequential
+//      Confirm block-level read granularity
+//
+TEST_F(SSTableReaderTest, BytesReadTrackingLargeValues) {
+    // Create test data with large values to ensure multiple blocks
+    std::string large_value(64 * 1024, 'x');  // 64KB value to ensure multiple blocks
+    std::vector<std::pair<std::string, std::string>> entries;
+    for (int i = 0; i < 100; i++) {  // 100 entries * 64KB = ~6.4MB total
+        entries.push_back({pond::test::GenerateKey(i), large_value + std::to_string(i)});
+    }
+    createTestSSTable("test.sst", entries, true);
+
+    // Test bytes read during Open()
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+    size_t bytes_after_open = reader.GetBytesRead();
+    EXPECT_GT(bytes_after_open, 0) << "Should have read some bytes during Open()";
+
+    // Test bytes read for sequential vs random access
+    size_t sequential_bytes = 0;
+    {
+        auto iter = reader.NewIterator();
+        for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
+            // Just iterate to read all blocks sequentially
+        }
+        sequential_bytes = reader.GetBytesRead() - bytes_after_open;
+    }
+
+    // Create new reader for random access test
+    SSTableReader random_reader(fs_, "test.sst");
+    VERIFY_RESULT(random_reader.Open());
+    size_t random_bytes = 0;
+    {
+        // Read all entries in random order
+        std::vector<std::string> keys;
+        for (const auto& entry : entries) {
+            keys.push_back(entry.first);
+        }
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::shuffle(keys.begin(), keys.end(), gen);
+        for (const auto& key : keys) {
+            VERIFY_RESULT(random_reader.Get(key));
+        }
+        random_bytes = random_reader.GetBytesRead() - bytes_after_open;
+    }
+
+    EXPECT_GT(random_bytes, sequential_bytes)
+        << "Random access should read more bytes than sequential access due to block reads";
 }
 
 }  // namespace
