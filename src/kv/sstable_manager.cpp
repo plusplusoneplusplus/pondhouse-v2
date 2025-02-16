@@ -20,6 +20,28 @@ std::string MakeSSTableFileName(size_t level, size_t file_number) {
 
 class SSTableManager::Impl {
 public:
+    // Helper functions for merging SSTables
+    struct MergeContext {
+        std::vector<std::shared_ptr<SSTableReader>> readers;
+        std::vector<std::unique_ptr<SSTableReader::Iterator>> iterators;
+        std::vector<FileInfo> source_files;
+        std::string smallest_key;
+        std::string largest_key;
+        size_t total_size = 0;
+        size_t total_entries = 0;
+
+        // Delete copy constructor and assignment
+        MergeContext(const MergeContext&) = delete;
+        MergeContext& operator=(const MergeContext&) = delete;
+
+        // Default constructor
+        MergeContext() = default;
+
+        // Move constructor and assignment
+        MergeContext(MergeContext&&) = default;
+        MergeContext& operator=(MergeContext&&) = default;
+    };
+
     Impl(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
          const std::string& base_dir,
          std::shared_ptr<TableMetadataStateMachine> metadata_state_machine,
@@ -198,7 +220,209 @@ public:
         return stats_;
     }
 
+    common::Result<FileInfo> MergeL0ToL1() {
+        using ReturnType = common::Result<FileInfo>;
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+
+        // Check if there are L0 files to merge
+        if (sstables_.empty() || sstables_[0].empty()) {
+            return ReturnType::failure(common::ErrorCode::InvalidOperation, "No L0 files to merge");
+        }
+
+        // Initialize merge context
+        auto ctx_result = InitializeMergeContext(0, sstables_[0]);
+        if (!ctx_result.ok()) {
+            return ReturnType::failure(ctx_result.error());
+        }
+        auto ctx = std::move(ctx_result).value();
+
+        // Create L1 SSTable writer
+        auto writer_result = CreateSSTableWriter(1, next_file_number_, *ctx);
+        if (!writer_result.ok()) {
+            return ReturnType::failure(writer_result.error());
+        }
+        auto [writer, file_number] = std::move(writer_result).value();
+
+        // Merge files
+        auto merge_result = MergeIterators(*writer, ctx->iterators);
+        if (!merge_result.ok()) {
+            return ReturnType::failure(merge_result.error());
+        }
+
+        // Finalize SSTable
+        auto finish_result = writer->Finish();
+        if (!finish_result.ok()) {
+            return ReturnType::failure(finish_result.error());
+        }
+
+        // Update state and return result
+        return UpdateStateAfterMerge(0, 1, file_number, GetTablePath(1, file_number), *ctx);
+    }
+
 private:
+    // Initialize merge context with readers and iterators
+    [[nodiscard]] common::Result<std::unique_ptr<MergeContext>> InitializeMergeContext(
+        size_t level, const std::vector<size_t>& file_numbers) {
+        auto ctx = std::make_unique<MergeContext>();
+
+        for (const auto& file_number : file_numbers) {
+            std::string file_path = GetTablePath(level, file_number);
+            auto reader = std::make_shared<SSTableReader>(fs_, file_path);
+            auto open_result = reader->Open();
+            if (!open_result.ok()) {
+                return common::Result<std::unique_ptr<MergeContext>>::failure(open_result.error());
+            }
+
+            ctx->readers.push_back(reader);
+
+            // Track key range
+            if (ctx->smallest_key.empty() || reader->GetSmallestKey() < ctx->smallest_key) {
+                ctx->smallest_key = reader->GetSmallestKey();
+            }
+            if (ctx->largest_key.empty() || reader->GetLargestKey() > ctx->largest_key) {
+                ctx->largest_key = reader->GetLargestKey();
+            }
+
+            // Track file info for metadata
+            ctx->source_files.push_back(FileInfo(MakeSSTableFileName(level, file_number),
+                                                 reader->GetFileSize(),
+                                                 level,
+                                                 reader->GetSmallestKey(),
+                                                 reader->GetLargestKey()));
+
+            ctx->total_size += reader->GetFileSize();
+            ctx->total_entries += reader->GetEntryCount();
+        }
+
+        // Create iterators for all files
+        for (const auto& reader : ctx->readers) {
+            ctx->iterators.push_back(reader->NewIterator());
+            ctx->iterators.back()->SeekToFirst();
+        }
+
+        return common::Result<std::unique_ptr<MergeContext>>::success(std::move(ctx));
+    }
+
+    // Create a new SSTable writer with the given parameters
+    [[nodiscard]] common::Result<std::pair<std::unique_ptr<SSTableWriter>, size_t>> CreateSSTableWriter(
+        size_t target_level, size_t& next_file_number, const MergeContext& ctx) {
+        size_t file_number = next_file_number++;
+        std::string file_path = GetTablePath(target_level, file_number);
+        auto writer = std::make_unique<SSTableWriter>(fs_, file_path);
+
+        // Enable bloom filter with combined entry count
+        writer->EnableFilter(ctx.total_entries);
+
+        return common::Result<std::pair<std::unique_ptr<SSTableWriter>, size_t>>::success(
+            std::make_pair(std::move(writer), file_number));
+    }
+
+    // Merge multiple SSTable iterators into a single SSTable
+    [[nodiscard]] common::Result<bool> MergeIterators(
+        SSTableWriter& writer, std::vector<std::unique_ptr<SSTableReader::Iterator>>& iterators) {
+        while (true) {
+            // Find smallest key among all iterators
+            std::string current_key;
+            for (const auto& iter : iterators) {
+                if (iter->Valid()) {
+                    if (current_key.empty() || iter->key() < current_key) {
+                        current_key = iter->key();
+                    }
+                }
+            }
+
+            if (current_key.empty()) {
+                break;  // All iterators exhausted
+            }
+
+            // Find latest version for current key
+            common::HybridTime latest_version = common::MinHybridTime();
+            common::DataChunk latest_value;
+
+            for (const auto& iter : iterators) {
+                if (iter->Valid() && iter->key() == current_key) {
+                    if (iter->version() > latest_version) {
+                        latest_version = iter->version();
+                        latest_value = iter->value();
+                    }
+                }
+            }
+
+            // Write to target file
+            auto add_result = writer.Add(current_key, latest_value, latest_version);
+            if (!add_result.ok()) {
+                return common::Result<bool>::failure(add_result.error());
+            }
+
+            // Advance iterators past current key
+            for (auto& iter : iterators) {
+                if (iter->Valid() && iter->key() == current_key) {
+                    iter->Next();
+                }
+            }
+        }
+
+        return common::Result<bool>::success(true);
+    }
+
+    // Update metadata and in-memory state after merge
+    [[nodiscard]] common::Result<FileInfo> UpdateStateAfterMerge(size_t source_level,
+                                                                 size_t target_level,
+                                                                 size_t file_number,
+                                                                 const std::string& file_path,
+                                                                 const MergeContext& ctx) {
+        // Get file size
+        auto file_result = fs_->OpenFile(file_path);
+        if (!file_result.ok()) {
+            return common::Result<FileInfo>::failure(file_result.error());
+        }
+        auto size_result = fs_->Size(file_result.value());
+        if (!size_result.ok()) {
+            return common::Result<FileInfo>::failure(size_result.error());
+        }
+
+        // Create metadata for the new file
+        FileInfo new_file(MakeSSTableFileName(target_level, file_number),
+                          size_result.value(),
+                          target_level,
+                          ctx.smallest_key,
+                          ctx.largest_key);
+
+        // Update metadata state machine
+        TableMetadataEntry compact_entry(MetadataOpType::CompactFiles, {new_file}, ctx.source_files);
+        auto track_result = metadata_state_machine_->Apply(compact_entry.Serialize());
+        if (!track_result.ok()) {
+            return common::Result<FileInfo>::failure(track_result.error());
+        }
+
+        // Update in-memory state
+        CreateLevelIfNotExists(target_level);
+        sstables_[target_level].push_back(file_number);
+        sstables_[source_level].clear();  // Remove source files
+
+        // Update metadata cache
+        auto reader = std::make_shared<SSTableReader>(fs_, file_path);
+        auto open_result = reader->Open();
+        if (open_result.ok()) {
+            auto filter_result = reader->GetBloomFilter();
+            if (filter_result.ok()) {
+                metadata_cache_.AddTable(target_level,
+                                         file_number,
+                                         SSTableMetadata(file_path,
+                                                         ctx.smallest_key,
+                                                         ctx.largest_key,
+                                                         size_result.value(),
+                                                         std::move(filter_result).value(),
+                                                         ctx.total_entries));
+            }
+        }
+
+        // Update statistics
+        UpdateStats();
+
+        return common::Result<FileInfo>::success(new_file);
+    }
+
     std::string GetTablePath(size_t level, size_t file_number) const {
         return base_dir_ + "/" + MakeSSTableFileName(level, file_number);
     }
@@ -322,6 +546,10 @@ common::Result<bool> SSTableManager::StartCompaction() {
 
 common::Result<bool> SSTableManager::StopCompaction() {
     return common::Result<bool>::failure(common::ErrorCode::NotImplemented, "Compaction not implemented");
+}
+
+common::Result<FileInfo> SSTableManager::MergeL0ToL1() {
+    return impl_->MergeL0ToL1();
 }
 
 }  // namespace pond::kv

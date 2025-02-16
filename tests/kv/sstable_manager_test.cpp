@@ -506,4 +506,141 @@ TEST_F(SSTableManagerTest, MetadataStateCheckpointing) {
     }
 }
 
+TEST_F(SSTableManagerTest, MergeL0ToL1) {
+    // Create multiple L0 files with overlapping ranges and versions
+    std::vector<FileInfo> l0_files;
+
+    // First L0 file: keys 0-100
+    {
+        auto memtable = CreateTestMemTable(0, 100);
+        auto result = manager_->CreateSSTableFromMemTable(*memtable);
+        VERIFY_RESULT(result);
+        l0_files.push_back(result.value());
+    }
+
+    // Second L0 file: keys 50-150 (overlapping with first file)
+    {
+        auto memtable = CreateTestMemTable(50, 100);
+        auto result = manager_->CreateSSTableFromMemTable(*memtable);
+        VERIFY_RESULT(result);
+        l0_files.push_back(result.value());
+    }
+
+    // Third L0 file: keys 100-200 (overlapping with second file)
+    {
+        auto memtable = CreateTestMemTable(100, 100);
+        auto result = manager_->CreateSSTableFromMemTable(*memtable);
+        VERIFY_RESULT(result);
+        l0_files.push_back(result.value());
+    }
+
+    // Verify initial state
+    auto initial_stats = manager_->GetStats();
+    EXPECT_EQ(initial_stats.files_per_level[0], 3);  // Three L0 files
+    EXPECT_EQ(initial_stats.total_files, 3);
+    EXPECT_GT(initial_stats.total_bytes, 0);
+
+    // Verify L0 files in metadata state machine
+    const auto& l0_metadata = metadata_state_machine_->GetSSTableFiles(0);
+    EXPECT_EQ(l0_metadata.size(), 3);
+    EXPECT_EQ(l0_metadata[0].level, 0);
+    EXPECT_EQ(l0_metadata[1].level, 0);
+    EXPECT_EQ(l0_metadata[2].level, 0);
+
+    // Merge L0 to L1
+    auto merge_result = manager_->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Verify the merged file info
+    const auto& merged_file = merge_result.value();
+    EXPECT_EQ(merged_file.level, 1);
+    EXPECT_EQ(merged_file.smallest_key, pond::test::GenerateKey(0));   // First key overall
+    EXPECT_EQ(merged_file.largest_key, pond::test::GenerateKey(199));  // Last key overall
+    EXPECT_GT(merged_file.size, 0);
+
+    // Verify final state
+    auto final_stats = manager_->GetStats();
+    EXPECT_EQ(final_stats.files_per_level[0], 0);  // No L0 files
+    EXPECT_EQ(final_stats.files_per_level[1], 1);  // One L1 file
+    EXPECT_EQ(final_stats.total_files, 1);
+    EXPECT_LT(final_stats.total_bytes, initial_stats.total_bytes);  // Size should be smaller due to deduplication
+
+    // Verify metadata state
+    const auto& l0_files_after = metadata_state_machine_->GetSSTableFiles(0);
+    EXPECT_TRUE(l0_files_after.empty());
+    const auto& l1_files = metadata_state_machine_->GetSSTableFiles(1);
+    ASSERT_EQ(l1_files.size(), 1);
+    EXPECT_EQ(l1_files[0].level, 1);
+    EXPECT_EQ(l1_files[0].smallest_key, pond::test::GenerateKey(0));
+    EXPECT_EQ(l1_files[0].largest_key, pond::test::GenerateKey(199));
+
+    // Verify all keys are still accessible with correct values
+    for (size_t i = 0; i < 200; i++) {
+        std::string key = pond::test::GenerateKey(i);
+        auto result = manager_->Get(key);
+        VERIFY_RESULT_MSG(result, "Failed to read key: " + key);
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+    }
+
+    // Verify non-existent keys still return NotFound
+    auto not_found_result = manager_->Get(pond::test::GenerateKey(200));
+    EXPECT_FALSE(not_found_result.ok());
+    EXPECT_EQ(not_found_result.error().code(), ErrorCode::NotFound);
+
+    // Try to merge again with no L0 files
+    auto empty_merge_result = manager_->MergeL0ToL1();
+    EXPECT_FALSE(empty_merge_result.ok());
+    EXPECT_EQ(empty_merge_result.error().code(), ErrorCode::InvalidOperation);
+}
+
+// Add a test for merging with updates to existing keys
+TEST_F(SSTableManagerTest, MergeL0ToL1WithUpdates) {
+    // Create first L0 file with initial values
+    {
+        auto memtable = std::make_unique<MemTable>();
+        for (size_t i = 0; i < 100; i++) {
+            std::string key = pond::test::GenerateKey(i);
+            auto record = std::make_unique<Record>(schema_);
+            record->Set(0, "old_value" + std::to_string(i));
+            ASSERT_TRUE(memtable->Put(key, record->Serialize(), 1 /* older version */).ok());
+        }
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    // Create second L0 file with updates to some keys
+    {
+        auto memtable = std::make_unique<MemTable>();
+        for (size_t i = 0; i < 50; i++) {  // Update first half of keys
+            std::string key = pond::test::GenerateKey(i);
+            auto record = std::make_unique<Record>(schema_);
+            record->Set(0, "new_value" + std::to_string(i));
+            ASSERT_TRUE(memtable->Put(key, record->Serialize(), 2 /* newer version */).ok());
+        }
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    // Verify initial state
+    auto initial_stats = manager_->GetStats();
+    EXPECT_EQ(initial_stats.files_per_level[0], 2);
+
+    // Merge L0 to L1
+    auto merge_result = manager_->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Verify final state
+    auto final_stats = manager_->GetStats();
+    EXPECT_EQ(final_stats.files_per_level[0], 0);
+    EXPECT_EQ(final_stats.files_per_level[1], 1);
+
+    // Verify merged data has correct versions
+    for (size_t i = 0; i < 100; i++) {
+        std::string key = pond::test::GenerateKey(i);
+        auto result = manager_->Get(key);
+        VERIFY_RESULT_MSG(result, "Failed to read key: " + key);
+        std::string expected_value = i < 50 ? "new_value" + std::to_string(i)   // Updated keys
+                                            : "old_value" + std::to_string(i);  // Non-updated keys
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), expected_value);
+    }
+}
+
 }  // namespace

@@ -126,6 +126,16 @@ public:
      */
     [[nodiscard]] common::Result<bool> StopCompaction();
 
+    /**
+     * Merge L0 SSTables into a single L1 SSTable.
+     * This is a manual compaction operation that:
+     * 1. Takes all L0 SSTables
+     * 2. Merges them into a single L1 SSTable
+     * 3. Updates metadata to reflect the changes
+     * @return Result<FileInfo> containing information about the new L1 SSTable
+     */
+    [[nodiscard]] common::Result<FileInfo> MergeL0ToL1();
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
