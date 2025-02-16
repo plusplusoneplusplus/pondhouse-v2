@@ -643,4 +643,136 @@ TEST_F(SSTableManagerTest, MergeL0ToL1WithUpdates) {
     }
 }
 
+// Edge test cases for MergeL0ToL1
+TEST_F(SSTableManagerTest, MergeL0ToL1_SingleFile) {
+    auto memtable = CreateTestMemTable(0, 1);
+    VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+
+    auto merge_result = manager_->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+    EXPECT_EQ(merge_result.value().level, 1);
+}
+
+TEST_F(SSTableManagerTest, MergeL0ToL1_ManySmallFiles) {
+    auto new_manager = std::make_unique<SSTableManager>(fs_, "many_files_test", metadata_state_machine_);
+    // Create 100 L0 files with single entry each
+    for (size_t i = 0; i < 100; i++) {
+        auto memtable = std::make_unique<MemTable>();
+        auto record = std::make_unique<Record>(schema_);
+        record->Set(0, std::string("value") + std::to_string(i));  // Explicitly use std::string
+        ASSERT_TRUE(memtable->Put("key" + std::to_string(i), record->Serialize(), 0).ok());
+        VERIFY_RESULT(new_manager->CreateSSTableFromMemTable(*memtable));
+    }
+
+    auto merge_result = new_manager->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Verify all keys can be retrieved
+    for (size_t i = 0; i < 100; i++) {
+        auto get_result = new_manager->Get("key" + std::to_string(i));
+        VERIFY_RESULT(get_result);
+        EXPECT_EQ(ToRecord(get_result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+    }
+}
+
+TEST_F(SSTableManagerTest, MergeL0ToL1_VersionEdgeCases) {
+    auto new_manager = std::make_unique<SSTableManager>(fs_, "version_test", metadata_state_machine_);
+
+    // Create files with min and max version numbers
+    auto memtable1 = std::make_unique<MemTable>();
+    auto record1 = std::make_unique<Record>(schema_);
+    record1->Set(0, std::string("oldest"));  // Explicitly use std::string
+    ASSERT_TRUE(memtable1->Put("version_key", record1->Serialize(), 0).ok());
+    VERIFY_RESULT(new_manager->CreateSSTableFromMemTable(*memtable1));
+
+    auto memtable2 = std::make_unique<MemTable>();
+    auto record2 = std::make_unique<Record>(schema_);
+    record2->Set(0, std::string("newest"));  // Explicitly use std::string
+    ASSERT_TRUE(memtable2->Put("version_key", record2->Serialize(), std::numeric_limits<uint64_t>::max()).ok());
+    VERIFY_RESULT(new_manager->CreateSSTableFromMemTable(*memtable2));
+
+    auto merge_result = new_manager->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Verify newest version is retrieved
+    auto get_result = new_manager->Get("version_key");
+    VERIFY_RESULT(get_result);
+    EXPECT_EQ(ToRecord(get_result.value())->Get<std::string>(0).value(), "newest");
+}
+
+TEST_F(SSTableManagerTest, MergeL0ToL1_SpecialCharKeys) {
+    auto new_manager = std::make_unique<SSTableManager>(fs_, "special_chars_test", metadata_state_machine_);
+    auto memtable = std::make_unique<MemTable>();
+    std::vector<std::string> special_keys = {
+        std::string("\0key", 4),  // Null character
+        "\n",                     // Newline
+        "\t",                     // Tab
+        "\xFF\xFE",               // UTF-16 BOM
+        "key\xFF",                // High ASCII
+        "../../path"              // Path traversal attempt
+    };
+
+    for (const auto& key : special_keys) {
+        auto record = std::make_unique<Record>(schema_);
+        record->Set(0, std::string("special"));  // Explicitly use std::string
+        ASSERT_TRUE(memtable->Put(key, record->Serialize(), 0).ok());
+    }
+    VERIFY_RESULT(new_manager->CreateSSTableFromMemTable(*memtable));
+
+    auto merge_result = new_manager->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Verify all special keys can be retrieved
+    for (const auto& key : special_keys) {
+        auto get_result = new_manager->Get(key);
+        VERIFY_RESULT(get_result);
+        EXPECT_EQ(ToRecord(get_result.value())->Get<std::string>(0).value(), "special");
+    }
+}
+
+// Error test cases for MergeL0ToL1
+TEST_F(SSTableManagerTest, MergeL0ToL1_NoL0Files) {
+    auto empty_manager = std::make_unique<SSTableManager>(fs_, "empty_error_test", metadata_state_machine_);
+    auto result = empty_manager->MergeL0ToL1();
+    EXPECT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code(), ErrorCode::InvalidOperation);
+}
+
+TEST_F(SSTableManagerTest, MergeL0ToL1_CorruptedFile) {
+    // Create a valid L0 file first
+    auto memtable = CreateTestMemTable(0, 1);
+    VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+
+    // Corrupt the file by appending invalid data
+    auto file_result = fs_->OpenFile("test_db/L0_1.sst");
+    VERIFY_RESULT(file_result);
+    std::string corrupt_data = "corrupted data";
+    VERIFY_RESULT(fs_->Append(file_result.value(),
+                              DataChunk(reinterpret_cast<const uint8_t*>(corrupt_data.data()), corrupt_data.size())));
+
+    // Attempt merge should fail gracefully
+    auto merge_result = manager_->MergeL0ToL1();
+    EXPECT_FALSE(merge_result.ok());
+}
+
+TEST_F(SSTableManagerTest, MergeL0ToL1_FSError) {
+    // Create a new manager with a filesystem that will fail operations
+    auto error_fs = std::make_shared<MemoryAppendOnlyFileSystem>();
+    auto error_manager = std::make_unique<SSTableManager>(error_fs, "error_test", metadata_state_machine_);
+
+    // Create a valid L0 file
+    auto memtable = std::make_unique<MemTable>();
+    auto record = std::make_unique<Record>(schema_);
+    record->Set(0, std::string("test_value"));  // Explicitly use std::string
+    VERIFY_RESULT(memtable->Put("test_key", record->Serialize(), 0));
+    VERIFY_RESULT(error_manager->CreateSSTableFromMemTable(*memtable));
+
+    // Delete the L1 directory to simulate filesystem errors during merge
+    VERIFY_RESULT(error_fs->DeleteDirectory("error_test", true /* recursive */));
+
+    // Merging should fail due to filesystem error
+    auto merge_result = error_manager->MergeL0ToL1();
+    EXPECT_FALSE(merge_result.ok());
+}
+
 }  // namespace

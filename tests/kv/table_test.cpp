@@ -54,6 +54,32 @@ TEST_F(TableTest, BasicOperations) {
     EXPECT_FALSE(get_result.ok());
 }
 
+TEST_F(TableTest, InvalidOperations) {
+    // Test empty key
+    auto record = CreateTestRecord(1, "test", "value");
+    auto result = table_->Put("", std::move(record));
+    VERIFY_ERROR_CODE(result, common::ErrorCode::InvalidArgument);
+
+    // Test Get with empty key
+    auto get_result = table_->Get("");
+    VERIFY_ERROR_CODE(get_result, common::ErrorCode::InvalidArgument);
+
+    // Test Delete with empty key
+    auto delete_result = table_->Delete("");
+    VERIFY_ERROR_CODE(delete_result, common::ErrorCode::InvalidArgument);
+
+    // Test UpdateColumn with empty key
+    common::DataChunk new_value(reinterpret_cast<const uint8_t*>("new_value"), 9);
+    auto update_result = table_->UpdateColumn("", "value", new_value);
+    VERIFY_ERROR_CODE(update_result, common::ErrorCode::InvalidArgument);
+
+    // Test UpdateColumn with non-existent column
+    record = CreateTestRecord(1, "test", "value");
+    VERIFY_RESULT(table_->Put("key1", std::move(record)));
+    update_result = table_->UpdateColumn("key1", "non_existent_column", new_value);
+    VERIFY_ERROR_CODE(update_result, common::ErrorCode::InvalidArgument);
+}
+
 TEST_F(TableTest, UpdateColumn) {
     // Put a record
     auto record = CreateTestRecord(1, "test", "value");

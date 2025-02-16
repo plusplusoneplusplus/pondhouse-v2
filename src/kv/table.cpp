@@ -14,6 +14,10 @@ common::Result<void> Table::Put(const Key& key, std::unique_ptr<Record> record) 
         return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Schema mismatch");
     }
 
+    if (key.empty()) {
+        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Key cannot be empty");
+    }
+
     // Serialize record to DataChunk
     auto data_result = SerializeRecord(*record);
     if (!data_result.ok()) {
@@ -25,6 +29,11 @@ common::Result<void> Table::Put(const Key& key, std::unique_ptr<Record> record) 
 }
 
 common::Result<std::unique_ptr<Record>> Table::Get(const Key& key) const {
+    if (key.empty()) {
+        return common::Result<std::unique_ptr<Record>>::failure(common::ErrorCode::InvalidArgument,
+                                                                "Key cannot be empty");
+    }
+
     // Use base class Get
     auto result = KvTable::Get(key);
     if (!result.ok()) {
@@ -36,6 +45,10 @@ common::Result<std::unique_ptr<Record>> Table::Get(const Key& key) const {
 }
 
 common::Result<void> Table::Delete(const Key& key) {
+    if (key.empty()) {
+        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Key cannot be empty");
+    }
+
     // Use base class Delete
     return KvTable::Delete(key);
 }
@@ -43,6 +56,18 @@ common::Result<void> Table::Delete(const Key& key) {
 common::Result<void> Table::UpdateColumn(const Key& key,
                                          const std::string& column_name,
                                          const common::DataChunk& value) {
+    if (key.empty()) {
+        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Key cannot be empty");
+    }
+
+    if (column_name.empty()) {
+        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Column name cannot be empty");
+    }
+
+    if (value.Empty()) {
+        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Value cannot be empty");
+    }
+
     // Get current record
     auto record_result = Get(key);
     if (!record_result.ok()) {

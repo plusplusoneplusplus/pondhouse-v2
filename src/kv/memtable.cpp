@@ -22,6 +22,14 @@ common::Result<void> MemTable::Put(const Key& key, const RawValue& value, uint64
                                              "Value size exceeds maximum allowed size");
     }
 
+    if (key.empty()) {
+        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Key cannot be empty");
+    }
+
+    if (value.Empty()) {
+        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Value cannot be empty");
+    }
+
     if (ShouldFlush()) {
         return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "MemTable is full");
     }
@@ -58,6 +66,10 @@ common::Result<void> MemTable::Put(const Key& key, const RawValue& value, uint64
 common::Result<MemTable::RawValue> MemTable::Get(const Key& key, common::HybridTime read_time) const {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    if (key.empty()) {
+        return common::Result<RawValue>::failure(common::ErrorCode::InvalidArgument, "Key cannot be empty");
+    }
+
     Value version_chain;
     if (!table_->Get(key, version_chain)) {
         return common::Result<RawValue>::failure(common::ErrorCode::NotFound, "Key not found");
@@ -73,6 +85,10 @@ common::Result<MemTable::RawValue> MemTable::Get(const Key& key, common::HybridT
 
 common::Result<MemTable::RawValue> MemTable::GetForTxn(const Key& key, uint64_t txn_id) const {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    if (key.empty()) {
+        return common::Result<RawValue>::failure(common::ErrorCode::InvalidArgument, "Key cannot be empty");
+    }
 
     Value version_chain;
     if (!table_->Get(key, version_chain)) {

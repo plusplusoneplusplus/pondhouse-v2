@@ -196,6 +196,28 @@ TEST_F(MemTableTest, MemoryUsage) {
     }
 }
 
+TEST_F(MemTableTest, InvalidOperations) {
+    auto txn_id = NextTxnId();
+    auto value = CreateTestValue("test_value");
+
+    // Test empty key
+    auto result = table->Put("", value, txn_id);
+    VERIFY_ERROR_CODE(result, common::ErrorCode::InvalidArgument);
+
+    // Test Get with empty key
+    auto get_result = table->Get("", common::HybridTimeManager::Instance().Current());
+    VERIFY_ERROR_CODE(get_result, common::ErrorCode::InvalidArgument);
+
+    // Test GetForTxn with empty key
+    auto txn_get_result = table->GetForTxn("", txn_id);
+    VERIFY_ERROR_CODE(txn_get_result, common::ErrorCode::InvalidArgument);
+
+    // Test null value
+    auto null_value = common::DataChunk(nullptr, 0);
+    result = table->Put("key1", null_value, txn_id);
+    VERIFY_ERROR_CODE(result, common::ErrorCode::InvalidArgument);
+}
+
 TEST_F(MemTableTest, IteratorBasicOperations) {
     // Insert some entries
     std::vector<std::string> keys = {"key1", "key2", "key3", "key4", "key5"};
