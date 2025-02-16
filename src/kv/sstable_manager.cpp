@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <mutex>
 #include <shared_mutex>
+#include <unordered_set>
 
 #include "common/error.h"
 #include "common/log.h"
@@ -29,6 +30,11 @@ public:
         std::string largest_key;
         size_t total_size = 0;
         size_t total_entries = 0;
+
+        // New fields for overlapping L1 files
+        std::vector<std::shared_ptr<SSTableReader>> l1_readers;
+        std::vector<std::unique_ptr<SSTableReader::Iterator>> l1_iterators;
+        std::vector<FileInfo> l1_source_files;
 
         // Delete copy constructor and assignment
         MergeContext(const MergeContext&) = delete;
@@ -244,7 +250,7 @@ public:
         auto [writer, file_number] = std::move(writer_result).value();
 
         // Merge files
-        auto merge_result = MergeIterators(*writer, ctx->iterators);
+        auto merge_result = MergeIterators(*writer, ctx->iterators, ctx->l1_iterators);
         if (!merge_result.ok()) {
             return ReturnType::failure(merge_result.error());
         }
@@ -254,6 +260,11 @@ public:
         if (!finish_result.ok()) {
             return ReturnType::failure(finish_result.error());
         }
+
+        // Combine source files from both L0 and L1
+        std::vector<FileInfo> all_source_files;
+        all_source_files.insert(all_source_files.end(), ctx->source_files.begin(), ctx->source_files.end());
+        all_source_files.insert(all_source_files.end(), ctx->l1_source_files.begin(), ctx->l1_source_files.end());
 
         // Update state and return result
         return UpdateStateAfterMerge(0, 1, file_number, GetTablePath(1, file_number), *ctx);
@@ -265,6 +276,7 @@ private:
         size_t level, const std::vector<size_t>& file_numbers) {
         auto ctx = std::make_unique<MergeContext>();
 
+        // Initialize source level files (L0)
         for (const auto& file_number : file_numbers) {
             std::string file_path = GetTablePath(level, file_number);
             auto reader = std::make_shared<SSTableReader>(fs_, file_path);
@@ -294,10 +306,60 @@ private:
             ctx->total_entries += reader->GetEntryCount();
         }
 
-        // Create iterators for all files
+        // Create iterators for source files
         for (const auto& reader : ctx->readers) {
             ctx->iterators.push_back(reader->NewIterator());
             ctx->iterators.back()->SeekToFirst();
+        }
+
+        // If merging L0 to L1, find overlapping L1 files
+        if (level == 0 && sstables_.size() > 1) {
+            for (const auto& l1_file_number : sstables_[1]) {
+                auto metadata = metadata_cache_.GetMetadata(1, l1_file_number);
+                if (!metadata) {
+                    continue;
+                }
+
+                const auto& meta = *metadata.value();
+                // Check if L1 file overlaps with our key range
+                if (meta.largest_key < ctx->smallest_key || meta.smallest_key > ctx->largest_key) {
+                    continue;  // No overlap
+                }
+
+                // Add overlapping L1 file
+                std::string l1_file_path = GetTablePath(1, l1_file_number);
+                auto l1_reader = std::make_shared<SSTableReader>(fs_, l1_file_path);
+                auto l1_open_result = l1_reader->Open();
+                if (!l1_open_result.ok()) {
+                    return common::Result<std::unique_ptr<MergeContext>>::failure(l1_open_result.error());
+                }
+
+                ctx->l1_readers.push_back(l1_reader);
+                ctx->l1_source_files.push_back(FileInfo(MakeSSTableFileName(1, l1_file_number),
+                                                        l1_reader->GetFileSize(),
+                                                        1,
+                                                        l1_reader->GetSmallestKey(),
+                                                        l1_reader->GetLargestKey()));
+
+                ctx->total_size += l1_reader->GetFileSize();
+                ctx->total_entries += l1_reader->GetEntryCount();
+            }
+
+            // Create iterators for L1 files
+            for (const auto& reader : ctx->l1_readers) {
+                ctx->l1_iterators.push_back(reader->NewIterator());
+                ctx->l1_iterators.back()->SeekToFirst();
+            }
+        }
+
+        // Update key range to include L1 files
+        for (const auto& l1_reader : ctx->l1_readers) {
+            if (ctx->smallest_key.empty() || l1_reader->GetSmallestKey() < ctx->smallest_key) {
+                ctx->smallest_key = l1_reader->GetSmallestKey();
+            }
+            if (ctx->largest_key.empty() || l1_reader->GetLargestKey() > ctx->largest_key) {
+                ctx->largest_key = l1_reader->GetLargestKey();
+            }
         }
 
         return common::Result<std::unique_ptr<MergeContext>>::success(std::move(ctx));
@@ -319,11 +381,24 @@ private:
 
     // Merge multiple SSTable iterators into a single SSTable
     [[nodiscard]] common::Result<bool> MergeIterators(
-        SSTableWriter& writer, std::vector<std::unique_ptr<SSTableReader::Iterator>>& iterators) {
+        SSTableWriter& writer,
+        std::vector<std::unique_ptr<SSTableReader::Iterator>>& iterators,
+        std::vector<std::unique_ptr<SSTableReader::Iterator>>& l1_iterators) {
         while (true) {
             // Find smallest key among all iterators
             std::string current_key;
+
+            // Check L0 iterators
             for (const auto& iter : iterators) {
+                if (iter->Valid()) {
+                    if (current_key.empty() || iter->key() < current_key) {
+                        current_key = iter->key();
+                    }
+                }
+            }
+
+            // Check L1 iterators
+            for (const auto& iter : l1_iterators) {
                 if (iter->Valid()) {
                     if (current_key.empty() || iter->key() < current_key) {
                         current_key = iter->key();
@@ -336,14 +411,27 @@ private:
             }
 
             // Find latest version for current key
-            common::HybridTime latest_version = common::MinHybridTime();
+            common::HybridTime latest_version = common::InvalidHybridTime();
             common::DataChunk latest_value;
 
+            // Check L0 iterators first (they have newer versions)
             for (const auto& iter : iterators) {
                 if (iter->Valid() && iter->key() == current_key) {
                     if (iter->version() > latest_version) {
                         latest_version = iter->version();
                         latest_value = iter->value();
+                    }
+                }
+            }
+
+            // Check L1 iterators only if we haven't found a version in L0
+            if (latest_version == common::InvalidHybridTime()) {
+                for (const auto& iter : l1_iterators) {
+                    if (iter->Valid() && iter->key() == current_key) {
+                        if (iter->version() > latest_version) {
+                            latest_version = iter->version();
+                            latest_value = iter->value();
+                        }
                     }
                 }
             }
@@ -356,6 +444,11 @@ private:
 
             // Advance iterators past current key
             for (auto& iter : iterators) {
+                if (iter->Valid() && iter->key() == current_key) {
+                    iter->Next();
+                }
+            }
+            for (auto& iter : l1_iterators) {
                 if (iter->Valid() && iter->key() == current_key) {
                     iter->Next();
                 }
@@ -388,8 +481,13 @@ private:
                           ctx.smallest_key,
                           ctx.largest_key);
 
+        // Combine all source files (both L0 and L1) that will be replaced
+        std::vector<FileInfo> all_source_files;
+        all_source_files.insert(all_source_files.end(), ctx.source_files.begin(), ctx.source_files.end());
+        all_source_files.insert(all_source_files.end(), ctx.l1_source_files.begin(), ctx.l1_source_files.end());
+
         // Update metadata state machine
-        TableMetadataEntry compact_entry(MetadataOpType::CompactFiles, {new_file}, ctx.source_files);
+        TableMetadataEntry compact_entry(MetadataOpType::CompactFiles, {new_file}, all_source_files);
         auto track_result = metadata_state_machine_->Apply(compact_entry.Serialize());
         if (!track_result.ok()) {
             return common::Result<FileInfo>::failure(track_result.error());
@@ -397,8 +495,34 @@ private:
 
         // Update in-memory state
         CreateLevelIfNotExists(target_level);
+
+        // Remove source L0 files
+        sstables_[source_level].clear();
+
+        // Remove merged L1 files and add the new one
+        if (!ctx.l1_source_files.empty()) {
+            // Create a set of L1 file numbers to remove
+            std::unordered_set<size_t> l1_files_to_remove;
+            for (const auto& file_info : ctx.l1_source_files) {
+                // Extract file number from name (format: L1_<number>.sst)
+                size_t pos = file_info.name.find('_');
+                if (pos != std::string::npos) {
+                    std::string number_str = file_info.name.substr(pos + 1);
+                    number_str = number_str.substr(0, number_str.length() - 4);  // Remove .sst
+                    l1_files_to_remove.insert(std::stoull(number_str));
+                }
+            }
+
+            // Remove old L1 files
+            auto& l1_files = sstables_[target_level];
+            l1_files.erase(
+                std::remove_if(
+                    l1_files.begin(), l1_files.end(), [&](size_t fn) { return l1_files_to_remove.count(fn) > 0; }),
+                l1_files.end());
+        }
+
+        // Add the new file
         sstables_[target_level].push_back(file_number);
-        sstables_[source_level].clear();  // Remove source files
 
         // Update metadata cache
         auto reader = std::make_shared<SSTableReader>(fs_, file_path);
@@ -416,6 +540,13 @@ private:
                                                          ctx.total_entries));
             }
         }
+
+        LOG_STATUS("Summary of merge: Old=(L0 files: %u, L1 files: %u). New=(file: %s, min_key: %s, max_key: %s)",
+                   ctx.source_files.size(),
+                   ctx.l1_source_files.size(),
+                   new_file.name.c_str(),
+                   new_file.smallest_key.c_str(),
+                   new_file.largest_key.c_str());
 
         // Update statistics
         UpdateStats();

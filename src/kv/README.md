@@ -523,6 +523,54 @@ if (iter->Valid()) {
 }
 ```
 
+## Compaction
+
+The storage engine implements a level-based compaction strategy to manage SSTable files and optimize read/write performance.
+
+### L0 to L1 Merge Strategy
+
+The primary compaction mechanism currently implemented is the L0 to L1 merge operation, which follows these principles:
+
+1. **Key Range Handling**
+   - L0 files may have overlapping key ranges
+   - L1 files must maintain non-overlapping key ranges
+   - When merging, overlapping L1 files are included in the merge
+
+2. **Version Management**
+   - Latest versions of keys are preserved during merges
+   - Version chains are maintained across compaction
+   - Timestamp-based version visibility is preserved
+
+3. **Merge Process**
+   - Multiple L0 files can be merged in a single operation
+   - Overlapping L1 files are detected and included
+   - Resulting L1 file has consolidated key ranges
+   - Automatic metadata tracking of file changes
+
+### Limitations
+
+1. **Compaction Triggers**
+   - Currently only supports manual triggering of L0 to L1 merges
+   - No automatic compaction based on file count or size
+   - No background compaction process
+
+2. **Level Management**
+   - Only L0 to L1 compaction is implemented
+   - No support for L1 to L2 or deeper level compactions
+   - No automatic level size management
+
+3. **Resource Usage**
+   - Memory usage during compaction is proportional to overlapping key ranges
+   - No rate limiting for compaction I/O
+   - No compaction job scheduling
+
+### Future Enhancements [Planned]
+1. Automatic compaction triggering based on level metrics
+2. Background compaction worker implementation
+3. Multi-level compaction support
+4. Resource usage controls and rate limiting
+5. Compaction job priority management
+
 ## KvTable
 
 The `KvTable` class provides a schema-agnostic key-value store interface that serves as the base storage engine. It manages:

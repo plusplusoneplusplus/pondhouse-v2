@@ -775,4 +775,344 @@ TEST_F(SSTableManagerTest, MergeL0ToL1_FSError) {
     EXPECT_FALSE(merge_result.ok());
 }
 
+TEST_F(SSTableManagerTest, MergeL0ToL1_WithOverlappingL1Files) {
+    // First create L1 files with non-overlapping ranges
+    std::vector<std::pair<size_t, size_t>> l1_ranges = {
+        {0, 100},    // L1_1: keys 0-99
+        {200, 300},  // L1_2: keys 200-299
+        {400, 500}   // L1_3: keys 400-499
+    };
+
+    // Create L1 files first
+    for (const auto& range : l1_ranges) {
+        auto memtable = CreateTestMemTable(range.first, range.second - range.first);
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+        // Move the file to L1 manually
+        auto merge_result = manager_->MergeL0ToL1();
+        VERIFY_RESULT(merge_result);
+    }
+
+    // Verify initial L1 state
+    auto initial_stats = manager_->GetStats();
+    EXPECT_EQ(initial_stats.files_per_level[1], 3);  // Three L1 files
+    EXPECT_EQ(initial_stats.files_per_level[0], 0);  // No L0 files
+
+    // Now create L0 files with ranges that overlap L1 files
+    std::vector<std::pair<size_t, size_t>> l0_ranges = {
+        {50, 150},  // Overlaps with first L1 file and gap
+        {400, 450}  // Overlaps with second and third L1 files
+    };
+
+    // Create L0 files with newer versions of some keys
+    for (const auto& range : l0_ranges) {
+        auto memtable = std::make_unique<MemTable>();
+        for (size_t i = range.first; i < range.second; i++) {
+            std::string key = pond::test::GenerateKey(i);
+            auto record = std::make_unique<Record>(schema_);
+            record->Set(0, "updated_value" + std::to_string(i));
+            VERIFY_RESULT(memtable->Put(key, record->Serialize(), 0 /* txn_id */));
+        }
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    // Verify L0 files were created
+    auto pre_merge_stats = manager_->GetStats();
+    EXPECT_EQ(pre_merge_stats.files_per_level[0], 2);  // Two L0 files
+    EXPECT_EQ(pre_merge_stats.files_per_level[1], 3);  // Three L1 files
+
+    // Perform merge
+    auto merge_result = manager_->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Verify post-merge state
+    auto post_merge_stats = manager_->GetStats();
+    EXPECT_EQ(post_merge_stats.files_per_level[0], 0);  // No L0 files
+    EXPECT_EQ(post_merge_stats.files_per_level[1], 1);  // Merged into one L1 file
+
+    // Verify data integrity - check both updated and non-updated keys
+    // 1. Keys that were updated in L0 should have new values
+    for (const auto& range : l0_ranges) {
+        for (size_t i = range.first; i < range.second; i++) {
+            auto result = manager_->Get(pond::test::GenerateKey(i));
+            VERIFY_RESULT_MSG(result, "Failed to read updated key: " + std::to_string(i));
+            EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "updated_value" + std::to_string(i))
+                << "Key " << i << " should have updated value";
+        }
+    }
+
+    // 2. Keys that were only in L1 should retain their original values
+    std::vector<size_t> non_updated_keys = {0, 25, 175, 350, 475};
+    for (size_t key : non_updated_keys) {
+        auto result = manager_->Get(pond::test::GenerateKey(key));
+        if (key < 100 || (key >= 200 && key < 300) || (key >= 400 && key < 500)) {
+            // Key should exist with original value
+            VERIFY_RESULT_MSG(result, "Failed to read non-updated key: " + std::to_string(key));
+            EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(key))
+                << "Key " << key << " should retain original value";
+        } else {
+            // Key should not exist
+            EXPECT_FALSE(result.ok()) << "Key " << key << " should not exist";
+            EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+        }
+    }
+}
+
+TEST_F(SSTableManagerTest, MergeL0ToL1_WithPartialOverlap) {
+    // Create an L1 file with keys 100-200
+    {
+        auto memtable = CreateTestMemTable(100, 101);  // Keys 100-200
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+        VERIFY_RESULT(manager_->MergeL0ToL1());  // Move to L1
+    }
+
+    // Create L0 files with partial overlap
+    std::vector<std::pair<size_t, size_t>> l0_ranges = {
+        {50, 150},  // Partial overlap with L1 (lower bound)
+        {175, 250}  // Partial overlap with L1 (upper bound)
+    };
+
+    for (const auto& range : l0_ranges) {
+        auto memtable = std::make_unique<MemTable>();
+        for (size_t i = range.first; i < range.second; i++) {
+            std::string key = pond::test::GenerateKey(i);
+            auto record = std::make_unique<Record>(schema_);
+            record->Set(0, "l0_value" + std::to_string(i));
+            ASSERT_TRUE(memtable->Put(key, record->Serialize(), 2 /* newer version */).ok());
+        }
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    // Perform merge
+    VERIFY_RESULT(manager_->MergeL0ToL1());
+
+    // Verify results
+    // 1. Keys before L1 range (50-99)
+    for (size_t i = 50; i < 100; i++) {
+        auto result = manager_->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT_MSG(result, "Failed to read key before L1 range: " + std::to_string(i));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "l0_value" + std::to_string(i));
+    }
+
+    // 2. Overlapping keys (100-150, 175-200) should have L0 values
+    std::vector<std::pair<size_t, size_t>> overlap_ranges = {{100, 150}, {175, 200}};
+    for (const auto& range : overlap_ranges) {
+        for (size_t i = range.first; i < range.second; i++) {
+            auto result = manager_->Get(pond::test::GenerateKey(i));
+            VERIFY_RESULT_MSG(result, "Failed to read overlapping key: " + std::to_string(i));
+            EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "l0_value" + std::to_string(i));
+        }
+    }
+
+    // 3. Non-overlapping L1 keys (151-174) should retain original values
+    for (size_t i = 151; i < 175; i++) {
+        auto result = manager_->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT_MSG(result, "Failed to read L1-only key: " + std::to_string(i));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+    }
+
+    // 4. Keys after L1 range (201-250)
+    for (size_t i = 201; i < 250; i++) {
+        auto result = manager_->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT_MSG(result, "Failed to read key after L1 range: " + std::to_string(i));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "l0_value" + std::to_string(i));
+    }
+
+    // verify the L1 file is removed
+    auto post_merge_files = metadata_state_machine_->GetSSTableFiles(1);
+    EXPECT_EQ(post_merge_files.size(), 1);
+}
+
+TEST_F(SSTableManagerTest, MergeL0ToL1_NoOverlappingL1Files) {
+    // Create L1 files with ranges that don't overlap with upcoming L0 files
+    std::vector<std::pair<size_t, size_t>> l1_ranges = {
+        {0, 100},   // L1_1: keys 0-99
+        {300, 400}  // L1_2: keys 300-399
+    };
+
+    for (const auto& range : l1_ranges) {
+        auto memtable = CreateTestMemTable(range.first, range.second - range.first);
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+        VERIFY_RESULT(manager_->MergeL0ToL1());
+    }
+
+    // verify the L1 file is generated
+    auto post_merge_files = metadata_state_machine_->GetSSTableFiles(1);
+    EXPECT_EQ(post_merge_files.size(), 2);
+
+    // Create L0 files in the gap between L1 files
+    auto memtable = CreateTestMemTable(150, 100);  // Keys 150-249
+    VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+
+    // Verify pre-merge state
+    auto pre_merge_stats = manager_->GetStats();
+    EXPECT_EQ(pre_merge_stats.files_per_level[0], 1);  // One L0 file
+    EXPECT_EQ(pre_merge_stats.files_per_level[1], 2);  // Two L1 files
+
+    // Perform merge
+    auto merge_result = manager_->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Verify post-merge state
+    auto post_merge_stats = manager_->GetStats();
+    EXPECT_EQ(post_merge_stats.files_per_level[0], 0);  // No L0 files
+    EXPECT_EQ(post_merge_stats.files_per_level[1], 3);  // Three L1 files
+
+    // Verify data integrity
+    // 1. Original L1 data should be unchanged
+    for (const auto& range : l1_ranges) {
+        for (size_t i = range.first; i < range.second; i++) {
+            auto result = manager_->Get(pond::test::GenerateKey(i));
+            VERIFY_RESULT_MSG(result, "Failed to read L1 key: " + std::to_string(i));
+            EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+        }
+    }
+
+    // 2. Merged L0 data should be accessible
+    for (size_t i = 150; i < 250; i++) {
+        auto result = manager_->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT_MSG(result, "Failed to read merged L0 key: " + std::to_string(i));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+    }
+
+    // 3. Gaps should still return NotFound
+    std::vector<size_t> gap_keys = {100, 149, 250, 299};
+    for (size_t key : gap_keys) {
+        auto result = manager_->Get(pond::test::GenerateKey(key));
+        EXPECT_FALSE(result.ok()) << "Key " << key << " should not exist";
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+    }
+}
+
+TEST_F(SSTableManagerTest, MergeL0ToL1_VerifyL1FileRemoval) {
+    // First create L1 files with specific file numbers we can track
+    std::vector<std::pair<size_t, size_t>> l1_ranges = {
+        {0, 100},    // L1_1
+        {200, 300},  // L1_2
+        {400, 500}   // L1_3
+    };
+
+    std::vector<FileInfo> l1_files;
+    for (const auto& range : l1_ranges) {
+        auto memtable = CreateTestMemTable(range.first, range.second - range.first);
+        auto create_result = manager_->CreateSSTableFromMemTable(*memtable);
+        VERIFY_RESULT(create_result);
+        l1_files.push_back(create_result.value());
+        VERIFY_RESULT(manager_->MergeL0ToL1());
+    }
+
+    // Create L0 file that overlaps with the second L1 file
+    auto memtable = std::make_unique<MemTable>();
+    for (size_t i = 150; i < 350; i++) {  // Overlaps with L1_2 and gaps
+        std::string key = pond::test::GenerateKey(i);
+        auto record = std::make_unique<Record>(schema_);
+        record->Set(0, "l0_value" + std::to_string(i));
+        ASSERT_TRUE(memtable->Put(key, record->Serialize(), 2 /* newer version */).ok());
+    }
+    VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+
+    // Get the L1 files before merge
+    auto pre_merge_files = metadata_state_machine_->GetSSTableFiles(1);
+    ASSERT_EQ(pre_merge_files.size(), 3);  // Should have all three L1 files
+
+    // Perform merge
+    auto merge_result = manager_->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Get the L1 files after merge
+    auto post_merge_files = metadata_state_machine_->GetSSTableFiles(1);
+
+    // Verify:
+    // 1. The overlapped L1 file (L1_2) is removed
+    // 2. Non-overlapping L1 files (L1_1 and L1_3) are preserved
+    // 3. A new L1 file is added
+    EXPECT_EQ(post_merge_files.size(), 3);  // 2 original + 1 new file
+
+    // Verify the specific files that should still exist
+    bool found_l1_1 = false, found_l1_3 = false;
+    for (const auto& file : post_merge_files) {
+        if (file.smallest_key == pond::test::GenerateKey(0) && file.largest_key == pond::test::GenerateKey(99)) {
+            found_l1_1 = true;
+        } else if (file.smallest_key == pond::test::GenerateKey(400)
+                   && file.largest_key == pond::test::GenerateKey(499)) {
+            found_l1_3 = true;
+        }
+    }
+    EXPECT_TRUE(found_l1_1) << "L1_1 file should still exist";
+    EXPECT_TRUE(found_l1_3) << "L1_3 file should still exist";
+
+    // Verify data integrity
+    // 1. Check L0's new values are preserved
+    for (size_t i = 150; i < 350; i++) {
+        auto result = manager_->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT_MSG(result, "Failed to read updated key: " + std::to_string(i));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "l0_value" + std::to_string(i));
+    }
+
+    // 2. Check non-overlapping L1 values are preserved
+    for (size_t i = 0; i < 100; i++) {
+        auto result = manager_->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT_MSG(result, "Failed to read L1_1 key: " + std::to_string(i));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+    }
+    for (size_t i = 400; i < 500; i++) {
+        auto result = manager_->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT_MSG(result, "Failed to read L1_3 key: " + std::to_string(i));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+    }
+}
+
+TEST_F(SSTableManagerTest, MergeL0ToL1_KeyRangeWithOverlap) {
+    // Create L1 file with keys 100-300
+    {
+        auto memtable = CreateTestMemTable(100, 201);  // Keys 100-300
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+        VERIFY_RESULT(manager_->MergeL0ToL1());  // Move to L1
+    }
+
+    // Create L0 file with keys 200-400 (partial overlap with L1)
+    {
+        auto memtable = CreateTestMemTable(200, 201);  // Keys 200-400
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    // Verify initial state
+    auto pre_merge_l1_files = metadata_state_machine_->GetSSTableFiles(1);
+    ASSERT_EQ(pre_merge_l1_files.size(), 1);
+    EXPECT_EQ(pre_merge_l1_files[0].smallest_key, pond::test::GenerateKey(100));
+    EXPECT_EQ(pre_merge_l1_files[0].largest_key, pond::test::GenerateKey(300));
+
+    // Perform merge
+    auto merge_result = manager_->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Verify the merged file's key range spans the entire range
+    auto post_merge_l1_files = metadata_state_machine_->GetSSTableFiles(1);
+    ASSERT_EQ(post_merge_l1_files.size(), 1);
+    EXPECT_EQ(post_merge_l1_files[0].smallest_key, pond::test::GenerateKey(100))
+        << "Smallest key should be from L1 file";
+    EXPECT_EQ(post_merge_l1_files[0].largest_key, pond::test::GenerateKey(400)) << "Largest key should be from L0 file";
+
+    // Verify data integrity across the entire range
+    // 1. Original L1-only range (100-199)
+    for (size_t i = 100; i < 200; i++) {
+        auto result = manager_->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT_MSG(result, "Failed to read L1-only key: " + std::to_string(i));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+    }
+
+    // 2. Overlapping range (200-300)
+    for (size_t i = 200; i <= 300; i++) {
+        auto result = manager_->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT_MSG(result, "Failed to read overlapping key: " + std::to_string(i));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+    }
+
+    // 3. L0-only range (301-400)
+    for (size_t i = 301; i <= 400; i++) {
+        auto result = manager_->Get(pond::test::GenerateKey(i));
+        VERIFY_RESULT_MSG(result, "Failed to read L0-only key: " + std::to_string(i));
+        EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value" + std::to_string(i));
+    }
+}
+
 }  // namespace

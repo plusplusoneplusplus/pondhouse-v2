@@ -93,10 +93,51 @@ The `SSTableManager` class manages the lifecycle and organization of SSTables wi
 - [x] Statistics tracking
 - [x] Directory recovery
 - [x] Multi-version support
+- [x] L0 to L1 merge implementation
+- [x] Key range overlap handling
+- [x] Version preservation during merge
 - [ ] Background compaction
+  - [ ] Compaction worker implementation
+  - [ ] Job queue management
+  - [ ] Progress tracking
+  - [ ] Error handling and recovery
 - [ ] Level size limits
+  - [ ] Size-based compaction triggers
+  - [ ] Level growth management
+  - [ ] Dynamic level count
 - [ ] Automatic compaction triggering
+  - [ ] L0 file count triggers
+  - [ ] Level size ratio triggers
+  - [ ] Write amplification control
 - [ ] Version garbage collection
+  - [ ] Obsolete version identification
+  - [ ] Safe version removal
+  - [ ] GC during compaction
+
+#### Compaction Tasks [NEW]
+1. Background Processing
+   - [ ] Implement CompactionWorker class
+   - [ ] Add job priority queue
+   - [ ] Add progress monitoring
+   - [ ] Implement graceful shutdown
+
+2. Multi-Level Support
+   - [ ] Implement L1 to L2 compaction
+   - [ ] Add level size ratio management
+   - [ ] Support dynamic level creation
+   - [ ] Add level-specific compaction strategies
+
+3. Resource Management
+   - [ ] Add I/O rate limiting
+   - [ ] Implement memory budget
+   - [ ] Add CPU usage controls
+   - [ ] Monitor disk space usage
+
+4. Metrics and Monitoring
+   - [ ] Track compaction statistics
+   - [ ] Monitor write amplification
+   - [ ] Track compaction latency
+   - [ ] Add progress reporting
 
 #### Usage Example
 ```cpp
