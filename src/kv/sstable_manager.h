@@ -12,6 +12,7 @@
 #include "common/data_chunk.h"
 #include "common/lru_cache.h"
 #include "common/result.h"
+#include "kv/compaction_metrics.h"
 #include "kv/memtable.h"
 #include "kv/sstable_cache.h"
 #include "kv/sstable_reader.h"
@@ -37,12 +38,14 @@ public:
         size_t level0_size_limit = 4;                 // Max number of L0 tables
         size_t level_size_multiplier = 10;            // Size multiplier between levels
         size_t target_file_size = 64 * 1024 * 1024;   // 64MB target SSTable size
+        size_t max_level_count = 7;                   // Maximum number of levels
 
         static Config Default() {
             return Config{.block_cache_size = 100 * 1024 * 1024,
                           .level0_size_limit = 4,
                           .level_size_multiplier = 10,
-                          .target_file_size = 64 * 1024 * 1024};
+                          .target_file_size = 64 * 1024 * 1024,
+                          .max_level_count = 7};
         }
     };
 
@@ -135,6 +138,10 @@ public:
      * @return Result<FileInfo> containing information about the new L1 SSTable
      */
     [[nodiscard]] common::Result<FileInfo> MergeL0ToL1();
+
+    // Compaction metrics
+    const CompactionMetrics& GetCompactionMetrics() const;
+    void ResetCompactionMetrics();
 
 private:
     class Impl;

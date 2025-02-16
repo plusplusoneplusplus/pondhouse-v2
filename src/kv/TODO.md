@@ -134,10 +134,63 @@ The `SSTableManager` class manages the lifecycle and organization of SSTables wi
    - [ ] Monitor disk space usage
 
 4. Metrics and Monitoring
-   - [ ] Track compaction statistics
-   - [ ] Monitor write amplification
-   - [ ] Track compaction latency
-   - [ ] Add progress reporting
+   - [ ] Compaction Statistics
+     - [ ] Number of compactions triggered (total and per-level)
+     - [ ] Total bytes compacted
+     - [ ] Number of files compacted (input and output)
+     - [ ] Average compaction size
+     - [ ] Compaction queue length
+     - [ ] Failed compaction count
+     - [ ] Compaction success rate
+
+   - [ ] Write Amplification Metrics
+     - [ ] Write amplification factor (bytes written / bytes ingested)
+     - [ ] Number of times each key is rewritten
+     - [ ] Size ratio between levels
+     - [ ] Bytes written per compaction
+     - [ ] Total bytes written by compaction vs user writes
+     - [ ] Level-specific write amplification
+
+   - [ ] Latency Metrics
+     - [ ] Average compaction duration
+     - [ ] Time spent in each compaction phase
+       - [ ] File selection time
+       - [ ] Read phase duration
+       - [ ] Merge phase duration
+       - [ ] Write phase duration
+     - [ ] Compaction queue wait time
+     - [ ] Time between compactions
+     - [ ] P95/P99 latency percentiles
+
+   - [ ] Progress Reporting
+     - [ ] Current compaction progress (percentage)
+     - [ ] Estimated time remaining
+     - [ ] Current phase of compaction
+     - [ ] Number of keys processed
+     - [ ] Bytes processed/remaining
+     - [ ] Current files being compacted
+
+   - [ ] Resource Usage Metrics
+     - [ ] Disk I/O during compaction
+       - [ ] Read IOPS and throughput
+       - [ ] Write IOPS and throughput
+     - [ ] Memory usage during compaction
+     - [ ] CPU utilization
+     - [ ] Temporary space usage
+
+   - [ ] Level-specific Metrics
+     - [ ] Size of each level
+     - [ ] Number of files per level
+     - [ ] Key range overlap in L0
+     - [ ] Space amplification per level
+     - [ ] Read amplification potential
+
+   - [ ] Health Metrics
+     - [ ] Compaction backlog
+     - [ ] L0 stall conditions
+     - [ ] Compaction priority scores
+     - [ ] Error rates and types
+     - [ ] Recovery time from stalls
 
 #### Usage Example
 ```cpp

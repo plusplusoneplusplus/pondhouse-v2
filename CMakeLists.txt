@@ -105,6 +105,7 @@ add_executable(
     tests/kv/sstable_writer_test.cpp
     tests/kv/sstable_reader_test.cpp
     tests/kv/versioned_value_test.cpp
+    tests/kv/compaction_metrics_test.cpp
     tests/common/lru_cache_test.cpp
 )
 

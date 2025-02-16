@@ -164,6 +164,14 @@ public:
     // Get all user keys in this block
     std::vector<std::string> GetKeys() const;
 
+    size_t GetMemoryUsage() const {
+        size_t usage = 0;
+        for (const auto& entry : entries_) {
+            usage += entry.key.size() + entry.value.Size();
+        }
+        return usage;
+    }
+
 private:
     struct Entry {
         InternalKey key;
@@ -180,6 +188,14 @@ public:
     std::vector<uint8_t> Finish();
     void Reset();
     bool Empty() const { return entries_.empty(); }
+
+    size_t GetMemoryUsage() const {
+        size_t usage = 0;
+        for (const auto& entry : entries_) {
+            usage += entry.largest_key.size() + sizeof(IndexBlockEntry);
+        }
+        return usage;
+    }
 
 private:
     struct Entry {
@@ -249,6 +265,8 @@ public:
     void Reset() { filter_.Clear(); }
 
     double GetFalsePositiveRate() const { return filter_.GetFalsePositiveProbability(); }
+
+    size_t GetMemoryUsage() const { return filter_.GetMemoryUsage(); }
 
 private:
     common::BloomFilter filter_;

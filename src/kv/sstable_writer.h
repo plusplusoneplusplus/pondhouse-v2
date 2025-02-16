@@ -61,7 +61,14 @@ public:
      */
     void EnableFilter(size_t expected_keys, double false_positive_rate = 0.01);
 
+    // Get the current memory usage of the writer
+    [[nodiscard]] size_t GetMemoryUsage() const;
+
+    // Get the current file size
+    [[nodiscard]] size_t GetFileSize() const;
+
 private:
+    static constexpr size_t kEstimatedBufferSize = 64 * 1024;  // 64KB for internal buffers
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

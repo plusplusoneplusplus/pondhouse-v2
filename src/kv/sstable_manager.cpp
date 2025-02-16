@@ -230,34 +230,56 @@ public:
         using ReturnType = common::Result<FileInfo>;
         std::unique_lock<std::shared_mutex> lock(mutex_);
 
+        // Start tracking metrics for this compaction
+        size_t job_id = next_compaction_id_++;
+        auto& job_metrics = metrics_.StartCompactionJob(job_id, 0, 1);
+        size_t total_memory_usage = 0;
+
         // Check if there are L0 files to merge
         if (sstables_.empty() || sstables_[0].empty()) {
+            metrics_.CompleteCompactionJob(job_id, false);
             return ReturnType::failure(common::ErrorCode::InvalidOperation, "No L0 files to merge");
         }
 
         // Initialize merge context
+        job_metrics.phase.UpdatePhase(CompactionPhase::Phase::FileSelection);
         auto ctx_result = InitializeMergeContext(0, sstables_[0]);
         if (!ctx_result.ok()) {
+            metrics_.CompleteCompactionJob(job_id, false);
             return ReturnType::failure(ctx_result.error());
         }
         auto ctx = std::move(ctx_result).value();
 
+        // Update job metrics with input files info
+        job_metrics.input_files = ctx->source_files.size() + ctx->l1_source_files.size();
+        job_metrics.input_bytes = ctx->total_size;
+
         // Create L1 SSTable writer
+        job_metrics.phase.UpdatePhase(CompactionPhase::Phase::Reading);
         auto writer_result = CreateSSTableWriter(1, next_file_number_, *ctx);
         if (!writer_result.ok()) {
+            metrics_.CompleteCompactionJob(job_id, false);
             return ReturnType::failure(writer_result.error());
         }
         auto [writer, file_number] = std::move(writer_result).value();
 
+        // Track writer memory usage
+        total_memory_usage += writer->GetMemoryUsage();
+        metrics_.UpdateResourceUsage(total_memory_usage, 0, 0);
+
         // Merge files
+        job_metrics.phase.UpdatePhase(CompactionPhase::Phase::Merging);
         auto merge_result = MergeIterators(*writer, ctx->iterators, ctx->l1_iterators);
         if (!merge_result.ok()) {
+            metrics_.CompleteCompactionJob(job_id, false);
             return ReturnType::failure(merge_result.error());
         }
 
         // Finalize SSTable
+        job_metrics.phase.UpdatePhase(CompactionPhase::Phase::Writing);
         auto finish_result = writer->Finish();
         if (!finish_result.ok()) {
+            metrics_.CompleteCompactionJob(job_id, false);
             return ReturnType::failure(finish_result.error());
         }
 
@@ -266,15 +288,36 @@ public:
         all_source_files.insert(all_source_files.end(), ctx->source_files.begin(), ctx->source_files.end());
         all_source_files.insert(all_source_files.end(), ctx->l1_source_files.begin(), ctx->l1_source_files.end());
 
-        // Update state and return result
-        return UpdateStateAfterMerge(0, 1, file_number, GetTablePath(1, file_number), *ctx);
+        // Track write bytes
+        metrics_.disk_write_bytes_ += writer->GetFileSize();
+
+        // Update state and metrics
+        auto result = UpdateStateAfterMerge(0, 1, file_number, GetTablePath(1, file_number), *ctx);
+        if (result.ok()) {
+            // Update job metrics with final stats
+            job_metrics.output_files = 1;
+            job_metrics.output_bytes = result.value().size;
+            job_metrics.phase.UpdatePhase(CompactionPhase::Phase::Complete);
+            metrics_.CompleteCompactionJob(job_id, true);
+        } else {
+            job_metrics.phase.UpdatePhase(CompactionPhase::Phase::Failed);
+            job_metrics.error_message = result.error().message();
+            metrics_.CompleteCompactionJob(job_id, false);
+        }
+
+        return result;
     }
+
+    // Add methods to expose metrics
+    const CompactionMetrics& GetCompactionMetrics() const { return metrics_; }
+    void ResetCompactionMetrics() { metrics_.Reset(); }
 
 private:
     // Initialize merge context with readers and iterators
     [[nodiscard]] common::Result<std::unique_ptr<MergeContext>> InitializeMergeContext(
         size_t level, const std::vector<size_t>& file_numbers) {
         auto ctx = std::make_unique<MergeContext>();
+        size_t total_memory_usage = 0;
 
         // Initialize source level files (L0)
         for (const auto& file_number : file_numbers) {
@@ -286,6 +329,9 @@ private:
             }
 
             ctx->readers.push_back(reader);
+            size_t file_size = reader->GetFileSize();
+            metrics_.disk_read_bytes_ += file_size;
+            total_memory_usage += reader->GetMemoryUsage();  // Track reader's memory usage
 
             // Track key range
             if (ctx->smallest_key.empty() || reader->GetSmallestKey() < ctx->smallest_key) {
@@ -297,19 +343,23 @@ private:
 
             // Track file info for metadata
             ctx->source_files.push_back(FileInfo(MakeSSTableFileName(level, file_number),
-                                                 reader->GetFileSize(),
+                                                 file_size,
                                                  level,
                                                  reader->GetSmallestKey(),
                                                  reader->GetLargestKey()));
 
-            ctx->total_size += reader->GetFileSize();
+            ctx->total_size += file_size;
             ctx->total_entries += reader->GetEntryCount();
         }
+
+        // Update memory usage metrics
+        metrics_.UpdateResourceUsage(total_memory_usage, 0, 0);
 
         // Create iterators for source files
         for (const auto& reader : ctx->readers) {
             ctx->iterators.push_back(reader->NewIterator());
             ctx->iterators.back()->SeekToFirst();
+            total_memory_usage += sizeof(SSTableReader::Iterator);  // Approximate iterator memory usage
         }
 
         // If merging L0 to L1, find overlapping L1 files
@@ -319,13 +369,11 @@ private:
                 if (!metadata) {
                     continue;
                 }
-
                 const auto& meta = *metadata.value();
                 // Check if L1 file overlaps with our key range
                 if (meta.largest_key < ctx->smallest_key || meta.smallest_key > ctx->largest_key) {
                     continue;  // No overlap
                 }
-
                 // Add overlapping L1 file
                 std::string l1_file_path = GetTablePath(1, l1_file_number);
                 auto l1_reader = std::make_shared<SSTableReader>(fs_, l1_file_path);
@@ -333,18 +381,15 @@ private:
                 if (!l1_open_result.ok()) {
                     return common::Result<std::unique_ptr<MergeContext>>::failure(l1_open_result.error());
                 }
-
                 ctx->l1_readers.push_back(l1_reader);
                 ctx->l1_source_files.push_back(FileInfo(MakeSSTableFileName(1, l1_file_number),
                                                         l1_reader->GetFileSize(),
                                                         1,
                                                         l1_reader->GetSmallestKey(),
                                                         l1_reader->GetLargestKey()));
-
                 ctx->total_size += l1_reader->GetFileSize();
                 ctx->total_entries += l1_reader->GetEntryCount();
             }
-
             // Create iterators for L1 files
             for (const auto& reader : ctx->l1_readers) {
                 ctx->l1_iterators.push_back(reader->NewIterator());
@@ -361,6 +406,9 @@ private:
                 ctx->largest_key = l1_reader->GetLargestKey();
             }
         }
+
+        // Update memory metrics again after creating iterators
+        metrics_.UpdateResourceUsage(total_memory_usage, 0, 0);
 
         return common::Result<std::unique_ptr<MergeContext>>::success(std::move(ctx));
     }
@@ -644,6 +692,10 @@ private:
     std::vector<std::vector<size_t>> sstables_;  // sstables_[level][index] = file_number
     size_t next_file_number_{1};
     Stats stats_;
+
+    // Add compaction metrics
+    CompactionMetrics metrics_;
+    std::atomic<size_t> next_compaction_id_{1};
 };
 
 SSTableManager::SSTableManager(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
@@ -681,6 +733,15 @@ common::Result<bool> SSTableManager::StopCompaction() {
 
 common::Result<FileInfo> SSTableManager::MergeL0ToL1() {
     return impl_->MergeL0ToL1();
+}
+
+// Add implementation of the public metrics methods
+const CompactionMetrics& SSTableManager::GetCompactionMetrics() const {
+    return impl_->GetCompactionMetrics();
+}
+
+void SSTableManager::ResetCompactionMetrics() {
+    impl_->ResetCompactionMetrics();
 }
 
 }  // namespace pond::kv

@@ -7,6 +7,60 @@
 
 namespace pond::common {
 
+TEST(TimeTest, TimestampToString) {
+    // Test timestamp at 1970-01-01 00:20:34.567890
+    Timestamp timestamp = 1234567890LL;  // 1,234,567,890 microseconds since epoch
+    std::string result = TimestampToString(timestamp);
+
+    // Format: YYYY/MM/DD HH:MM:SS.UUUUUU
+    EXPECT_EQ(result.substr(0, 4), "1970");       // Year
+    EXPECT_EQ(result.substr(5, 2), "01");         // Month
+    EXPECT_EQ(result.substr(8, 2), "01");         // Day
+    EXPECT_EQ(result.substr(11, 8), "00:20:34");  // HH:MM:SS
+    EXPECT_EQ(result.substr(20), "567890");       // Microseconds
+
+    // Test zero timestamp (epoch)
+    std::string zero_result = TimestampToString(0);
+    EXPECT_EQ(zero_result.substr(0, 4), "1970");
+    EXPECT_EQ(zero_result.substr(5, 2), "01");
+    EXPECT_EQ(zero_result.substr(8, 2), "01");
+    EXPECT_EQ(zero_result.substr(11, 8), "00:00:00");
+    EXPECT_EQ(zero_result.substr(20), "000000");
+
+    // Test 1 hour after epoch
+    Timestamp one_hour = 3600000000LL;  // 1 hour in microseconds
+    std::string hour_result = TimestampToString(one_hour);
+    EXPECT_EQ(hour_result.substr(0, 4), "1970");
+    EXPECT_EQ(hour_result.substr(5, 2), "01");
+    EXPECT_EQ(hour_result.substr(8, 2), "01");
+    EXPECT_EQ(hour_result.substr(11, 8), "01:00:00");
+    EXPECT_EQ(hour_result.substr(20), "000000");
+}
+
+TEST(TimeTest, TimeIntervalToString) {
+    // Test various time intervals
+    EXPECT_EQ(TimeIntervalToString(0), "0s");
+
+    // Test individual units
+    EXPECT_EQ(TimeIntervalToString(1000000), "1s");      // 1 second
+    EXPECT_EQ(TimeIntervalToString(60000000), "1m");     // 1 minute
+    EXPECT_EQ(TimeIntervalToString(3600000000), "1h");   // 1 hour
+    EXPECT_EQ(TimeIntervalToString(86400000000), "1d");  // 1 day
+
+    // Test fractional seconds
+    EXPECT_EQ(TimeIntervalToString(1234567), "1.234567s");
+
+    // Test combination of units
+    TimeInterval interval = 1234567890;
+    std::string result = TimeIntervalToString(interval);
+    EXPECT_EQ(result, "20m34.567890s");
+
+    // Test with all units including microseconds
+    interval = 90061234567LL;  // 25h1m1.234567s
+    result = TimeIntervalToString(interval);
+    EXPECT_EQ(result, "1d1h1m1.234567s");
+}
+
 TEST(HybridTimeTest, Construction) {
     // Test default constructor
     HybridTime t1;
@@ -17,24 +71,24 @@ TEST(HybridTimeTest, Construction) {
     EXPECT_EQ(t2.encoded(), HybridTime::MAX_TIME);
 
     // Test explicit construction
-    HybridTime t3(1000, 42);
+    HybridTime t3(1000);
     EXPECT_EQ(t3.physical_time(), 1000);
-    EXPECT_EQ(t3.logical_counter(), 42);
+    EXPECT_EQ(t3.encoded(), 1000);
 
     // Test encoded constructor
-    uint64_t encoded = (1000ULL << HybridTime::LOGICAL_BITS) | 42;
+    uint64_t encoded = 2000;
     HybridTime t4(encoded);
-    EXPECT_EQ(t4.physical_time(), 1000);
-    EXPECT_EQ(t4.logical_counter(), 42);
+    EXPECT_EQ(t4.physical_time(), 2000);
+    EXPECT_EQ(t4.encoded(), 2000);
 }
 
 TEST(HybridTimeTest, Comparison) {
-    HybridTime t1(1000, 1);
-    HybridTime t2(1000, 2);
-    HybridTime t3(1001, 0);
+    HybridTime t1(1000);
+    HybridTime t2(2000);
+    HybridTime t3(3000);
 
     // Test equality
-    EXPECT_EQ(t1, HybridTime(1000, 1));
+    EXPECT_EQ(t1, HybridTime(1000));
     EXPECT_NE(t1, t2);
 
     // Test ordering
@@ -42,20 +96,18 @@ TEST(HybridTimeTest, Comparison) {
     EXPECT_LT(t2, t3);
     EXPECT_GT(t3, t1);
     EXPECT_LE(t1, t2);
-    EXPECT_LE(t1, HybridTime(1000, 1));
+    EXPECT_LE(t1, HybridTime(1000));
     EXPECT_GE(t3, t2);
 }
 
 TEST(HybridTimeTest, Limits) {
-    // Test maximum logical counter
-    HybridTime t1(1000, HybridTime::MAX_LOGICAL);
-    EXPECT_EQ(t1.logical_counter(), HybridTime::MAX_LOGICAL);
+    // Test minimum time
+    HybridTime t1(HybridTime::MIN_TIME);
+    EXPECT_EQ(t1.physical_time(), HybridTime::MIN_TIME);
 
-    // Test physical time masking
-    uint64_t large_physical = (1ULL << HybridTime::PHYSICAL_BITS) - 1;
-    HybridTime t2(large_physical, 42);
-    EXPECT_EQ(t2.physical_time(), large_physical);
-    EXPECT_EQ(t2.logical_counter(), 42);
+    // Test maximum time
+    HybridTime t2(HybridTime::MAX_TIME);
+    EXPECT_EQ(t2.physical_time(), HybridTime::MAX_TIME);
 }
 
 class HybridTimeManagerTest : public ::testing::Test {
@@ -73,18 +125,15 @@ TEST_F(HybridTimeManagerTest, MonotonicIncrease) {
     // Get initial timestamp
     HybridTime t1 = manager.NextWithTime(FIXED_TIME);
     EXPECT_EQ(t1.physical_time(), FIXED_TIME);
-    EXPECT_EQ(t1.logical_counter(), 0);
 
     // Get next timestamp with same physical time
     HybridTime t2 = manager.NextWithTime(FIXED_TIME);
-    EXPECT_EQ(t2.physical_time(), FIXED_TIME);
-    EXPECT_EQ(t2.logical_counter(), 1);
+    EXPECT_GT(t2.physical_time(), t1.physical_time());
     EXPECT_GT(t2, t1);
 
     // Get timestamp with increased physical time
     HybridTime t3 = manager.NextWithTime(FIXED_TIME + 1);
-    EXPECT_EQ(t3.physical_time(), FIXED_TIME + 1);
-    EXPECT_EQ(t3.logical_counter(), 0);
+    EXPECT_EQ(t3.physical_time(), FIXED_TIME + 2);  // + 1 has been used already
     EXPECT_GT(t3, t2);
 }
 
@@ -95,37 +144,11 @@ TEST_F(HybridTimeManagerTest, BackwardsClockHandling) {
     // Get initial timestamp
     HybridTime t1 = manager.NextWithTime(FIXED_TIME);
     EXPECT_EQ(t1.physical_time(), FIXED_TIME);
-    EXPECT_EQ(t1.logical_counter(), 0);
 
     // Try to get timestamp with earlier physical time
     HybridTime t2 = manager.NextWithTime(FIXED_TIME - 100);
-    EXPECT_EQ(t2.physical_time(), FIXED_TIME);  // Should use previous physical time
-    EXPECT_EQ(t2.logical_counter(), 1);         // Should increment logical counter
+    EXPECT_GT(t2.physical_time(), t1.physical_time());  // Should increment based on steady clock
     EXPECT_GT(t2, t1);
-}
-
-TEST_F(HybridTimeManagerTest, LogicalOverflow) {
-    auto& manager = HybridTimeManager::Instance();
-    const uint64_t FIXED_TIME = manager.Current().physical_time() + 1;
-
-    // Get initial timestamp
-    HybridTime t1 = manager.NextWithTime(FIXED_TIME);
-    EXPECT_EQ(t1.physical_time(), FIXED_TIME);
-    EXPECT_EQ(t1.logical_counter(), 0);
-
-    // Request timestamps until we reach MAX_LOGICAL
-    HybridTime prev = t1;
-    for (uint32_t i = 0; i < HybridTime::MAX_LOGICAL - 1; i++) {
-        HybridTime current = manager.NextWithTime(FIXED_TIME);
-        EXPECT_GT(current, prev);
-        prev = current;
-    }
-
-    // Next timestamp should overflow to next physical time
-    HybridTime overflow = manager.NextWithTime(FIXED_TIME);
-    EXPECT_EQ(overflow.physical_time(), FIXED_TIME + 1);
-    EXPECT_EQ(overflow.logical_counter(), 0);
-    EXPECT_GT(overflow, prev);
 }
 
 TEST_F(HybridTimeManagerTest, PhysicalTimeIncrement) {

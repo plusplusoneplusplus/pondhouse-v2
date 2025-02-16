@@ -120,6 +120,9 @@ public:
      */
     [[nodiscard]] Iterator end();
 
+    // Get the current memory usage of the reader
+    [[nodiscard]] size_t GetMemoryUsage() const;
+
     /**
      * Iterator provides sequential access to entries in the SSTable.
      * Supports seeking to specific keys and sequential scanning.
@@ -213,6 +216,7 @@ public:
     };
 
 private:
+    static constexpr size_t kEstimatedBufferSize = 32 * 1024;  // 32KB for internal buffers
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

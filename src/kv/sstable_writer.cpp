@@ -184,7 +184,23 @@ public:
         }
     }
 
+    size_t GetMemoryUsage() const {
+        // Approximate memory usage:
+        // - Data block builder
+        // - Index block builder
+        // - Filter block builder (if enabled)
+        // - Internal buffers
+        size_t usage = data_builder_.GetMemoryUsage() + index_builder_.GetMemoryUsage();
+        if (filter_builder_) {
+            usage += filter_builder_->GetMemoryUsage();
+        }
+        return usage + kEstimatedBufferSize;
+    }
+
+    size_t GetFileSize() const { return current_offset_; }
+
 private:
+    static constexpr size_t kEstimatedBufferSize = 64 * 1024;  // 64KB for internal buffers
     common::Result<bool> FlushDataBlock() {
         auto block_data = data_builder_.Finish();
         if (block_data.empty()) {
@@ -245,6 +261,14 @@ common::Result<bool> SSTableWriter::Finish() {
 
 void SSTableWriter::EnableFilter(size_t expected_keys, double false_positive_rate) {
     impl_->EnableFilter(expected_keys, false_positive_rate);
+}
+
+size_t SSTableWriter::GetMemoryUsage() const {
+    return impl_->GetMemoryUsage();
+}
+
+size_t SSTableWriter::GetFileSize() const {
+    return impl_->GetFileSize();
 }
 
 }  // namespace pond::kv

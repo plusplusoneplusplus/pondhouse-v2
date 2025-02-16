@@ -45,6 +45,13 @@ public:
 
     [[nodiscard]] size_t GetItemsCount() const { return items_count_; }
 
+    [[nodiscard]] size_t GetMemoryUsage() const {
+        // Approximate memory usage:
+        // - Filter data (std::vector<bool>)
+        // - Internal buffers
+        return bits_.size() + sizeof(size_t) + sizeof(size_t) + sizeof(size_t);
+    }
+
 private:
     // Calculate optimal size and hash functions
     static std::pair<size_t, size_t> CalculateOptimalParameters(size_t expected_items, double false_positive_prob);

@@ -150,7 +150,7 @@ TEST_F(SSTableFormatTest, BlockFooterSerialization) {
 TEST_F(SSTableFormatTest, DataBlockEntrySerialization) {
     DataBlockEntry entry;
     std::string user_key = "hello";
-    HybridTime version(1000, 1);
+    HybridTime version(1000);
     InternalKey key(user_key, version);
     entry.key_length = key.size();
     entry.value_length = 10;
@@ -439,7 +439,7 @@ TEST_F(SSTableFormatTest, MetadataBlockBuilder) {
 
 TEST_F(SSTableFormatTest, InternalKeySerialization) {
     std::string user_key = "test_key";
-    HybridTime version(1000, 42);  // timestamp 1000, logical counter 42
+    HybridTime version(1000);  // timestamp 1000
     InternalKey key(user_key, version);
 
     // Test serialization
@@ -456,8 +456,8 @@ TEST_F(SSTableFormatTest, InternalKeySerialization) {
 TEST_F(SSTableFormatTest, InternalKeyComparison) {
     std::string key1 = "key1";
     std::string key2 = "key2";
-    HybridTime version1(1000, 0);
-    HybridTime version2(2000, 0);
+    HybridTime version1(1000);
+    HybridTime version2(2000);
 
     // Different user keys
     InternalKey a(key1, version1);
@@ -481,7 +481,7 @@ TEST_F(SSTableFormatTest, InternalKeyComparison) {
 
 TEST_F(SSTableFormatTest, DataBlockEntryWithInternalKey) {
     std::string user_key = "test_key";
-    HybridTime version(1000, 42);
+    HybridTime version(1000);
     InternalKey key(user_key, version);
     DataChunk value = DataChunk::FromString("test_value");
 
@@ -515,8 +515,8 @@ TEST_F(SSTableFormatTest, DataBlockBuilderWithVersioning) {
 
     // Add entries with different versions of the same key
     std::string key = "test_key";
-    HybridTime version1(1000, 0);
-    HybridTime version2(2000, 0);
+    HybridTime version1(1000);
+    HybridTime version2(2000);
     DataChunk value1 = DataChunk::FromString("value1");
     DataChunk value2 = DataChunk::FromString("value2");
 

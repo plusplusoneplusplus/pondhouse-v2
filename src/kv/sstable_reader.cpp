@@ -335,6 +335,31 @@ public:
 
     bool IsOpen() const { return opened_; }
 
+    size_t GetMemoryUsage() const {
+        // Approximate memory usage:
+        // - Index entries (strings + metadata)
+        // - Filter data
+        // - Index data
+        // - Bloom filter (if present)
+        // - Internal buffers
+        size_t usage = 0;
+
+        // Index entries
+        for (const auto& entry : index_entries_) {
+            usage += entry.largest_key.size() + sizeof(IndexEntry);
+        }
+
+        // Filter and index data
+        usage += filter_data_.Size() + index_data_.Size();
+
+        // Bloom filter memory usage is approximately the same as its data size
+        if (filter_) {
+            usage += filter_data_.Size();
+        }
+
+        return usage + kEstimatedBufferSize;
+    }
+
     struct IndexEntry {
         std::string largest_key;
         uint64_t offset;
@@ -366,6 +391,9 @@ public:
     // Metadata block data
     common::DataChunk filter_data_;
     common::DataChunk index_data_;
+
+private:
+    static constexpr size_t kEstimatedBufferSize = 32 * 1024;  // 32KB for internal buffers
 };
 
 SSTableReader::SSTableReader(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& path)
@@ -412,6 +440,10 @@ common::Result<std::unique_ptr<common::BloomFilter>> SSTableReader::GetBloomFilt
                                                                              "Reader not initialized");
     }
     return impl_->GetBloomFilter();
+}
+
+size_t SSTableReader::GetMemoryUsage() const {
+    return impl_->GetMemoryUsage();
 }
 
 class SSTableReader::Iterator::Impl {
