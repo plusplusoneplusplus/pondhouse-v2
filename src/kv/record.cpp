@@ -157,7 +157,7 @@ common::DataChunk Record::Serialize() const {
 }
 
 common::Result<std::unique_ptr<Record>> Record::Deserialize(const common::DataChunk& data,
-                                                            std::shared_ptr<Schema> schema) {
+                                                            std::shared_ptr<common::Schema> schema) {
     const uint8_t* ptr = data.Data();
     size_t remaining = data.Size();
 

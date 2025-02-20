@@ -2,7 +2,7 @@
 
 namespace pond::kv {
 
-Table::Table(std::shared_ptr<Schema> schema,
+Table::Table(std::shared_ptr<common::Schema> schema,
              std::shared_ptr<common::IAppendOnlyFileSystem> fs,
              const std::string& table_name,
              size_t max_wal_size)

@@ -18,7 +18,7 @@ namespace pond::kv {
  */
 class Table : public KvTable {
 public:
-    explicit Table(std::shared_ptr<Schema> schema,
+    explicit Table(std::shared_ptr<common::Schema> schema,
                    std::shared_ptr<common::IAppendOnlyFileSystem> fs,
                    const std::string& table_name,
                    size_t max_wal_size = DEFAULT_WAL_SIZE);
@@ -31,14 +31,14 @@ public:
     common::Result<void> UpdateColumn(const Key& key, const std::string& column_name, const common::DataChunk& value);
 
     // Schema access
-    const std::shared_ptr<Schema>& schema() const { return schema_; }
+    const std::shared_ptr<common::Schema>& schema() const { return schema_; }
 
 private:
     // Convert between Record and DataChunk
     common::Result<common::DataChunk> SerializeRecord(const Record& record) const;
     common::Result<std::unique_ptr<Record>> DeserializeRecord(const common::DataChunk& data) const;
 
-    std::shared_ptr<Schema> schema_;
+    std::shared_ptr<common::Schema> schema_;
 };
 
 }  // namespace pond::kv

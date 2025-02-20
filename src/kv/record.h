@@ -5,47 +5,18 @@
 #include <unordered_map>
 #include <vector>
 
+#include "common/column_type.h"
 #include "common/data_chunk.h"
 #include "common/result.h"
+#include "common/schema.h"
 #include "common/uuid.h"
 
 namespace pond::kv {
 
-enum class ColumnType { INT32, INT64, FLOAT, DOUBLE, STRING, BINARY, BOOLEAN, TIMESTAMP, UUID };
-
-struct ColumnSchema {
-    std::string name;
-    ColumnType type;
-    bool nullable;
-
-    ColumnSchema(std::string name_, ColumnType type_, bool nullable_ = true)
-        : name(std::move(name_)), type(type_), nullable(nullable_) {}
-};
-
-class Schema {
-public:
-    explicit Schema(std::vector<ColumnSchema> columns) : columns_(std::move(columns)) {
-        for (size_t i = 0; i < columns_.size(); i++) {
-            column_indices_[columns_[i].name] = i;
-        }
-    }
-
-    const std::vector<ColumnSchema>& columns() const { return columns_; }
-    size_t num_columns() const { return columns_.size(); }
-
-    int GetColumnIndex(const std::string& name) const {
-        auto it = column_indices_.find(name);
-        return it == column_indices_.end() ? -1 : static_cast<int>(it->second);
-    }
-
-private:
-    std::vector<ColumnSchema> columns_;
-    std::unordered_map<std::string, size_t> column_indices_;
-};
-
 class Record {
 public:
-    explicit Record(std::shared_ptr<Schema> schema) : schema_(std::move(schema)), values_(schema_->num_columns()) {}
+    explicit Record(std::shared_ptr<common::Schema> schema)
+        : schema_(std::move(schema)), values_(schema_->num_columns()) {}
 
     void SetNull(size_t col_idx) {
         if (col_idx >= schema_->num_columns()) {
@@ -104,34 +75,34 @@ public:
     // Serialization
     common::DataChunk Serialize() const;
     static common::Result<std::unique_ptr<Record>> Deserialize(const common::DataChunk& data,
-                                                               std::shared_ptr<Schema> schema);
+                                                               std::shared_ptr<common::Schema> schema);
 
-    const std::shared_ptr<Schema>& schema() const { return schema_; }
+    const std::shared_ptr<common::Schema>& schema() const { return schema_; }
 
 private:
     template <typename T>
-    static bool IsTypeCompatible(ColumnType type) {
+    static bool IsTypeCompatible(common::ColumnType type) {
         if constexpr (std::is_same_v<T, int32_t>) {
-            return type == ColumnType::INT32;
+            return type == common::ColumnType::INT32;
         } else if constexpr (std::is_same_v<T, int64_t>) {
-            return type == ColumnType::INT64;
+            return type == common::ColumnType::INT64;
         } else if constexpr (std::is_same_v<T, float>) {
-            return type == ColumnType::FLOAT;
+            return type == common::ColumnType::FLOAT;
         } else if constexpr (std::is_same_v<T, double>) {
-            return type == ColumnType::DOUBLE;
+            return type == common::ColumnType::DOUBLE;
         } else if constexpr (std::is_same_v<T, bool>) {
-            return type == ColumnType::BOOLEAN;
+            return type == common::ColumnType::BOOLEAN;
         } else if constexpr (std::is_same_v<T, std::string> || std::is_same_v<T, const char*>) {
-            return type == ColumnType::STRING;
+            return type == common::ColumnType::STRING;
         } else if constexpr (std::is_same_v<T, common::DataChunk>) {
-            return type == ColumnType::BINARY;
+            return type == common::ColumnType::BINARY;
         } else if constexpr (std::is_same_v<T, common::UUID>) {
-            return type == ColumnType::UUID;
+            return type == common::ColumnType::UUID;
         }
         return false;
     }
 
-    std::shared_ptr<Schema> schema_;
+    std::shared_ptr<common::Schema> schema_;
     std::vector<std::optional<common::DataChunk>> values_;
 
     static common::DataChunk PackValue(int32_t value);

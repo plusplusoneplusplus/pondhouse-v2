@@ -9,17 +9,17 @@ namespace pond::kv {
 class RecordTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        std::vector<ColumnSchema> columns = {{"id", ColumnType::INT32, false},
-                                             {"name", ColumnType::STRING, true},
-                                             {"age", ColumnType::INT32, true},
-                                             {"salary", ColumnType::DOUBLE, true},
-                                             {"is_active", ColumnType::BOOLEAN, true},
-                                             {"data", ColumnType::BINARY, true},
-                                             {"uuid", ColumnType::UUID, true}};
-        schema = std::make_shared<Schema>(columns);
+        std::vector<common::ColumnSchema> columns = {{"id", common::ColumnType::INT32, false},
+                                                     {"name", common::ColumnType::STRING, true},
+                                                     {"age", common::ColumnType::INT32, true},
+                                                     {"salary", common::ColumnType::DOUBLE, true},
+                                                     {"is_active", common::ColumnType::BOOLEAN, true},
+                                                     {"data", common::ColumnType::BINARY, true},
+                                                     {"uuid", common::ColumnType::UUID, true}};
+        schema = std::make_shared<common::Schema>(columns);
     }
 
-    std::shared_ptr<Schema> schema;
+    std::shared_ptr<common::Schema> schema;
 };
 
 TEST_F(RecordTest, BasicOperations) {
@@ -122,11 +122,11 @@ TEST_F(RecordTest, SchemaOperations) {
 
     // Test schema column access
     EXPECT_EQ(schema->columns()[0].name, "id");
-    EXPECT_EQ(schema->columns()[0].type, ColumnType::INT32);
+    EXPECT_EQ(schema->columns()[0].type, common::ColumnType::INT32);
     EXPECT_FALSE(schema->columns()[0].nullable);
 
     EXPECT_EQ(schema->columns()[1].name, "name");
-    EXPECT_EQ(schema->columns()[1].type, ColumnType::STRING);
+    EXPECT_EQ(schema->columns()[1].type, common::ColumnType::STRING);
     EXPECT_TRUE(schema->columns()[1].nullable);
 }
 

@@ -8,6 +8,8 @@
 #include "common/memory_append_only_fs.h"
 #include "test_helper.h"
 
+using namespace pond::common;
+
 namespace pond::kv {
 
 class TableTest : public ::testing::Test {
