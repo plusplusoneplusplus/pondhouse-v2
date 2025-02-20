@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
@@ -137,17 +138,14 @@ public:
 
     // Test-only: Get next timestamp with fixed physical time
     HybridTime NextWithTime(uint64_t fixed_time) {
-        auto steady_now = std::chrono::steady_clock::now();
-        auto steady_delta = std::chrono::duration_cast<std::chrono::microseconds>(steady_now - last_steady_).count();
+        auto last_steady = last_steady_;
 
         while (true) {
+            auto steady_now = std::chrono::steady_clock::now();
+            auto steady_delta = std::chrono::duration_cast<std::chrono::microseconds>(steady_now - last_steady).count();
+
             uint64_t current_encoded = current_.load(std::memory_order_seq_cst);
             uint64_t new_physical = fixed_time;
-
-            // If time went backwards or stayed the same, use steady clock delta
-            if (new_physical <= current_encoded) {
-                new_physical = current_encoded + std::max(1ULL, static_cast<uint64_t>(steady_delta));
-            }
 
             // Check for too large increment
             if (new_physical > (current_encoded + MAX_PHYSICAL_INCREMENT)) {
@@ -159,6 +157,13 @@ public:
                 throw std::runtime_error("Physical time increment too large, from " + std::to_string(current_encoded)
                                          + " to " + std::to_string(new_physical));
             }
+
+            // If time went backwards or stayed the same, use steady clock delta
+            if (new_physical <= current_encoded) {
+                new_physical = current_encoded + std::max(1ULL, static_cast<uint64_t>(steady_delta));
+            }
+
+            assert(new_physical > current_encoded);
 
             if (current_.compare_exchange_strong(
                     current_encoded, new_physical, std::memory_order_seq_cst, std::memory_order_seq_cst)) {
