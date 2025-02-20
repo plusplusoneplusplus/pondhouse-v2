@@ -23,6 +23,29 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(fmt)
 
+# Set up sql-parser as an external project with Makefile build
+include(ExternalProject)
+ExternalProject_Add(sql_parser_external
+    GIT_REPOSITORY https://github.com/hyrise/sql-parser.git
+    GIT_TAG main
+    PREFIX ${CMAKE_BINARY_DIR}/sql_parser
+    CONFIGURE_COMMAND ""
+    BUILD_IN_SOURCE 1
+    BUILD_COMMAND make library static=yes mode=release
+    INSTALL_COMMAND ""
+    BUILD_BYPRODUCTS ${CMAKE_BINARY_DIR}/sql_parser/src/sql_parser_external/libsqlparser.a
+)
+
+# Create an imported target for the sql-parser library
+add_library(hsql STATIC IMPORTED GLOBAL)
+add_dependencies(hsql sql_parser_external)
+
+# Set the imported target properties
+set_target_properties(hsql PROPERTIES
+    IMPORTED_LOCATION ${CMAKE_BINARY_DIR}/sql_parser/src/sql_parser_external/libsqlparser.a
+    INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_BINARY_DIR}/sql_parser/src/sql_parser_external/src
+)
+
 # Add common library
 add_library(pondhouse_common
     src/common/append_only_fs.cpp
@@ -56,13 +79,14 @@ target_link_libraries(pondhouse_common PUBLIC
     Parquet::parquet_shared
     ${XXHASH_LIBRARY}
     fmt::fmt
+    hsql
 )
 
 # Add main executable
 add_executable(${PROJECT_NAME} src/main.cpp)
 
 # Link main executable with common library
-target_link_libraries(${PROJECT_NAME} PRIVATE pondhouse_common)
+target_link_libraries(${PROJECT_NAME} PRIVATE pondhouse_common hsql)
 
 # Enable testing
 enable_testing()
@@ -91,6 +115,7 @@ add_executable(
     tests/common/wal_state_machine_test.cpp
     tests/common/bplus_tree_test.cpp
     tests/common/time_test.cpp
+    tests/common/lru_cache_test.cpp
     tests/format/parquet/parquet_test.cpp
     tests/kv/record_test.cpp
     tests/kv/memtable_test.cpp
@@ -106,13 +131,14 @@ add_executable(
     tests/kv/sstable_reader_test.cpp
     tests/kv/versioned_value_test.cpp
     tests/kv/compaction_metrics_test.cpp
-    tests/common/lru_cache_test.cpp
+    tests/sql/hyrise_parser_test.cpp
 )
 
 # Add include directories for tests
 target_include_directories(unit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/tests
+    ${CMAKE_BINARY_DIR}/sql_parser/src/sql_parser_external/src
 )
 
 # Link test executable against gtest & your project libraries
@@ -120,6 +146,7 @@ target_link_libraries(unit_tests
     gtest
     gtest_main
     pondhouse_common
+    hsql
     Arrow::arrow_shared
     Parquet::parquet_shared
 )
