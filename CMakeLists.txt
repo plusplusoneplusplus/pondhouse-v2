@@ -29,6 +29,7 @@ ExternalProject_Add(sql_parser_external
     GIT_REPOSITORY https://github.com/hyrise/sql-parser.git
     GIT_TAG main
     PREFIX ${CMAKE_BINARY_DIR}/sql_parser
+    UPDATE_COMMAND ""
     CONFIGURE_COMMAND ""
     BUILD_IN_SOURCE 1
     BUILD_COMMAND make library static=yes mode=release

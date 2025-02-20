@@ -107,7 +107,7 @@ public:
         file.stream->flush();
 
         return Result<PositionRecord>::success(PositionRecord{
-            .id_ = common::UUID::newUUID(), .offset_ = static_cast<size_t>(current_pos), .length_ = data.Size()});
+            .id_ = common::UUID::NewUUID(), .offset_ = static_cast<size_t>(current_pos), .length_ = data.Size()});
     }
 
     Result<DataChunk> read(FileHandle handle, size_t offset, size_t length) {

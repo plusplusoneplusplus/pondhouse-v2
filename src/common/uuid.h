@@ -23,9 +23,9 @@ public:
 
     bool operator==(const UUID& other) const { return uuid_ == other.uuid_; }
 
-    friend std::ostream& operator<<(std::ostream& os, const UUID& uuid) { return os << uuid.toString(); }
+    friend std::ostream& operator<<(std::ostream& os, const UUID& uuid) { return os << uuid.ToString(); }
 
-    void generate() {
+    void Generate() {
         static thread_local std::random_device rd;
         static thread_local std::mt19937_64 gen(rd());
         static thread_local std::uniform_int_distribution<uint64_t> dis;
@@ -40,7 +40,7 @@ public:
         uuid_[8] = (uuid_[8] & 0x3F) | 0x80;
     }
 
-    std::string toString() const {
+    std::string ToString() const {
         static const char hex[] = "0123456789abcdef";
         std::string result(36, '-');
         int i = 0;
@@ -60,18 +60,18 @@ public:
 
     size_t size() const { return uuid_.size(); }
 
-    void parse(const std::string& str) { memcpy(uuid_.data(), str.data(), 16); }
+    void Parse(const std::string& str) { memcpy(uuid_.data(), str.data(), 16); }
 
 public:
-    static UUID newUUID() {
+    static UUID NewUUID() {
         UUID uuid;
-        uuid.generate();
+        uuid.Generate();
         return uuid;
     }
 
-    static UUID fromString(const std::string& str) {
+    static UUID FromString(const std::string& str) {
         UUID uuid;
-        uuid.parse(str);
+        uuid.Parse(str);
         return uuid;
     }
 

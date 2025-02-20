@@ -14,7 +14,8 @@ protected:
                                              {"age", ColumnType::INT32, true},
                                              {"salary", ColumnType::DOUBLE, true},
                                              {"is_active", ColumnType::BOOLEAN, true},
-                                             {"data", ColumnType::BINARY, true}};
+                                             {"data", ColumnType::BINARY, true},
+                                             {"uuid", ColumnType::UUID, true}};
         schema = std::make_shared<Schema>(columns);
     }
 
@@ -144,6 +145,39 @@ TEST_F(RecordTest, LargeValues) {
     EXPECT_TRUE(binary_result.ok());
     EXPECT_EQ(binary_result.value().Size(), large_binary.size());
     EXPECT_EQ(std::memcmp(binary_result.value().Data(), large_binary.data(), large_binary.size()), 0);
+}
+
+TEST_F(RecordTest, UUIDHandling) {
+    Record record(schema);
+
+    // Create and set a UUID
+    common::UUID original_uuid = common::UUID::NewUUID();
+    record.Set(6, original_uuid);
+
+    // Test direct retrieval
+    auto uuid_result = record.Get<common::UUID>(6);
+    ASSERT_TRUE(uuid_result.ok()) << "Failed to get UUID: " << uuid_result.error().message();
+    EXPECT_EQ(uuid_result.value(), original_uuid) << "Retrieved UUID doesn't match original";
+
+    // Test null handling
+    Record record2(schema);
+    EXPECT_TRUE(record2.IsNull(6)) << "New record should have null UUID";
+    auto null_uuid_result = record2.Get<common::UUID>(6);
+    EXPECT_FALSE(null_uuid_result.ok()) << "Getting null UUID should fail";
+
+    // Test serialization/deserialization
+    common::DataChunk serialized = record.Serialize();
+    auto deserialized_result = Record::Deserialize(serialized, schema);
+    ASSERT_TRUE(deserialized_result.ok()) << "Failed to deserialize record";
+
+    auto deserialized = std::move(deserialized_result).value();
+    auto deserialized_uuid_result = deserialized->Get<common::UUID>(6);
+    ASSERT_TRUE(deserialized_uuid_result.ok()) << "Failed to get UUID from deserialized record";
+    EXPECT_EQ(deserialized_uuid_result.value(), original_uuid) << "Deserialized UUID doesn't match original";
+
+    // Test invalid operations
+    EXPECT_THROW(record.Set(6, std::string("not a uuid")), std::runtime_error);
+    EXPECT_THROW(record.Get<std::string>(6), std::runtime_error);
 }
 
 }  // namespace pond::kv

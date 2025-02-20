@@ -7,10 +7,11 @@
 
 #include "common/data_chunk.h"
 #include "common/result.h"
+#include "common/uuid.h"
 
 namespace pond::kv {
 
-enum class ColumnType { INT32, INT64, FLOAT, DOUBLE, STRING, BINARY, BOOLEAN, TIMESTAMP };
+enum class ColumnType { INT32, INT64, FLOAT, DOUBLE, STRING, BINARY, BOOLEAN, TIMESTAMP, UUID };
 
 struct ColumnSchema {
     std::string name;
@@ -124,6 +125,8 @@ private:
             return type == ColumnType::STRING;
         } else if constexpr (std::is_same_v<T, common::DataChunk>) {
             return type == ColumnType::BINARY;
+        } else if constexpr (std::is_same_v<T, common::UUID>) {
+            return type == ColumnType::UUID;
         }
         return false;
     }
@@ -139,6 +142,7 @@ private:
     static common::DataChunk PackValue(const std::string& value);
     static common::DataChunk PackValue(const char* value);
     static common::DataChunk PackValue(const common::DataChunk& value);
+    static common::DataChunk PackValue(const common::UUID& value);
 
     template <typename T>
     static common::Result<T> UnpackValue(const common::DataChunk& data);

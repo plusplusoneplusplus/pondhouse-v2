@@ -91,7 +91,7 @@ inline std::string DataVariant::toString() const {
                                  || std::is_same_v<T, double>) {
                 return std::to_string(val);
             } else if constexpr (std::is_same_v<T, PositionRecord>) {
-                return "PositionRecord(" + val.id_.toString() + ", offset=" + std::to_string(val.offset_)
+                return "PositionRecord(" + val.id_.ToString() + ", offset=" + std::to_string(val.offset_)
                        + ", length=" + std::to_string(val.length_) + ")";
             } else if constexpr (std::is_same_v<T, ContinousBuffer>) {
                 return "ContinousBuffer(" + std::to_string(val.size_) + " bytes)";

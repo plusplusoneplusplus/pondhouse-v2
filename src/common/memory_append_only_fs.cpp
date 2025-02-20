@@ -175,7 +175,7 @@ Result<PositionRecord> MemoryAppendOnlyFileSystem::Append(FileHandle handle, con
     file->data.insert(file->data.end(), data.Data(), data.Data() + data.Size());
 
     return Result<PositionRecord>::success(
-        PositionRecord{.id_ = common::UUID::newUUID(), .offset_ = offset, .length_ = data.Size()});
+        PositionRecord{.id_ = common::UUID::NewUUID(), .offset_ = offset, .length_ = data.Size()});
 }
 
 Result<DataChunk> MemoryAppendOnlyFileSystem::Read(FileHandle handle, size_t offset, size_t length) {
