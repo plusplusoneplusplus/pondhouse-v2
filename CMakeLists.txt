@@ -23,28 +23,27 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(fmt)
 
-# Set up sql-parser as an external project with Makefile build
-include(ExternalProject)
-ExternalProject_Add(sql_parser_external
-    GIT_REPOSITORY https://github.com/hyrise/sql-parser.git
-    GIT_TAG main
-    PREFIX ${CMAKE_BINARY_DIR}/sql_parser
-    UPDATE_COMMAND ""
-    CONFIGURE_COMMAND ""
-    BUILD_IN_SOURCE 1
-    BUILD_COMMAND make library static=yes mode=release
-    INSTALL_COMMAND ""
-    BUILD_BYPRODUCTS ${CMAKE_BINARY_DIR}/sql_parser/src/sql_parser_external/libsqlparser.a
+# Add sql-parser build commands
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sql-parser/libsqlparser.so
+    COMMAND make clean
+    COMMAND make
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sql-parser
+    COMMENT "Building sql-parser library"
 )
 
-# Create an imported target for the sql-parser library
-add_library(hsql STATIC IMPORTED GLOBAL)
-add_dependencies(hsql sql_parser_external)
+# Add command to copy the library to build directory
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/libsqlparser.so
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sql-parser/libsqlparser.so
+        ${CMAKE_BINARY_DIR}/libsqlparser.so
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sql-parser/libsqlparser.so
+    COMMENT "Copying sql-parser library to build directory"
+)
 
-# Set the imported target properties
-set_target_properties(hsql PROPERTIES
-    IMPORTED_LOCATION ${CMAKE_BINARY_DIR}/sql_parser/src/sql_parser_external/libsqlparser.a
-    INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_BINARY_DIR}/sql_parser/src/sql_parser_external/src
+add_custom_target(build_sql_parser
+    DEPENDS ${CMAKE_BINARY_DIR}/libsqlparser.so
 )
 
 # Add common library
@@ -72,7 +71,10 @@ add_library(pondhouse_common
 )
 
 # Add include directories for common library
-target_include_directories(pondhouse_common PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(pondhouse_common PUBLIC 
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/third_party/rapidjson/include
+)
 
 # Link common library with dependencies
 target_link_libraries(pondhouse_common PUBLIC 
@@ -80,25 +82,23 @@ target_link_libraries(pondhouse_common PUBLIC
     Parquet::parquet_shared
     ${XXHASH_LIBRARY}
     fmt::fmt
-    hsql
+    ${CMAKE_BINARY_DIR}/libsqlparser.so
 )
+
+# Add dependency on sql-parser build
+add_dependencies(pondhouse_common build_sql_parser)
 
 # Add main executable
 add_executable(${PROJECT_NAME} src/main.cpp)
 
 # Link main executable with common library
-target_link_libraries(${PROJECT_NAME} PRIVATE pondhouse_common hsql)
+target_link_libraries(${PROJECT_NAME} PRIVATE pondhouse_common)
 
 # Enable testing
 enable_testing()
 
-# Include FetchContent for downloading GoogleTest
-FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG release-1.12.1
-)
-FetchContent_MakeAvailable(googletest)
+# Add Google Test from submodule
+add_subdirectory(third_party/googletest)
 
 # Add test executable
 add_executable(
@@ -139,17 +139,18 @@ add_executable(
 target_include_directories(unit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/tests
-    ${CMAKE_BINARY_DIR}/sql_parser/src/sql_parser_external/src
+    ${CMAKE_SOURCE_DIR}/third_party/rapidjson/include
+    ${CMAKE_SOURCE_DIR}/third_party/sql-parser/src
 )
 
 # Link test executable against gtest & your project libraries
 target_link_libraries(unit_tests
-    gtest
-    gtest_main
+    GTest::gtest
+    GTest::gtest_main
     pondhouse_common
-    hsql
     Arrow::arrow_shared
     Parquet::parquet_shared
+    ${CMAKE_BINARY_DIR}/libsqlparser.so
 )
 
 # Add tests to CTest
