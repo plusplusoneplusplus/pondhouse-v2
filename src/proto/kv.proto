@@ -25,8 +25,8 @@ message FileInfo {
     string name = 1;
     uint64 size = 2;
     uint64 level = 3;
-    string smallest_key = 4;
-    string largest_key = 5;
+    bytes smallest_key = 4;
+    bytes largest_key = 5;
 }
 
 // Entry for tracking table metadata operations
@@ -36,4 +36,17 @@ message TableMetadataEntry {
     repeated FileInfo deleted_files = 3;
     uint64 wal_sequence = 4;  // Current WAL sequence number
     repeated string wal_files = 5;  // List of active WAL files
+}
+
+// State of a level in the metadata state machine
+message LevelState {
+    uint64 level = 1;
+    uint64 total_size = 2;
+    repeated FileInfo files = 3;
+}
+
+// Complete state of the metadata state machine
+message TableMetadataStateMachineState {
+    repeated LevelState levels = 1;
+    uint64 total_size = 2;
 }

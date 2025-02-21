@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <chrono>
 #include <string>
 
@@ -63,6 +64,12 @@ private:
 #define LOG_STATUS(...) pond::common::Logger::instance().status(__FILE__, __LINE__, __VA_ARGS__)
 #define LOG_WARNING(...) pond::common::Logger::instance().warning(__FILE__, __LINE__, __VA_ARGS__)
 #define LOG_ERROR(...) pond::common::Logger::instance().error(__FILE__, __LINE__, __VA_ARGS__)
+
+#define LOG_CHECK(condition, ...)                                   \
+    if (!(condition)) {                                             \
+        LOG_ERROR(__FILE__, __LINE__, "Check failed: " #condition); \
+        assert(false);                                              \
+    }
 
 }  // namespace pond::common
 
