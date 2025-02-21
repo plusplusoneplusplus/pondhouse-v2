@@ -9,13 +9,14 @@ namespace pond::kv {
 class RecordTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        std::vector<common::ColumnSchema> columns = {{"id", common::ColumnType::INT32, false},
-                                                     {"name", common::ColumnType::STRING, true},
-                                                     {"age", common::ColumnType::INT32, true},
-                                                     {"salary", common::ColumnType::DOUBLE, true},
-                                                     {"is_active", common::ColumnType::BOOLEAN, true},
-                                                     {"data", common::ColumnType::BINARY, true},
-                                                     {"uuid", common::ColumnType::UUID, true}};
+        std::vector<common::ColumnSchema> columns = {
+            {"id", common::ColumnType::INT32, common::Nullability::NOT_NULL},
+            {"name", common::ColumnType::STRING, common::Nullability::NULLABLE},
+            {"age", common::ColumnType::INT32, common::Nullability::NULLABLE},
+            {"salary", common::ColumnType::DOUBLE, common::Nullability::NULLABLE},
+            {"is_active", common::ColumnType::BOOLEAN, common::Nullability::NULLABLE},
+            {"data", common::ColumnType::BINARY, common::Nullability::NULLABLE},
+            {"uuid", common::ColumnType::UUID, common::Nullability::NULLABLE}};
         schema = std::make_shared<common::Schema>(columns);
     }
 
@@ -123,11 +124,11 @@ TEST_F(RecordTest, SchemaOperations) {
     // Test schema column access
     EXPECT_EQ(schema->columns()[0].name, "id");
     EXPECT_EQ(schema->columns()[0].type, common::ColumnType::INT32);
-    EXPECT_FALSE(schema->columns()[0].nullable);
+    EXPECT_EQ(schema->columns()[0].nullability, common::Nullability::NOT_NULL);
 
     EXPECT_EQ(schema->columns()[1].name, "name");
     EXPECT_EQ(schema->columns()[1].type, common::ColumnType::STRING);
-    EXPECT_TRUE(schema->columns()[1].nullable);
+    EXPECT_EQ(schema->columns()[1].nullability, common::Nullability::NULLABLE);
 }
 
 TEST_F(RecordTest, LargeValues) {

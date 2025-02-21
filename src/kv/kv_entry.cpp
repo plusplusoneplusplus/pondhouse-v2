@@ -63,13 +63,4 @@ bool KvEntry::Deserialize(const DataChunk& data) {
     return true;
 }
 
-common::Result<std::unique_ptr<ISerializable>> KvEntry::DeserializeAsUniquePtr(const DataChunk& data) const {
-    std::unique_ptr<ISerializable> entry = std::make_unique<KvEntry>();
-    if (!entry->Deserialize(data)) {
-        return common::Result<std::unique_ptr<ISerializable>>::failure(ErrorCode::InvalidArgument,
-                                                                       "Failed to deserialize KvEntry");
-    }
-    return common::Result<std::unique_ptr<ISerializable>>::success(std::move(entry));
-}
-
 }  // namespace pond::kv

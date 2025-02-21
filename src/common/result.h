@@ -18,13 +18,17 @@
         }                            \
     } while (false)
 
-#define RETURN_IF_ERROR_T(T, expr)                                                      \
-    do {                                                                                \
-        auto result_tmp = (expr);                                                       \
-        if (result_tmp.hasError()) {                                                    \
-            LOG_ERROR("Failed to %s: %s", #expr, result_tmp.error().message().c_str()); \
-            return pond::common::as_result_type_t<T>::failure(result_tmp.error());      \
-        }                                                                               \
+#define RETURN_IF_ERROR_T(T, expr)                                                 \
+    do {                                                                           \
+        auto result_tmp = (expr);                                                  \
+        if (result_tmp.hasError()) {                                               \
+            LOG_ERROR("Failed to %s: %s. File: %s, Line: %d",                      \
+                      #expr,                                                       \
+                      result_tmp.error().message().c_str(),                        \
+                      __FILE__,                                                    \
+                      __LINE__);                                                   \
+            return pond::common::as_result_type_t<T>::failure(result_tmp.error()); \
+        }                                                                          \
     } while (false)
 
 namespace pond::common {

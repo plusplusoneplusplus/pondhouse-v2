@@ -84,17 +84,6 @@ bool TableMetadataEntry::Deserialize(const common::DataChunk& chunk) {
     return true;
 }
 
-common::Result<std::unique_ptr<common::ISerializable>> TableMetadataEntry::DeserializeAsUniquePtr(
-    const common::DataChunk& chunk) const {
-    TableMetadataEntry entry;
-    if (!entry.Deserialize(chunk)) {
-        return common::Result<std::unique_ptr<common::ISerializable>>::failure(common::ErrorCode::InvalidArgument,
-                                                                               "Failed to deserialize metadata entry");
-    }
-
-    return common::Result<std::unique_ptr<common::ISerializable>>::success(std::make_unique<TableMetadataEntry>(entry));
-}
-
 void TableMetadataStateMachine::AddFiles(const std::vector<FileInfo>& files) {
     for (const auto& file : files) {
         if (sstable_files_.find(file.level) == sstable_files_.end()) {

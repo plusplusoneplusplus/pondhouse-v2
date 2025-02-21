@@ -37,8 +37,6 @@ public:
     common::DataChunk Serialize() const override;
     void Serialize(common::DataChunk& data) const override;
     bool Deserialize(const common::DataChunk& data) override;
-    common::Result<std::unique_ptr<common::ISerializable>> DeserializeAsUniquePtr(
-        const common::DataChunk& data) const override;
 };
 
 }  // namespace pond::kv

@@ -20,9 +20,6 @@ public:
     // Deserialize the object from a DataChunk
     // Returns true if deserialization is successful, false otherwise
     virtual bool Deserialize(const DataChunk& data) = 0;
-
-    // Deserialize the object from a DataChunk and return a unique pointer to the object
-    virtual common::Result<std::unique_ptr<ISerializable>> DeserializeAsUniquePtr(const DataChunk& data) const = 0;
 };
 
 }  // namespace pond::common

@@ -104,16 +104,6 @@ struct FileInfo : public common::ISerializable {
 
         return true;
     }
-
-    common::Result<std::unique_ptr<common::ISerializable>> DeserializeAsUniquePtr(
-        const common::DataChunk& chunk) const override {
-        auto file_info = std::make_unique<FileInfo>();
-        if (!file_info->Deserialize(chunk)) {
-            return common::Result<std::unique_ptr<common::ISerializable>>::failure(common::ErrorCode::InvalidArgument,
-                                                                                   "Failed to deserialize FileInfo");
-        }
-        return common::Result<std::unique_ptr<common::ISerializable>>::success(std::move(file_info));
-    }
 };
 
 // Entry for tracking table metadata operations
@@ -128,8 +118,6 @@ public:
     common::DataChunk Serialize() const override;
     void Serialize(common::DataChunk& chunk) const override;
     bool Deserialize(const common::DataChunk& chunk) override;
-    common::Result<std::unique_ptr<common::ISerializable>> DeserializeAsUniquePtr(
-        const common::DataChunk& chunk) const override;
     void SerializeFiles(const std::vector<FileInfo>& files, common::DataChunk& chunk) const;
     bool DeserializeFiles(const uint8_t*& ptr, std::vector<FileInfo>& files);
 

@@ -30,15 +30,6 @@ public:
         data = chunk;
         return true;
     }
-
-    Result<std::unique_ptr<ISerializable>> DeserializeAsUniquePtr(const DataChunk& chunk) const override {
-        auto entry = std::make_unique<StateMachineWalEntry>();
-        if (!entry->Deserialize(chunk)) {
-            return Result<std::unique_ptr<ISerializable>>::failure(
-                Error(ErrorCode::DeserializationError, "Failed to deserialize StateMachineWalEntry"));
-        }
-        return Result<std::unique_ptr<ISerializable>>::success(std::move(entry));
-    }
 };
 
 /**

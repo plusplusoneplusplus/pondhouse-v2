@@ -88,6 +88,7 @@ enum class ErrorCode {
     WALCreationFailed = 408,
     RecoveryFailed = 409,
     FlushFailed = 410,
+    CreateTableFailed = 411,
 
     // Bloom filter errors
     BloomFilterInvalidDataSize = 500,
