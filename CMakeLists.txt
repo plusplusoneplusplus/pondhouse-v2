@@ -7,9 +7,71 @@ set(CMAKE_CXX_STANDARD_REQUIRED YES)
 # Find required packages
 find_package(Arrow REQUIRED)
 find_package(Parquet REQUIRED)
+find_package(Protobuf REQUIRED)
+
+# A dependency for the protobuf
+find_package(absl REQUIRED)
+
+# Define Abseil libraries needed
+set(ABSL_LIBS
+    absl::base
+    absl::synchronization
+    absl::strings
+    absl::status
+    absl::statusor
+    absl::cord
+    absl::hash
+    absl::flat_hash_map
+    absl::flat_hash_set
+    absl::btree
+    absl::time
+    absl::log
+    absl::log_internal_message
+    absl::log_internal_check_op
+)
 
 # Find xxHash library
 find_library(XXHASH_LIBRARY xxhash REQUIRED)
+
+# Set protobuf output directory
+set(PROTO_OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/build)
+
+# Create proto build directory if it doesn't exist
+file(MAKE_DIRECTORY ${PROTO_OUTPUT_DIR})
+
+# Protobuf files
+set(PROTO_FILES
+    src/proto/kv.proto
+)
+
+# Custom command to generate protobuf files
+set(PROTO_SRCS "")
+set(PROTO_HDRS "")
+
+foreach(PROTO_FILE ${PROTO_FILES})
+    get_filename_component(PROTO_NAME ${PROTO_FILE} NAME_WE)
+    set(PROTO_HEADER "${PROTO_OUTPUT_DIR}/proto/${PROTO_NAME}.pb.h")
+    set(PROTO_SRC "${PROTO_OUTPUT_DIR}/proto/${PROTO_NAME}.pb.cc")
+    
+    add_custom_command(
+        OUTPUT 
+            "${PROTO_HEADER}"
+            "${PROTO_SRC}"
+        COMMAND ${Protobuf_PROTOC_EXECUTABLE}
+        ARGS --cpp_out=${PROTO_OUTPUT_DIR}
+             --proto_path=${CMAKE_CURRENT_SOURCE_DIR}/src
+             ${CMAKE_CURRENT_SOURCE_DIR}/${PROTO_FILE}
+        DEPENDS ${PROTO_FILE}
+        COMMENT "Generating protobuf files for ${PROTO_FILE}"
+        VERBATIM
+    )
+    
+    list(APPEND PROTO_SRCS "${PROTO_SRC}")
+    list(APPEND PROTO_HDRS "${PROTO_HEADER}")
+endforeach()
+
+# Create a custom target for protobuf generation
+add_custom_target(generate_protos ALL DEPENDS ${PROTO_SRCS} ${PROTO_HDRS})
 
 # Include FetchContent for downloading dependencies
 include(FetchContent)
@@ -69,12 +131,15 @@ add_library(pondhouse_common
     src/format/parquet/append_only_output_stream.cpp
     src/format/parquet/parquet_reader.cpp
     src/format/parquet/parquet_writer.cpp
+    ${PROTO_SRCS}
 )
 
 # Add include directories for common library
 target_include_directories(pondhouse_common PUBLIC 
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party/rapidjson/include
+    ${Protobuf_INCLUDE_DIRS}
+    ${PROTO_OUTPUT_DIR}
 )
 
 # Link common library with dependencies
@@ -83,11 +148,16 @@ target_link_libraries(pondhouse_common PUBLIC
     Parquet::parquet_shared
     ${XXHASH_LIBRARY}
     fmt::fmt
+    protobuf::libprotobuf
+    ${ABSL_LIBS}
     ${CMAKE_BINARY_DIR}/libsqlparser.so
 )
 
 # Add dependency on sql-parser build
 add_dependencies(pondhouse_common build_sql_parser)
+
+# Add dependency on protobuf generation
+add_dependencies(pondhouse_common generate_protos)
 
 # Add main executable
 add_executable(${PROJECT_NAME} src/main.cpp)
@@ -135,6 +205,7 @@ add_executable(
     tests/main.cpp
     tests/sql/hyrise_parser_test.cpp
     tests/test_helper.cpp
+    tests/proto/metadata_test.cpp
 )
 
 # Add include directories for tests
@@ -143,6 +214,8 @@ target_include_directories(unit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/tests
     ${CMAKE_SOURCE_DIR}/third_party/rapidjson/include
     ${CMAKE_SOURCE_DIR}/third_party/sql-parser/src
+    ${Protobuf_INCLUDE_DIRS}
+    ${PROTO_OUTPUT_DIR}
 )
 
 # Link test executable against gtest & your project libraries
@@ -152,8 +225,20 @@ target_link_libraries(unit_tests
     pondhouse_common
     Arrow::arrow_shared
     Parquet::parquet_shared
+    protobuf::libprotobuf
     ${CMAKE_BINARY_DIR}/libsqlparser.so
+    ${ABSL_LIBS}
 )
+
+# Add dependency on protobuf generation for tests
+add_dependencies(unit_tests generate_protos)
 
 # Add tests to CTest
 add_test(NAME unit_tests COMMAND unit_tests)
+
+# Add custom clean target to remove generated protobuf files
+add_custom_target(clean_all
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${PROTO_OUTPUT_DIR}
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target clean
+    COMMENT "Removing all generated files and build artifacts"
+)

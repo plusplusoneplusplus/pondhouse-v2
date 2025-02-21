@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package pond.proto;
+
+// Test message to verify protobuf functionality
+message TestMetadataEntry {
+    string test_field = 1;
+    int32 test_number = 2;
+    bool test_flag = 3;
+} 
+
+// Operation types for metadata entries
+enum MetadataOpType {
+    METADATA_OP_TYPE_UNSPECIFIED = 0;
+    METADATA_OP_TYPE_CREATE_SSTABLE = 1;
+    METADATA_OP_TYPE_DELETE_SSTABLE = 2;
+    METADATA_OP_TYPE_UPDATE_STATS = 3;
+    METADATA_OP_TYPE_FLUSH_MEMTABLE = 4;
+    METADATA_OP_TYPE_ROTATE_WAL = 5;
+    METADATA_OP_TYPE_COMPACT_FILES = 6;
+}
+
+// File information for metadata operations
+message FileInfo {
+    string name = 1;
+    uint64 size = 2;
+    uint64 level = 3;
+    string smallest_key = 4;
+    string largest_key = 5;
+}
+
+// Entry for tracking table metadata operations
+message TableMetadataEntry {
+    MetadataOpType op_type = 1;
+    repeated FileInfo added_files = 2;
+    repeated FileInfo deleted_files = 3;
+    uint64 wal_sequence = 4;  // Current WAL sequence number
+    repeated string wal_files = 5;  // List of active WAL files
+}
