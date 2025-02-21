@@ -62,6 +62,8 @@ std::string Logger::formatTime() const {
 
 std::string Logger::levelToString(LogLevel level) const {
     switch (level) {
+        case LogLevel::Debug:
+            return "DEBUG";
         case LogLevel::Verbose:
             return "VERBOSE";
         case LogLevel::Status:

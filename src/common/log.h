@@ -7,6 +7,7 @@
 namespace pond::common {
 
 enum class LogLevel {
+    Debug,    // More detailed information for debugging than Verbose
     Verbose,  // Detailed information for debugging
     Status,   // General operational information
     Warning,  // Potential issues that don't affect core functionality
@@ -26,6 +27,9 @@ public:
 
     template <typename... Args>
     void verbose(const char* file, int line, const char* format, Args&&... args);
+
+    template <typename... Args>
+    void debug(const char* file, int line, const char* format, Args&&... args);
 
     template <typename... Args>
     void status(const char* file, int line, const char* format, Args&&... args);
@@ -60,6 +64,7 @@ private:
 };
 
 // Convenience macros
+#define LOG_DEBUG(...) pond::common::Logger::instance().debug(__FILE__, __LINE__, __VA_ARGS__)
 #define LOG_VERBOSE(...) pond::common::Logger::instance().verbose(__FILE__, __LINE__, __VA_ARGS__)
 #define LOG_STATUS(...) pond::common::Logger::instance().status(__FILE__, __LINE__, __VA_ARGS__)
 #define LOG_WARNING(...) pond::common::Logger::instance().warning(__FILE__, __LINE__, __VA_ARGS__)

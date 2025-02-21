@@ -47,6 +47,7 @@ bool FileInfo::Deserialize(const common::DataChunk& chunk) {
 proto::TableMetadataEntry TableMetadataEntry::ToProto() const {
     proto::TableMetadataEntry pb;
     pb.set_op_type(static_cast<proto::MetadataOpType>(op_type_));
+    pb.set_wal_sequence(sequence_);
 
     // Convert added files
     for (const auto& file : added_files_) {
@@ -72,7 +73,7 @@ TableMetadataEntry TableMetadataEntry::FromProto(const proto::TableMetadataEntry
         deleted.push_back(FileInfo::FromProto(file_pb));
     }
 
-    return TableMetadataEntry(static_cast<MetadataOpType>(pb.op_type()), added, deleted);
+    return TableMetadataEntry(static_cast<MetadataOpType>(pb.op_type()), added, deleted, pb.wal_sequence());
 }
 
 common::DataChunk TableMetadataEntry::Serialize() const {
@@ -96,9 +97,17 @@ bool TableMetadataEntry::Deserialize(const common::DataChunk& chunk) {
 }
 
 // TableMetadataStateMachineState implementations
+void TableMetadataStateMachineState::RemoveActiveLogSequence(uint64_t sequence) {
+    auto it = std::find(active_log_sequences_.begin(), active_log_sequences_.end(), sequence);
+    if (it != active_log_sequences_.end()) {
+        active_log_sequences_.erase(it);
+    }
+}
+
 proto::TableMetadataStateMachineState TableMetadataStateMachineState::ToProto() const {
     proto::TableMetadataStateMachineState state;
     state.set_total_size(total_size_);
+    state.set_sstable_flush_wal_sequence(sstable_flush_wal_sequence_);
 
     // Serialize each level's files
     for (const auto& [level, files] : sstable_files_) {
@@ -111,6 +120,14 @@ proto::TableMetadataStateMachineState TableMetadataStateMachineState::ToProto() 
         }
     }
 
+    // Add log sequences
+    for (const auto sequence : active_log_sequences_) {
+        state.add_active_log_sequences(sequence);
+    }
+    for (const auto sequence : pending_gc_sequences_) {
+        state.add_pending_gc_sequences(sequence);
+    }
+
     return state;
 }
 
@@ -118,6 +135,7 @@ TableMetadataStateMachineState TableMetadataStateMachineState::FromProto(
     const proto::TableMetadataStateMachineState& pb) {
     TableMetadataStateMachineState state;
     state.total_size_ = pb.total_size();
+    state.sstable_flush_wal_sequence_ = pb.sstable_flush_wal_sequence();
 
     // Restore state from protobuf
     for (const auto& level_state : pb.levels()) {
@@ -127,6 +145,14 @@ TableMetadataStateMachineState TableMetadataStateMachineState::FromProto(
         for (const auto& file_pb : level_state.files()) {
             state.sstable_files_[level].push_back(FileInfo::FromProto(file_pb));
         }
+    }
+
+    // Restore log sequences
+    for (const auto sequence : pb.active_log_sequences()) {
+        state.active_log_sequences_.push_back(sequence);
+    }
+    for (const auto sequence : pb.pending_gc_sequences()) {
+        state.pending_gc_sequences_.push_back(sequence);
     }
 
     return state;
@@ -182,6 +208,26 @@ void TableMetadataStateMachineState::RemoveFiles(const std::vector<FileInfo>& fi
     }
 }
 
+std::string TableMetadataStateMachineState::ToString(bool verbose) const {
+    std::stringstream ss;
+    ss << "TableMetadataStateMachineState{" << std::endl;
+    ss << "  total_size: " << total_size_ << std::endl;
+    ss << "  sstable_flush_wal_sequence: " << sstable_flush_wal_sequence_ << std::endl;
+    ss << "  sstable_files: " << sstable_files_.size() << std::endl;
+    ss << "  level_sizes: " << level_sizes_.size() << std::endl;
+    ss << "  active_log_sequences: " << active_log_sequences_.size() << std::endl;
+    ss << "  pending_gc_sequences: " << pending_gc_sequences_.size() << std::endl;
+    if (verbose) {
+        ss << "  active_log_sequences: ";
+        for (const auto& sequence : active_log_sequences_) {
+            ss << sequence << " ";
+        }
+        ss << std::endl;
+    }
+    ss << "}" << std::endl;
+    return ss.str();
+}
+
 // TableMetadataStateMachine implementations
 common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChunk& entry_data) {
     TableMetadataEntry entry;
@@ -201,7 +247,6 @@ common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChu
             AddFiles(entry.added_files());
             RemoveFiles(entry.deleted_files());
             break;
-
         case MetadataOpType::UpdateStats:
             // For UpdateStats, we expect files to contain per-level size information
             total_size_ = 0;
@@ -211,10 +256,33 @@ common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChu
                 total_size_ += file.size;
             }
             break;
-        case MetadataOpType::FlushMemTable:
-        case MetadataOpType::RotateWAL:
-            // These operations don't modify the state directly
+        case MetadataOpType::FlushMemTable: {
+            AddFiles(entry.added_files());
+            sstable_flush_wal_sequence_ = std::max(sstable_flush_wal_sequence_, entry.sequence());
             break;
+        }
+        case MetadataOpType::RotateWAL:
+            // When WAL is rotated, add the new log sequence to active list
+            AddActiveLogSequence(entry.sequence());
+
+            // Move all log sequences less than current sequence to pending GC
+            // Keep the last sequence untouched
+            if (active_log_sequences_.size() > 1) {
+                for (auto i = 0; i < active_log_sequences_.size() - 1; ++i) {
+                    auto last = active_log_sequences_.back();
+                    for (auto it = active_log_sequences_.begin(); it != active_log_sequences_.end();) {
+                        if (*it < sstable_flush_wal_sequence_ && *it != last) {
+                            AddPendingGCSequence(*it);
+                            it = active_log_sequences_.erase(it);
+                        } else {
+                            ++it;
+                        }
+                    }
+                }
+            }
+
+            break;
+
         case MetadataOpType::Unknown:
             return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Unknown metadata operation type");
     }

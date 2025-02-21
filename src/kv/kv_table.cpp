@@ -2,6 +2,7 @@
 
 #include <sstream>
 
+#include "common/log.h"
 #include "common/time.h"
 
 namespace pond::kv {
@@ -10,10 +11,6 @@ KvTable::KvTable(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::s
     : fs_(std::move(fs)), table_name_(table_name), max_wal_size_(max_wal_size) {
     // Initialize WAL
     wal_ = std::make_shared<common::WAL<KvEntry>>(fs_);
-    auto result = wal_->open(GetWALPath(current_wal_sequence_));
-    if (!result.ok()) {
-        throw std::runtime_error("Failed to open WAL: " + result.error().message());
-    }
 
     // Initialize active memtable
     active_memtable_ = std::make_unique<MemTable>();
@@ -27,6 +24,8 @@ KvTable::KvTable(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::s
 
     // Initialize SSTable manager
     sstable_manager_ = std::make_unique<SSTableManager>(fs_, table_name_, metadata_state_machine_);
+
+    Recover();
 }
 
 common::Result<void> KvTable::Put(const std::string& key, const common::DataChunk& value, bool acquire_lock) {
@@ -126,33 +125,31 @@ common::Result<bool> KvTable::Recover() {
     using ReturnType = common::Result<bool>;
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // First recover metadata state
-    auto metadata_result = metadata_state_machine_->Open();
-    RETURN_IF_ERROR_T(ReturnType, metadata_result);
-
-    if (!wal_) {
-        return common::Result<bool>::success(false);
+    if (!metadata_state_machine_->HasHistory()) {
+        auto rotate_result = RotateWAL();
+        RETURN_IF_ERROR_T(ReturnType, rotate_result);
+        LOG_STATUS("Initialized the kv table");
+        return common::Result<bool>::success(true);
     }
 
     // Find all WAL files
     std::vector<std::string> wal_files;
-    size_t max_sequence = 0;
-    for (size_t i = 0; i < 1000; i++) {  // Limit to prevent infinite loop
-        std::string wal_path = GetWALPath(i);
+    for (size_t sequence : metadata_state_machine_->GetActiveLogSequences()) {
+        std::string wal_path = GetWALPath(sequence);
         auto exists = fs_->Exists(wal_path);
         if (!exists) {
             break;
         }
         wal_files.push_back(wal_path);
-        max_sequence = i;
     }
 
     if (wal_files.empty()) {
-        return common::Result<bool>::success(false);
+        LOG_STATUS("No active WAL files found.");
+        return common::Result<bool>::success(true);
     }
 
     // Set current sequence number to the highest found
-    current_wal_sequence_ = max_sequence;
+    next_wal_sequence_ = metadata_state_machine_->GetActiveLogSequences().front();
 
     // Replay WAL files in order
     for (const auto& wal_path : wal_files) {
@@ -177,23 +174,21 @@ common::Result<bool> KvTable::Recover() {
                     return common::Result<bool>::failure(common::ErrorCode::InvalidOperation, "Unknown WAL entry type");
             }
 
+            next_wal_sequence_ += 1;
+
             // Check if memtable needs to be flushed
             if (active_memtable_->ShouldFlush()) {
                 auto switch_result = SwitchMemTable();
-                if (!switch_result.ok()) {
-                    return common::Result<bool>::failure(switch_result.error());
-                }
+                RETURN_IF_ERROR_T(ReturnType, switch_result);
             }
         }
 
-        // Close WAL file
-        auto close_result = wal_->close();
-        RETURN_IF_ERROR_T(ReturnType, close_result);
+        // Close WAL file, except for the last one
+        if (&wal_path != &wal_files.back()) {
+            auto close_result = wal_->close();
+            RETURN_IF_ERROR_T(ReturnType, close_result);
+        }
     }
-
-    // Open the latest WAL file for writing
-    auto result = wal_->open(GetWALPath(current_wal_sequence_));
-    RETURN_IF_ERROR_T(ReturnType, result);
 
     return common::Result<bool>::success(true);
 }
@@ -205,6 +200,13 @@ common::Result<void> KvTable::Flush() {
 
 common::Result<common::LSN> KvTable::WriteToWAL(KvEntry& entry) {
     using ReturnType = common::Result<common::LSN>;
+
+    auto result = wal_->append(entry);
+    RETURN_IF_ERROR_T(ReturnType, result);
+
+    LOG_CHECK(result.value() == next_wal_sequence_, "WAL sequence number mismatch");
+    next_wal_sequence_++;
+
     // Check if WAL needs rotation
     auto size_result = fs_->Size(wal_->handle());
     RETURN_IF_ERROR_T(ReturnType, size_result);
@@ -213,9 +215,6 @@ common::Result<common::LSN> KvTable::WriteToWAL(KvEntry& entry) {
         auto rotate_result = RotateWAL();
         RETURN_IF_ERROR_T(ReturnType, rotate_result);
     }
-
-    auto result = wal_->append(entry);
-    RETURN_IF_ERROR_T(ReturnType, result);
 
     return common::Result<common::LSN>::success(entry.lsn());
 }
@@ -229,11 +228,12 @@ common::Result<void> KvTable::SwitchMemTable() {
     auto flush_result = sstable_manager_->CreateSSTableFromMemTable(*active_memtable_);
     RETURN_IF_ERROR_T(ReturnType, flush_result);
 
-    // Track the flush operation in metadata
-    std::vector<FileInfo> files;
-    files.emplace_back(flush_result.value());
-    auto track_result = TrackMetadataOp(MetadataOpType::FlushMemTable, files);
-    RETURN_IF_ERROR_T(ReturnType, track_result);
+    // NOTE: sstable_manager_ will track the flush operation in metadata state machine
+    // so we don't need to do anything here
+
+    LOG_VERBOSE("Flushed memtable to SSTable, seq number=%llu, table state=%s",
+                next_wal_sequence_,
+                metadata_state_machine_->ToString().c_str());
 
     // Switch to new memtable
     active_memtable_ = std::move(new_memtable);
@@ -251,10 +251,13 @@ common::Result<void> KvTable::RotateWAL() {
     auto close_result = wal_->close();
     RETURN_IF_ERROR_T(ReturnType, close_result);
 
-    // Increment sequence number and open new WAL
-    current_wal_sequence_++;
-    auto open_result = wal_->open(GetWALPath(current_wal_sequence_));
+    // open new WAL
+    auto open_result = wal_->open(GetWALPath(next_wal_sequence_));
     RETURN_IF_ERROR_T(ReturnType, open_result);
+
+    LOG_VERBOSE("Rotated WAL, seq number=%llu, table state=%s",
+                next_wal_sequence_,
+                metadata_state_machine_->ToString().c_str());
 
     return common::Result<void>::success();
 }
@@ -264,7 +267,7 @@ std::string KvTable::GetWALPath(size_t sequence_number) const {
 }
 
 common::Result<void> KvTable::TrackMetadataOp(MetadataOpType op_type, const std::vector<FileInfo>& files) {
-    TableMetadataEntry entry(op_type, files);
+    TableMetadataEntry entry(op_type, files, {}, next_wal_sequence_);
     return metadata_state_machine_->Apply(entry.Serialize());
 }
 

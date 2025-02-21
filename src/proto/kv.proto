@@ -34,8 +34,8 @@ message TableMetadataEntry {
     MetadataOpType op_type = 1;
     repeated FileInfo added_files = 2;
     repeated FileInfo deleted_files = 3;
-    uint64 wal_sequence = 4;  // Current WAL sequence number
-    repeated string wal_files = 5;  // List of active WAL files
+    uint64 wal_sequence = 4;  // WAL sequence number associated with this operation (used for log file lifecycle tracking)
+    repeated string wal_files = 5;  // List of active WAL files (deprecated, use active_log_files in state instead)
 }
 
 // State of a level in the metadata state machine
@@ -49,4 +49,9 @@ message LevelState {
 message TableMetadataStateMachineState {
     repeated LevelState levels = 1;
     uint64 total_size = 2;
+    uint64 sstable_flush_wal_sequence = 3;
+    // Sequence numbers of log files that are still needed (memtable not flushed)
+    repeated uint64 active_log_sequences = 4; 
+    // Sequence numbers of log files that can be deleted after next checkpoint
+    repeated uint64 pending_gc_sequences = 5;  
 }

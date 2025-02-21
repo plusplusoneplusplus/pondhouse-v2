@@ -20,6 +20,8 @@ protected:
         return common::DataChunk(reinterpret_cast<const uint8_t*>(str.data()), str.size());
     }
 
+    size_t GetMemTableSize() const { return table_->active_memtable_->GetEntryCount(); }
+
     std::shared_ptr<common::MemoryAppendOnlyFileSystem> fs_;
     std::unique_ptr<KvTable> table_;
 };
@@ -100,26 +102,36 @@ TEST_F(KvTableTest, FlushAndRecovery) {
     // Insert some data
     for (int i = 0; i < 10; i++) {
         auto value = CreateTestValue("value" + std::to_string(i));
-        EXPECT_TRUE(table_->Put("key" + std::to_string(i), value).ok());
+        VERIFY_RESULT_MSG(table_->Put("key" + std::to_string(i), value), "key" + std::to_string(i));
     }
 
     // Flush to SSTable
-    EXPECT_TRUE(table_->Flush().ok());
+    VERIFY_RESULT_MSG(table_->Flush(), "Flush memtable");
+
+    LOG_STATUS("Recovering table - 1");
+    table_ = std::make_unique<KvTable>(fs_, "test_table");
+    EXPECT_EQ(GetMemTableSize(), 10);
+
+    VERIFY_RESULT_MSG(table_->RotateWAL(), "Rotate WAL");
+    LOG_STATUS("Recovering table - 2");
+    table_ = std::make_unique<KvTable>(fs_, "test_table");
+    EXPECT_EQ(GetMemTableSize(), 0);
 
     // Insert more data
     for (int i = 10; i < 20; i++) {
         auto value = CreateTestValue("value" + std::to_string(i));
-        EXPECT_TRUE(table_->Put("key" + std::to_string(i), value).ok());
+        VERIFY_RESULT_MSG(table_->Put("key" + std::to_string(i), value), "key" + std::to_string(i));
     }
 
     // Create a new table instance (simulating restart)
+    LOG_STATUS("Recovering table - 3");
     table_ = std::make_unique<KvTable>(fs_, "test_table");
-    EXPECT_TRUE(table_->Recover().ok());
+    EXPECT_EQ(GetMemTableSize(), 10);
 
     // Verify all data is recovered
     for (int i = 0; i < 20; i++) {
         auto result = table_->Get("key" + std::to_string(i));
-        EXPECT_TRUE(result.ok());
+        VERIFY_RESULT_MSG(result, "key" + std::to_string(i));
         auto value = std::move(result).value();
         EXPECT_EQ(std::string(reinterpret_cast<const char*>(value.Data()), value.Size()), "value" + std::to_string(i));
     }

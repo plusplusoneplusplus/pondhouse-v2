@@ -26,6 +26,8 @@ static constexpr size_t DEFAULT_WAL_SIZE = 64 * 1024 * 1024;  // 64MB
  * without schema validation or column awareness.
  */
 class KvTable {
+    friend class KvTableTest;
+
 public:
     explicit KvTable(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
                      const std::string& table_name,
@@ -45,6 +47,7 @@ public:
     // Recovery and maintenance
     common::Result<bool> Recover();
     common::Result<void> Flush();
+    common::Result<void> RotateWAL();
 
 private:
     // Write entry to WAL and return LSN
@@ -52,9 +55,6 @@ private:
 
     // Switch to a new MemTable, flushing the current one if needed
     common::Result<void> SwitchMemTable();
-
-    // Create a new WAL file
-    common::Result<void> RotateWAL();
 
     // Get the WAL file path with sequence number
     std::string GetWALPath(size_t sequence_number) const;
@@ -70,7 +70,7 @@ private:
     std::shared_ptr<TableMetadataStateMachine> metadata_state_machine_;
     mutable std::mutex mutex_;  // For thread-safe MemTable switching
     size_t max_wal_size_;
-    size_t current_wal_sequence_{0};
+    size_t next_wal_sequence_{0};
 };
 
 }  // namespace pond::kv

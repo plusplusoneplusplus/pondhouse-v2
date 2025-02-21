@@ -41,6 +41,11 @@ void Logger::log(LogLevel level, const char* file, int line, const char* format,
 }
 
 template <typename... Args>
+void Logger::debug(const char* file, int line, const char* format, Args&&... args) {
+    log(LogLevel::Debug, file, line, format, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
 void Logger::verbose(const char* file, int line, const char* format, Args&&... args) {
     log(LogLevel::Verbose, file, line, format, std::forward<Args>(args)...);
 }

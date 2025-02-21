@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -49,19 +50,21 @@ struct FileInfo : public common::ISerializable {
     void Serialize(common::DataChunk& chunk) const override;
     bool Deserialize(const common::DataChunk& chunk) override;
 };
-
 // Entry for tracking table metadata operations
 class TableMetadataEntry : public common::WalEntry {
 public:
     TableMetadataEntry() = default;
     TableMetadataEntry(MetadataOpType op_type,
                        const std::vector<FileInfo>& added = {},
-                       const std::vector<FileInfo>& deleted = {})
-        : op_type_(op_type), added_files_(added), deleted_files_(deleted) {}
+                       const std::vector<FileInfo>& deleted = {},
+                       uint64_t sequence = 0)
+        : op_type_(op_type), added_files_(added), deleted_files_(deleted), sequence_(sequence) {}
 
     MetadataOpType op_type() const { return op_type_; }
     const std::vector<FileInfo>& added_files() const { return added_files_; }
     const std::vector<FileInfo>& deleted_files() const { return deleted_files_; }
+    uint64_t sequence() const { return sequence_; }
+    void set_sequence(uint64_t sequence) { sequence_ = sequence; }
 
     // Convert to/from protobuf message
     proto::TableMetadataEntry ToProto() const;
@@ -76,6 +79,7 @@ private:
     MetadataOpType op_type_{MetadataOpType::Unknown};
     std::vector<FileInfo> added_files_;
     std::vector<FileInfo> deleted_files_;
+    uint64_t sequence_{0};  // WAL sequence number associated with this operation
 };
 
 class TableMetadataStateMachineState : public common::ISerializable {
@@ -108,6 +112,26 @@ public:
     void Serialize(common::DataChunk& chunk) const override;
     bool Deserialize(const common::DataChunk& chunk) override;
 
+    // Log file management
+    const std::vector<uint64_t>& GetActiveLogSequences() const { return active_log_sequences_; }
+    const std::vector<uint64_t>& GetPendingGCSequences() const { return pending_gc_sequences_; }
+    void AddActiveLogSequence(uint64_t sequence) { active_log_sequences_.push_back(sequence); }
+    void RemoveActiveLogSequence(uint64_t sequence);
+    void AddPendingGCSequence(uint64_t sequence) { pending_gc_sequences_.push_back(sequence); }
+    void ClearPendingGCSequences() { pending_gc_sequences_.clear(); }
+
+    // Get the minimum sequence number of active log files
+    std::optional<uint64_t> GetMinActiveLogSequence() const {
+        if (active_log_sequences_.empty()) {
+            return std::nullopt;
+        }
+        return *std::min_element(active_log_sequences_.begin(), active_log_sequences_.end());
+    }
+
+    bool HasHistory() const { return !active_log_sequences_.empty() || total_size_ > 0; }
+
+    std::string ToString(bool verbose = false) const;
+
 protected:
     // Helper methods
     void AddFiles(const std::vector<FileInfo>& files);
@@ -117,6 +141,11 @@ protected:
     std::unordered_map<size_t, std::vector<FileInfo>> sstable_files_;  // Level -> Files mapping
     std::unordered_map<size_t, uint64_t> level_sizes_;                 // Level -> Total size mapping
     uint64_t total_size_{0};
+    uint64_t sstable_flush_wal_sequence_{0};
+    std::vector<uint64_t>
+        active_log_sequences_;  // Sequence numbers of log files that must be kept (memtable not flushed)
+    std::vector<uint64_t>
+        pending_gc_sequences_;  // Sequence numbers of log files that can be deleted after next checkpoint
 };
 
 // Table metadata state machine

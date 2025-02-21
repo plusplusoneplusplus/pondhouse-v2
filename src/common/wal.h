@@ -108,7 +108,7 @@ public:
             return common::Result<LSN>::failure(result.error().code(), result.error().message());
         }
 
-        LOG_VERBOSE("Appended entry to WAL: LSN=%zu", current);
+        LOG_DEBUG("Appended entry to WAL: File=%s, LSN=%zu", path_.c_str(), current);
 
         return common::Result<LSN>::success(entry.lsn());
     }
