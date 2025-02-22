@@ -36,6 +36,12 @@ public:
     // Get the last passed LSN
     virtual uint64_t GetLastPassedLSN() const = 0;
 
+    // Called before executing a replicated log entry
+    virtual void BeforeExecuteReplicatedLog(uint64_t lsn) {}
+
+    // Called after executing a replicated log entry
+    virtual void AfterExecuteReplicatedLog(uint64_t lsn) {}
+
     // Save the state of the state machine to a stream, used for snapshots
     virtual void SaveState(common::OutputStream* writer) = 0;
 
@@ -62,13 +68,28 @@ public:
 
     Result<bool> Initialize(const ReplicationConfig& config, const SnapshotConfig& snapshot_config);
     Result<bool> Close();
-    Result<SnapshotMetadata> TriggerSnapshot();
     Result<void> StopAndDrain();
     Result<bool> Replicate(const DataChunk& data);
 
     // IReplicatedStateMachine interface
     uint64_t GetLastExecutedLSN() const override;
     uint64_t GetLastPassedLSN() const override;
+
+    /**
+     * Creates a snapshot of the current state.
+     * This is a public wrapper around the ISnapshotable::CreateSnapshot method.
+     * @return Result containing the snapshot metadata or an error
+     */
+    Result<SnapshotMetadata> TriggerSnapshot();
+
+    /**
+     * Recovers state to the latest committed state.
+     * This will:
+     * 1. Find and restore from the latest snapshot (if any)
+     * 2. Replay all logs after the snapshot to reach the latest committed state
+     * @return Result indicating success or failure
+     */
+    Result<bool> Recover();
 
 private:
     void Start();
@@ -80,11 +101,15 @@ private:
     Result<bool> ApplySnapshot(common::InputStream* reader, const SnapshotMetadata& metadata) final override;
     Result<SnapshotMetadata> GetLastSnapshotMetadata() const final override;
 
+    // Internal helper for snapshot restoration
+    Result<bool> RestoreSnapshot(const std::string& snapshot_id);
+
 private:
+    bool initialized_{false};
     std::shared_ptr<IReplication> replication_;
-    std::atomic<uint64_t> last_executed_lsn_{0};
-    std::atomic<uint64_t> last_passed_lsn_{0};
-    std::atomic<uint64_t> last_snapshot_lsn_{0};
+    std::atomic<uint64_t> last_executed_lsn_{common::INVALID_LSN};
+    std::atomic<uint64_t> last_passed_lsn_{common::INVALID_LSN};
+    std::atomic<uint64_t> last_snapshot_lsn_{common::INVALID_LSN};
 
     // Background execution thread
     std::thread execute_thread_;

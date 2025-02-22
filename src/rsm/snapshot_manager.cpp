@@ -196,6 +196,8 @@ Result<bool> FileSystemSnapshotManager::RestoreSnapshot(ISnapshotable* state, co
         return Result<bool>::failure(footer_result.error());
     }
 
+    // TODO: Verify metadata
+
     // Seek back to start for snapshot data
     seek_result = stream->Seek(0);
     if (!seek_result.ok()) {
