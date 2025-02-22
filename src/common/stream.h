@@ -36,6 +36,13 @@ public:
     virtual Result<size_t> Size() const = 0;
 
     /**
+     * Updates the size of the stream.
+     * @param size The new size
+     * @return Result indicating success or failure
+     */
+    virtual Result<bool> UpdateSize(size_t size) = 0;
+
+    /**
      * Gets the current position in the stream.
      * @return The current position
      */

@@ -1,3 +1,5 @@
+#include <thread>
+
 #include <gtest/gtest.h>
 
 #include "common/filesystem_stream.h"
@@ -199,6 +201,115 @@ TEST_P(StreamTest, WriteInChunks) {
 
     // Verify position
     ASSERT_EQ(stream->Position(), 13);
+}
+
+//
+// Test Setup:
+//      Creates an input stream and updates its size
+// Test Result:
+//      Verifies correct handling of size updates and partial reads
+//
+TEST_P(StreamTest, UpdateSize) {
+    const std::string test_data = "Hello, World!";
+    auto stream = GetParam()->CreateInputStream(test_data);
+    ASSERT_NE(stream, nullptr);
+
+    // Test initial size
+    auto size_result = stream->Size();
+    ASSERT_TRUE(size_result.ok());
+    EXPECT_EQ(size_result.value(), test_data.length());
+
+    // Test reducing size
+    auto update_result = stream->UpdateSize(5);  // Truncate to "Hello"
+    ASSERT_TRUE(update_result.ok());
+
+    // Verify new size
+    size_result = stream->Size();
+    ASSERT_TRUE(size_result.ok());
+    EXPECT_EQ(size_result.value(), 5);
+
+    // Read after size update
+    auto read_result = stream->Read(10);  // Try to read more than available
+    ASSERT_TRUE(read_result.ok());
+    EXPECT_EQ(read_result.value()->Size(), 5);
+    EXPECT_EQ(read_result.value()->ToString(), "Hello");
+
+    // Try to read beyond new size
+    stream->Seek(5);
+    read_result = stream->Read(1);
+    ASSERT_TRUE(read_result.ok());
+    EXPECT_EQ(read_result.value()->Size(), 0);  // Should return empty chunk at end
+
+    // Test setting size to 0
+    update_result = stream->UpdateSize(0);
+    ASSERT_TRUE(update_result.ok());
+    size_result = stream->Size();
+    ASSERT_TRUE(size_result.ok());
+    EXPECT_EQ(size_result.value(), 0);
+
+    // Test invalid size (larger than original)
+    update_result = stream->UpdateSize(test_data.length() + 1);
+    ASSERT_FALSE(update_result.ok());
+    EXPECT_EQ(update_result.error().code(), common::ErrorCode::InvalidArgument);
+
+    // Test setting size back to original
+    update_result = stream->UpdateSize(test_data.length());
+    ASSERT_TRUE(update_result.ok());
+    size_result = stream->Size();
+    ASSERT_TRUE(size_result.ok());
+    EXPECT_EQ(size_result.value(), test_data.length());
+
+    // Verify position is clamped if it was beyond new size
+    stream->Seek(test_data.length());       // Seek to end
+    update_result = stream->UpdateSize(5);  // Truncate while position is beyond new size
+    ASSERT_TRUE(update_result.ok());
+    EXPECT_LE(stream->Position(), 5);  // Position should be clamped to new size
+}
+
+//
+// Test Setup:
+//      Creates an input stream and updates its size with edge cases
+// Test Result:
+//      Verifies correct handling of size updates and edge cases
+//
+TEST_P(StreamTest, UpdateSizeEdgeCases) {
+    // Test with empty stream
+    auto empty_stream = GetParam()->CreateInputStream("");
+    ASSERT_NE(empty_stream, nullptr);
+
+    // Update size of empty stream to 0
+    auto update_result = empty_stream->UpdateSize(0);
+    ASSERT_TRUE(update_result.ok());
+
+    // Try to update size to non-zero value for empty stream
+    update_result = empty_stream->UpdateSize(1);
+    ASSERT_FALSE(update_result.ok());
+    EXPECT_EQ(update_result.error().code(), common::ErrorCode::InvalidArgument);
+
+    // Test with single byte stream
+    auto single_byte_stream = GetParam()->CreateInputStream("x");
+    ASSERT_NE(single_byte_stream, nullptr);
+
+    // Update size between 0 and 1
+    update_result = single_byte_stream->UpdateSize(1);
+    ASSERT_TRUE(update_result.ok());
+    update_result = single_byte_stream->UpdateSize(0);
+    ASSERT_TRUE(update_result.ok());
+    update_result = single_byte_stream->UpdateSize(1);
+    ASSERT_TRUE(update_result.ok());
+
+    // Test rapid size updates
+    const std::string test_data = "test data";
+    auto stream = GetParam()->CreateInputStream(test_data);
+    ASSERT_NE(stream, nullptr);
+
+    for (size_t i = 0; i < 100; i++) {
+        update_result = stream->UpdateSize(i % (test_data.length() + 1));
+        ASSERT_TRUE(update_result.ok());
+        auto size_result = stream->Size();
+        ASSERT_TRUE(size_result.ok());
+        EXPECT_EQ(size_result.value(), i % (test_data.length() + 1));
+    }
 }
 
 // Static instances of our factories

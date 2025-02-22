@@ -5,7 +5,7 @@
 namespace pond::common {
 
 // MemoryInputStream implementation
-MemoryInputStream::MemoryInputStream(const DataChunkPtr& data) : data_(data), position_(0) {}
+MemoryInputStream::MemoryInputStream(const DataChunkPtr& data) : data_(data), position_(0), size_(data->Size()) {}
 
 std::unique_ptr<MemoryInputStream> MemoryInputStream::Create(const DataChunkPtr& data) {
     if (!data) {
@@ -23,13 +23,13 @@ std::unique_ptr<MemoryInputStream> MemoryInputStream::Create(const void* data, s
 }
 
 Result<DataChunkPtr> MemoryInputStream::Read(size_t length) {
-    if (position_ >= data_->Size()) {
+    if (position_ >= size_) {
         // End of stream
         return Result<DataChunkPtr>::success(std::make_shared<DataChunk>());
     }
 
     // Calculate how many bytes we can actually read
-    size_t available = data_->Size() - position_;
+    size_t available = size_ - position_;
     size_t to_read = std::min(length, available);
 
     // Create a new chunk with the requested data
@@ -40,12 +40,12 @@ Result<DataChunkPtr> MemoryInputStream::Read(size_t length) {
 }
 
 Result<size_t> MemoryInputStream::Read(void* data, size_t size) {
-    if (position_ >= data_->Size()) {
+    if (position_ >= size_) {
         // End of stream
         return Result<size_t>::success(0);
     }
 
-    size_t to_read = std::min(size, data_->Size() - position_);
+    size_t to_read = std::min(size, size_ - position_);
     std::memcpy(data, data_->Data() + position_, to_read);
     position_ += to_read;
 
@@ -53,12 +53,25 @@ Result<size_t> MemoryInputStream::Read(void* data, size_t size) {
 }
 
 Result<size_t> MemoryInputStream::Size() const {
-    return Result<size_t>::success(data_->Size());
+    return Result<size_t>::success(size_);
+}
+
+Result<bool> MemoryInputStream::UpdateSize(size_t size) {
+    if (size > data_->Size()) {
+        return Result<bool>::failure(ErrorCode::InvalidArgument, "Size is greater than the data size");
+    }
+
+    size_ = size;
+    if (position_ > size_) {
+        position_ = size_;
+    }
+
+    return Result<bool>::success(true);
 }
 
 Result<bool> MemoryInputStream::Seek(size_t position) {
     if (position > data_->Size()) {
-        return Result<bool>::failure(ErrorCode::InvalidArgument, "Position beyond end of stream");
+        return Result<bool>::failure(ErrorCode::EndOfStream, "Position beyond end of stream");
     }
 
     position_ = position;

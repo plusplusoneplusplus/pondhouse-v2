@@ -53,6 +53,13 @@ public:
     Result<size_t> Size() const override;
 
     /**
+     * Updates the size of the stream.
+     * @param size The new size
+     * @return Result indicating success or failure
+     */
+    Result<bool> UpdateSize(size_t size) override;
+
+    /**
      * Gets the current position in the stream.
      * @return The current position
      */
@@ -70,6 +77,7 @@ private:
 
     DataChunkPtr data_;
     size_t position_;
+    size_t size_;
 };
 
 /**
