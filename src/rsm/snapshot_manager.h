@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "common/append_only_fs.h"
@@ -71,6 +72,7 @@ private:
 
     std::shared_ptr<common::IAppendOnlyFileSystem> fs_;
     SnapshotConfig config_;
+    mutable std::recursive_mutex mutex_;  // Protects concurrent operations
 };
 
 }  // namespace pond::rsm

@@ -91,6 +91,8 @@ Result<SnapshotMetadata> FileSystemSnapshotManager::CreateSnapshot(ISnapshotable
         return ReturnType::failure(ErrorCode::InvalidArgument, "State is null");
     }
 
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
     // Create a temporary file for the snapshot
     std::string temp_path = config_.snapshot_dir + "/temp_snapshot";
 
@@ -99,36 +101,42 @@ Result<SnapshotMetadata> FileSystemSnapshotManager::CreateSnapshot(ISnapshotable
         RETURN_IF_ERROR_T(ReturnType, fs_->DeleteFiles({temp_path}));
     }
 
-    // Create new temp file
-    auto stream_result = common::FileSystemOutputStream::Create(fs_, temp_path);
-    if (!stream_result.ok()) {
-        return ReturnType::failure(stream_result.error());
-    }
-    auto& stream = stream_result.value();
-
-    // Create snapshot using the state machine
-    auto snapshot_result = state->CreateSnapshot(stream.get());
-    if (!snapshot_result.ok()) {
-        auto _ = fs_->DeleteFiles({temp_path});  // Clean up temp file
-        return snapshot_result;
-    }
-
-    // Generate final snapshot path using the new metadata
-    std::string snapshot_id = GenerateSnapshotId(snapshot_result.value());
-    std::string final_path = GetSnapshotFilePath(snapshot_id);
-
-    // Write footer
     SnapshotFooter footer;
-    footer.metadata = snapshot_result.value();
-    footer.metadata_offset = stream->Position();
-    footer.magic = kMagicNumber;
+    std::string final_path;
 
-    auto footer_chunk = std::make_shared<common::DataChunk>(kFooterSize);
-    footer.Serialize(footer_chunk->Data());
-    auto write_result = stream->Write(footer_chunk);
-    if (!write_result.ok()) {
-        auto _ = fs_->DeleteFiles({temp_path});  // Clean up temp file
-        return ReturnType::failure(write_result.error());
+    {
+        // Create new temp file
+        auto stream_result = common::FileSystemOutputStream::Create(fs_, temp_path);
+        if (!stream_result.ok()) {
+            return ReturnType::failure(stream_result.error());
+        }
+        auto& stream = stream_result.value();
+
+        // Create snapshot using the state machine
+        auto snapshot_result = state->CreateSnapshot(stream.get());
+        if (!snapshot_result.ok()) {
+            auto _ = fs_->DeleteFiles({temp_path});  // Clean up temp file
+            return snapshot_result;
+        }
+
+        // Generate final snapshot path using the new metadata
+        std::string snapshot_id = GenerateSnapshotId(snapshot_result.value());
+        final_path = GetSnapshotFilePath(snapshot_id);
+
+        // Write footer
+        footer.metadata = snapshot_result.value();
+        footer.metadata_offset = stream->Position();
+        footer.magic = kMagicNumber;
+
+        auto footer_chunk = std::make_shared<common::DataChunk>(kFooterSize);
+        footer.Serialize(footer_chunk->Data());
+        auto write_result = stream->Write(footer_chunk);
+        if (!write_result.ok()) {
+            auto _ = fs_->DeleteFiles({temp_path});  // Clean up temp file
+            return ReturnType::failure(write_result.error());
+        }
+
+        // close the stream ...
     }
 
     // Rename temp file to final path
@@ -150,6 +158,8 @@ Result<bool> FileSystemSnapshotManager::RestoreSnapshot(ISnapshotable* state, co
     if (!state) {
         return Result<bool>::failure(ErrorCode::InvalidArgument, "State is null");
     }
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
 
     // Open snapshot file
     std::string snapshot_path = GetSnapshotFilePath(snapshot_id);
@@ -195,6 +205,7 @@ Result<bool> FileSystemSnapshotManager::RestoreSnapshot(ISnapshotable* state, co
 }
 
 Result<std::vector<SnapshotMetadata>> FileSystemSnapshotManager::ListSnapshots() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<SnapshotMetadata> snapshots;
 
     // List all files in snapshot directory
@@ -223,6 +234,7 @@ Result<std::vector<SnapshotMetadata>> FileSystemSnapshotManager::ListSnapshots()
 }
 
 Result<bool> FileSystemSnapshotManager::PruneSnapshots(size_t keep_count) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto snapshots_result = ListSnapshots();
     if (!snapshots_result.ok()) {
         return Result<bool>::failure(snapshots_result.error());

@@ -60,6 +60,8 @@ public:
     void SetTestData(const std::string& data) { test_data_ = data; }
     const std::string& GetTestData() const { return test_data_; }
 
+    void SetLsn(uint64_t lsn) { lsn_ = lsn; }
+
 private:
     uint64_t lsn_;
     uint64_t term_;
@@ -201,12 +203,19 @@ TEST_F(SnapshotManagerTest, VariousDataSizes) {
     std::string large_data(1024 * 1024, 'x');  // 1MB
     state.SetTestData(large_data);
     result = manager_->CreateSnapshot(&state);
+    // because the lsn is not changed so the snapshot already exists
+    EXPECT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code(), ErrorCode::FileAlreadyExists);
+
+    // update the lsn
+    state.SetLsn(2);
+    result = manager_->CreateSnapshot(&state);
     VERIFY_RESULT(result);
 
     // Restore and verify large data
     MockSnapshotableState new_state;
     new_state.SetTestData(large_data);
-    auto restore_result = manager_->RestoreSnapshot(&new_state, "1");
+    auto restore_result = manager_->RestoreSnapshot(&new_state, "2");
     VERIFY_RESULT(restore_result);
 }
 
