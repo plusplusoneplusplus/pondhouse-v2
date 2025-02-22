@@ -224,6 +224,8 @@ public:
         return result;
     }
 };
+
+typedef std::shared_ptr<DataChunk> DataChunkPtr;
 }  // namespace pond::common
 
 template <>
