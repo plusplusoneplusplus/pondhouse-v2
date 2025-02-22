@@ -12,6 +12,109 @@ using namespace pond::common;
 
 namespace pond::rsm {
 
+//
+// Test Setup:
+//      Tests ClusterConfig structure functionality and constraints
+// Test Result:
+//      Verifies size, alignment, and data handling
+//
+TEST(ClusterConfigTest, StructureAndAlignment) {
+    ClusterConfig config;
+    EXPECT_EQ(sizeof(config), 2048);                  // Verify total size
+    EXPECT_EQ(sizeof(ClusterConfig::NodeInfo), 128);  // Verify node info size
+    EXPECT_EQ(config.node_count, 0);
+    EXPECT_EQ(config.version, 0);
+    EXPECT_FALSE(config.enable_single_node);
+}
+
+//
+// Test Setup:
+//      Tests node management in ClusterConfig
+// Test Result:
+//      Verifies node addition, validation, and limits
+//
+TEST(ClusterConfigTest, NodeManagement) {
+    ClusterConfig config;
+
+    // Test valid node addition
+    EXPECT_TRUE(config.SetNode(0, "node1", true, false));
+    EXPECT_TRUE(config.SetNode(1, "node2", false, true));
+
+    // Test node ID length limit
+    std::string long_id(ClusterConfig::kMaxNodeIdLen + 1, 'x');
+    EXPECT_FALSE(config.SetNode(2, long_id, true, false));
+
+    // Test node index limit
+    EXPECT_FALSE(config.SetNode(ClusterConfig::kMaxNodes, "node3", true, false));
+
+    // Verify node data
+    EXPECT_STREQ(config.nodes[0].node_id, "node1");
+    EXPECT_TRUE(config.nodes[0].is_voter);
+    EXPECT_FALSE(config.nodes[0].is_learner);
+
+    EXPECT_STREQ(config.nodes[1].node_id, "node2");
+    EXPECT_FALSE(config.nodes[1].is_voter);
+    EXPECT_TRUE(config.nodes[1].is_learner);
+}
+
+//
+// Test Setup:
+//      Tests cluster ID management
+// Test Result:
+//      Verifies cluster ID setting and validation
+//
+TEST(ClusterConfigTest, ClusterIdManagement) {
+    ClusterConfig config;
+
+    // Test valid cluster ID
+    EXPECT_TRUE(config.SetClusterId("test-cluster"));
+    EXPECT_STREQ(config.cluster_id, "test-cluster");
+
+    // Test empty cluster ID
+    EXPECT_TRUE(config.SetClusterId(""));
+    EXPECT_STREQ(config.cluster_id, "");
+
+    // Test cluster ID length limit
+    std::string long_id(ClusterConfig::kMaxNodeIdLen + 1, 'x');
+    EXPECT_FALSE(config.SetClusterId(long_id));
+}
+
+//
+// Test Setup:
+//      Tests serialization consistency
+// Test Result:
+//      Verifies data remains consistent after serialization
+//
+TEST(ClusterConfigTest, SerializationConsistency) {
+    ClusterConfig config1;
+    config1.version = 1;
+    config1.node_count = 2;
+    config1.SetClusterId("test-cluster");
+    config1.SetNode(0, "node1", true, false);
+    config1.SetNode(1, "node2", false, true);
+    config1.enable_single_node = true;
+
+    // Serialize to a buffer
+    std::vector<uint8_t> buffer(sizeof(ClusterConfig));
+    std::memcpy(buffer.data(), &config1, sizeof(ClusterConfig));
+
+    // Deserialize to a new config
+    ClusterConfig config2;
+    std::memcpy(&config2, buffer.data(), sizeof(ClusterConfig));
+
+    // Verify all fields match
+    EXPECT_EQ(config2.version, config1.version);
+    EXPECT_EQ(config2.node_count, config1.node_count);
+    EXPECT_STREQ(config2.cluster_id, config1.cluster_id);
+    EXPECT_EQ(config2.enable_single_node, config1.enable_single_node);
+
+    for (size_t i = 0; i < config1.node_count; i++) {
+        EXPECT_STREQ(config2.nodes[i].node_id, config1.nodes[i].node_id);
+        EXPECT_EQ(config2.nodes[i].is_voter, config1.nodes[i].is_voter);
+        EXPECT_EQ(config2.nodes[i].is_learner, config1.nodes[i].is_learner);
+    }
+}
+
 // Mock state machine for testing
 class MockSnapshotableState : public ISnapshotable {
 public:
@@ -22,7 +125,15 @@ public:
         metadata.lsn = lsn_;
         metadata.term = term_;
         metadata.version = 1;
-        metadata.cluster_config = "test_config";
+
+        // Set up test cluster config
+        metadata.cluster_config.version = 1;
+        metadata.cluster_config.node_count = 3;
+        metadata.cluster_config.SetClusterId("test-cluster");
+        metadata.cluster_config.SetNode(0, "node1", true, false);
+        metadata.cluster_config.SetNode(1, "node2", true, false);
+        metadata.cluster_config.SetNode(2, "node3", false, true);
+        metadata.cluster_config.enable_single_node = false;
 
         // Write some test data
         auto data = std::make_shared<common::DataChunk>(test_data_.size());

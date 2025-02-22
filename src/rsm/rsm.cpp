@@ -146,7 +146,7 @@ Result<SnapshotMetadata> ReplicatedStateMachine::CreateSnapshot(common::OutputSt
     metadata.lsn = last_executed_lsn_.load();
     metadata.term = 0;  // TODO: Add term support when implementing Raft
     metadata.version = 1;
-    metadata.cluster_config = "";  // TODO: Add cluster config when implementing Raft
+    metadata.cluster_config = ClusterConfig();  // TODO: Add cluster config when implementing Raft
 
     // Write state machine data
     // TODO: Implement state serialization in derived classes
