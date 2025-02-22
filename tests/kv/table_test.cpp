@@ -262,7 +262,7 @@ TEST_F(TableTest, MetadataTracking) {
     auto listFileResult = fs_->List("test_table_metadata");
     VERIFY_RESULT(listFileResult);
     EXPECT_EQ(listFileResult.value().size(), 1);
-    EXPECT_TRUE(listFileResult.value()[0].starts_with(common::WalStateMachine::WAL_FILE_NAME));
+    EXPECT_EQ(listFileResult.value()[0], "wal.log");
 }
 
 TEST_F(TableTest, MetadataRecoveryAfterCrash) {
@@ -325,7 +325,7 @@ TEST_F(TableTest, RecoveryFromWALAndSSTables) {
 
     // Verify metadata files were created
     EXPECT_TRUE(fs_->Exists("test_table_metadata"));
-    EXPECT_TRUE(fs_->Exists("test_table_metadata/state.wal"));
+    EXPECT_TRUE(fs_->Exists("test_table_metadata/wal.log"));
 
     // Create a new table instance and recover
     auto recovered_table = std::make_unique<Table>(schema_, fs_, "test_table", 1024 * 1024);

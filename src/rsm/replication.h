@@ -21,7 +21,7 @@ class IAppendOnlyFileSystem;
  * Base configuration class for replication mechanisms
  */
 struct ReplicationConfig {
-    std::string path;                        // Path to store replication data
+    std::string directory;                   // Path to store replication data
     size_t max_log_size = 64 * 1024 * 1024;  // 64MB default
     size_t checkpoint_interval = 1000;       // Number of entries between checkpoints
     size_t max_checkpoints = 3;              // Maximum number of checkpoint files to keep

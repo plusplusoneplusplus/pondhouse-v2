@@ -188,7 +188,7 @@ TEST_F(ReplicatedStateMachineTest, BasicOperations) {
 
     // Initialize state machine
     ReplicationConfig config;
-    config.path = "test.log";
+    config.directory = "test";
     auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
@@ -234,7 +234,7 @@ TEST_F(ReplicatedStateMachineTest, ConcurrentOperations) {
 
     // Initialize state machine
     ReplicationConfig config;
-    config.path = "concurrent.log";
+    config.directory = "concurrent";
     auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
@@ -285,7 +285,7 @@ TEST_F(ReplicatedStateMachineTest, StopAndDrainEmpty) {
 
     // Initialize state machine
     ReplicationConfig config;
-    config.path = "empty.log";
+    config.directory = "empty";
     auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
@@ -306,7 +306,7 @@ TEST_F(ReplicatedStateMachineTest, StopAndDrainAlreadyStopped) {
 
     // Initialize and immediately close
     ReplicationConfig config;
-    config.path = "stopped.log";
+    config.directory = "stopped";
     auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
@@ -329,7 +329,7 @@ TEST_F(ReplicatedStateMachineTest, LastPassedLSN) {
 
     // Initialize state machine
     ReplicationConfig config;
-    config.path = "blocking.log";
+    config.directory = "blocking";
     auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
@@ -378,7 +378,7 @@ TEST_F(ReplicatedStateMachineTest, LastPassedLSN) {
 TEST_F(ReplicatedStateMachineTest, BasicSnapshot) {
     // Initialize state machine
     ReplicationConfig config;
-    config.path = "snapshot_test.log";
+    config.directory = "snapshot_test";
 
     {
         IntegerStateMachine state_machine(replication_, snapshot_manager_);
@@ -418,7 +418,7 @@ TEST_F(ReplicatedStateMachineTest, BasicSnapshot) {
 //
 TEST_F(ReplicatedStateMachineTest, ConcurrentSnapshot) {
     ReplicationConfig config;
-    config.path = "concurrent_snapshot.log";
+    config.directory = "concurrent_snapshot";
 
     {
         // Initialize state machine
@@ -480,7 +480,7 @@ TEST_F(ReplicatedStateMachineTest, RecoveryFailures) {
 
     // Initialize state machine
     ReplicationConfig config;
-    config.path = "failure_test.log";
+    config.directory = "failure_test";
     auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
@@ -506,7 +506,7 @@ TEST_F(ReplicatedStateMachineTest, CompleteRecovery) {
 
     // Initialize state machine
     ReplicationConfig config;
-    config.path = "complete_recovery.log";
+    config.directory = "complete_recovery";
     auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 

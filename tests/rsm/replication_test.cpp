@@ -31,7 +31,7 @@ TEST_F(ReplicationTest, BasicOperations) {
 
     // Test Initialize with config
     ReplicationConfig config;
-    config.path = "test.log";
+    config.directory = "test";
     auto result = replication.Initialize(config);
     VERIFY_RESULT_MSG(result, "Should initialize replication log");
 
@@ -80,7 +80,7 @@ TEST_F(ReplicationTest, BasicOperations) {
 //
 TEST_F(ReplicationTest, Recovery) {
     ReplicationConfig config;
-    config.path = "recovery.log";
+    config.directory = "recovery";
 
     // Write some entries
     {
@@ -134,7 +134,7 @@ TEST_F(ReplicationTest, Recovery) {
 //
 TEST_F(ReplicationTest, PartialRead) {
     ReplicationConfig config;
-    config.path = "partial.log";
+    config.directory = "partial";
 
     // Write entries
     WalReplication replication(fs_);

@@ -11,6 +11,16 @@ class TableMetadataTest : public ::testing::Test {
 protected:
     void SetUp() override { fs_ = std::make_shared<common::MemoryAppendOnlyFileSystem>(); }
 
+    void WaitForExecution(TableMetadataStateMachine& state_machine, uint64_t target_lsn) {
+        while (true) {
+            if (state_machine.GetLastExecutedLSN() != common::INVALID_LSN
+                && state_machine.GetLastExecutedLSN() >= target_lsn) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+
     std::shared_ptr<common::MemoryAppendOnlyFileSystem> fs_;
 };
 
@@ -73,11 +83,13 @@ TEST_F(TableMetadataTest, StateMachineBasicOperations) {
     // Create some SSTable files
     std::vector<FileInfo> files1 = {{"file1.sst", 1000}};
     TableMetadataEntry entry1(MetadataOpType::CreateSSTable, files1);
-    VERIFY_RESULT(state_machine.Apply(entry1.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(entry1.Serialize()));
+    WaitForExecution(state_machine, 0);
 
     std::vector<FileInfo> files2 = {{"file2.sst", 2000}};
     TableMetadataEntry entry2(MetadataOpType::CreateSSTable, files2);
-    VERIFY_RESULT(state_machine.Apply(entry2.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(entry2.Serialize()));
+    WaitForExecution(state_machine, 1);
 
     // Verify state
     EXPECT_EQ(state_machine.GetSSTableFiles(0 /*level*/).size(), 2);
@@ -95,12 +107,14 @@ TEST_F(TableMetadataTest, StateMachineDeleteOperations) {
         {"file3.sst", 3000},
     };
     TableMetadataEntry create_entry(MetadataOpType::CreateSSTable, files, {});
-    VERIFY_RESULT(state_machine.Apply(create_entry.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(create_entry.Serialize()));
+    WaitForExecution(state_machine, 0);
 
     // Delete one file
     std::vector<FileInfo> delete_files = {{"file2.sst", 2000}};
     TableMetadataEntry delete_entry(MetadataOpType::DeleteSSTable, {}, delete_files);
-    VERIFY_RESULT(state_machine.Apply(delete_entry.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(delete_entry.Serialize()));
+    WaitForExecution(state_machine, 1);
 
     // Verify state
     EXPECT_EQ(state_machine.GetSSTableFiles(0 /*level*/).size(), 2);
@@ -118,7 +132,8 @@ TEST_F(TableMetadataTest, StateMachineRecovery) {
             {"file2.sst", 2000},
         };
         TableMetadataEntry entry(MetadataOpType::CreateSSTable, files);
-        VERIFY_RESULT(state_machine.Apply(entry.Serialize()));
+        VERIFY_RESULT(state_machine.Replicate(entry.Serialize()));
+        WaitForExecution(state_machine, 0);
     }
 
     {
@@ -139,55 +154,41 @@ TEST_F(TableMetadataTest, StateMachineUpdateStats) {
     // Create initial state
     std::vector<FileInfo> files = {{"file1.sst", 1000}};
     TableMetadataEntry create_entry(MetadataOpType::CreateSSTable, files);
-    VERIFY_RESULT(state_machine.Apply(create_entry.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(create_entry.Serialize()));
+    WaitForExecution(state_machine, 0);
 
     // Update stats
     std::vector<FileInfo> stats = {{"", 5000}};  // Only size matters for UpdateStats
     TableMetadataEntry stats_entry(MetadataOpType::UpdateStats, stats);
-    VERIFY_RESULT(state_machine.Apply(stats_entry.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(stats_entry.Serialize()));
+    WaitForExecution(state_machine, 1);
 
     // Verify state
     EXPECT_EQ(state_machine.GetTotalSize(), 5000);
 }
 
-TEST_F(TableMetadataTest, StateMachineCheckpointing) {
-    TableMetadataStateMachine state_machine(fs_, "test_metadata");
-    VERIFY_RESULT(state_machine.Open());
-
-    // Create some state
-    std::vector<FileInfo> files = {{"file1.sst", 1000}};
-    TableMetadataEntry entry(MetadataOpType::CreateSSTable, files);
-    VERIFY_RESULT(state_machine.Apply(entry.Serialize()));
-
-    // Create checkpoint
-    VERIFY_RESULT(state_machine.CreateCheckpoint());
-
+TEST_F(TableMetadataTest, StateMachineSnapshotAndRecovery) {
     {
-        auto listFileResult = fs_->List("test_metadata");
-        VERIFY_RESULT(listFileResult);
+        TableMetadataStateMachine state_machine(fs_, "test_metadata");
+        VERIFY_RESULT(state_machine.Open());
 
-        // Filter for checkpoint files only
-        std::vector<std::string> checkpoint_files;
-        for (const auto& file : listFileResult.value()) {
-            if (file.starts_with(TableMetadataStateMachine::CHECKPOINT_FILE_PREFIX)) {
-                checkpoint_files.push_back(file);
-            }
-        }
+        // Create some state
+        std::vector<FileInfo> files = {{"file1.sst", 1000}};
+        TableMetadataEntry entry(MetadataOpType::CreateSSTable, files);
+        VERIFY_RESULT(state_machine.Replicate(entry.Serialize()));
+        WaitForExecution(state_machine, 0);
 
-        EXPECT_EQ(checkpoint_files.size(), 1);
-        // Don't check exact checkpoint filename since LSN may vary
-        EXPECT_TRUE(checkpoint_files[0].starts_with(TableMetadataStateMachine::CHECKPOINT_FILE_PREFIX));
-
-        // Verify checkpoint file exists with the actual LSN
-        std::string checkpoint_file = "test_metadata/" + checkpoint_files[0];
-        EXPECT_TRUE(fs_->Exists(checkpoint_file));
+        // Create snapshot
+        VERIFY_RESULT(state_machine.TriggerSnapshot());
     }
 
-    // Create new instance and verify it recovers from checkpoint
-    TableMetadataStateMachine recovered(fs_, "test_metadata");
-    VERIFY_RESULT(recovered.Open());
-    EXPECT_EQ(recovered.GetSSTableFiles(0 /*level*/).size(), 1);
-    EXPECT_EQ(recovered.GetTotalSize(), 1000);
+    {
+        // Create new instance and verify it recovers from snapshot
+        TableMetadataStateMachine recovered(fs_, "test_metadata");
+        VERIFY_RESULT(recovered.Open());
+        EXPECT_EQ(recovered.GetSSTableFiles(0 /*level*/).size(), 1);
+        EXPECT_EQ(recovered.GetTotalSize(), 1000);
+    }
 }
 
 TEST_F(TableMetadataTest, StateMachineNoOpOperations) {
@@ -197,14 +198,17 @@ TEST_F(TableMetadataTest, StateMachineNoOpOperations) {
     // Create initial state
     std::vector<FileInfo> files = {{"file1.sst", 1000}};
     TableMetadataEntry create_entry(MetadataOpType::CreateSSTable, files);
-    VERIFY_RESULT(state_machine.Apply(create_entry.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(create_entry.Serialize()));
+    WaitForExecution(state_machine, 0);
 
     // Apply no-op operations (FlushMemTable and RotateWAL)
     TableMetadataEntry flush_entry(MetadataOpType::FlushMemTable);
-    VERIFY_RESULT(state_machine.Apply(flush_entry.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(flush_entry.Serialize()));
+    WaitForExecution(state_machine, 1);
 
     TableMetadataEntry rotate_entry(MetadataOpType::RotateWAL);
-    VERIFY_RESULT(state_machine.Apply(rotate_entry.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(rotate_entry.Serialize()));
+    WaitForExecution(state_machine, 2);
 
     // Verify state hasn't changed
     EXPECT_EQ(state_machine.GetSSTableFiles(0 /*level*/).size(), 1);
@@ -250,22 +254,22 @@ TEST_F(TableMetadataTest, StateMachineStateSerialization) {
     std::vector<FileInfo> level0_files = {FileInfo("L0_1.sst", 1000, 0, "a", "m"),
                                           FileInfo("L0_2.sst", 2000, 0, "n", "z")};
     TableMetadataEntry entry0(MetadataOpType::CreateSSTable, level0_files);
-    VERIFY_RESULT(state_machine.Apply(entry0.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(entry0.Serialize()));
+    WaitForExecution(state_machine, 0);
 
     std::vector<FileInfo> level1_files = {FileInfo("L1_1.sst", 3000, 1, "a", "z")};
     TableMetadataEntry entry1(MetadataOpType::CreateSSTable, level1_files);
-    VERIFY_RESULT(state_machine.Apply(entry1.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(entry1.Serialize()));
+    WaitForExecution(state_machine, 1);
 
     // Get current state
-    auto state_result = state_machine.GetCurrentState();
-    VERIFY_RESULT(state_result);
-    auto state_data = state_result.value();
-    ASSERT_GT(state_data->Size(), 0);
+    auto state_data = state_machine.Serialize();
+    ASSERT_GT(state_data.Size(), 0);
 
     // Create new state machine and restore state
     TableMetadataStateMachine recovered(fs_, "test_metadata2");
     VERIFY_RESULT(recovered.Open());
-    VERIFY_RESULT(recovered.RestoreState(state_data));
+    ASSERT_TRUE(recovered.Deserialize(state_data));
 
     // Verify recovered state
     EXPECT_EQ(recovered.GetLevelCount(), 2);
@@ -305,7 +309,8 @@ TEST_F(TableMetadataTest, StateMachineCompactionOperations) {
     // Create initial files in L0
     std::vector<FileInfo> l0_files = {FileInfo("L0_1.sst", 1000, 0, "a", "m"), FileInfo("L0_2.sst", 2000, 0, "n", "z")};
     TableMetadataEntry create_entry(MetadataOpType::CreateSSTable, l0_files);
-    VERIFY_RESULT(state_machine.Apply(create_entry.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(create_entry.Serialize()));
+    WaitForExecution(state_machine, 0);
 
     // Verify initial state
     EXPECT_EQ(state_machine.GetSSTableFiles(0).size(), 2);
@@ -317,7 +322,8 @@ TEST_F(TableMetadataTest, StateMachineCompactionOperations) {
         FileInfo("L1_1.sst", 2800, 1, "a", "z")  // Slightly smaller due to compaction
     };
     TableMetadataEntry compact_entry(MetadataOpType::CompactFiles, compacted_file, l0_files);
-    VERIFY_RESULT(state_machine.Apply(compact_entry.Serialize()));
+    VERIFY_RESULT(state_machine.Replicate(compact_entry.Serialize()));
+    WaitForExecution(state_machine, 1);
 
     // Verify state after compaction
     EXPECT_EQ(state_machine.GetSSTableFiles(0).size(), 0);  // L0 files should be gone
