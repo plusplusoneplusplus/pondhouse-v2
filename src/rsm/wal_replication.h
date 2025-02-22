@@ -32,7 +32,7 @@ public:
 
     Result<bool> Close() override { return wal_.Close(); }
 
-    Result<uint64_t> Append(DataChunk& data) override {
+    Result<uint64_t> Append(const DataChunk& data) override {
         ReplicationEntry entry;
         entry.SetIndex(common::INVALID_LSN);  // Let WAL assign the index
         entry.SetData(data);                  // Store the data directly

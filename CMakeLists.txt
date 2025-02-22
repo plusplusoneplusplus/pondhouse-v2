@@ -188,6 +188,7 @@ add_executable(
     tests/common/wal_state_machine_test.cpp
     tests/common/wal_test.cpp
     tests/rsm/replication_test.cpp
+    tests/rsm/replicated_state_machine_test.cpp
     tests/format/parquet/parquet_test.cpp
     tests/kv/compaction_metrics_test.cpp
     tests/kv/db_test.cpp

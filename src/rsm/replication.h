@@ -1,11 +1,10 @@
 #pragma once
 
-#include <memory>
-#include <string>
-#include <vector>
+#include <atomic>
 
 #include "common/data_chunk.h"
 #include "common/error.h"
+#include "common/log.h"
 #include "common/result.h"
 #include "common/wal_entry.h"
 
@@ -119,7 +118,7 @@ public:
     virtual Result<bool> Close() = 0;
 
     // Append a new entry
-    virtual Result<uint64_t> Append(DataChunk& data) = 0;
+    virtual Result<uint64_t> Append(const DataChunk& data) = 0;
 
     // Read entries starting from given index
     virtual Result<std::vector<DataChunk>> Read(uint64_t start_index) = 0;
