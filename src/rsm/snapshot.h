@@ -32,7 +32,7 @@ public:
      * @param writer The output stream to write the snapshot to
      * @return Result containing the snapshot metadata or an error
      */
-    virtual Result<SnapshotMetadata> CreateSnapshot(common::OutputStream* writer) = 0;
+    virtual common::Result<SnapshotMetadata> CreateSnapshot(common::OutputStream* writer) = 0;
 
     /**
      * Applies a snapshot to restore state.
@@ -40,13 +40,13 @@ public:
      * @param metadata The metadata of the snapshot being restored
      * @return Result indicating success or failure
      */
-    virtual Result<bool> ApplySnapshot(common::InputStream* reader, const SnapshotMetadata& metadata) = 0;
+    virtual common::Result<bool> ApplySnapshot(common::InputStream* reader, const SnapshotMetadata& metadata) = 0;
 
     /**
      * Gets the last snapshot metadata.
      * @return Result containing the last snapshot metadata or an error
      */
-    virtual Result<SnapshotMetadata> GetLastSnapshotMetadata() const = 0;
+    virtual common::Result<SnapshotMetadata> GetLastSnapshotMetadata() const = 0;
 };
 
 /**
@@ -61,7 +61,7 @@ public:
      * @param state The state machine to snapshot
      * @return Result containing the snapshot metadata or an error
      */
-    virtual Result<SnapshotMetadata> CreateSnapshot(ISnapshotable* state) = 0;
+    virtual common::Result<SnapshotMetadata> CreateSnapshot(ISnapshotable* state) = 0;
 
     /**
      * Restores state from a snapshot.
@@ -69,20 +69,20 @@ public:
      * @param snapshot_id Identifier of the snapshot to restore
      * @return Result indicating success or failure
      */
-    virtual Result<bool> RestoreSnapshot(ISnapshotable* state, const std::string& snapshot_id) = 0;
+    virtual common::Result<bool> RestoreSnapshot(ISnapshotable* state, const std::string& snapshot_id) = 0;
 
     /**
      * Lists available snapshots.
      * @return Result containing list of snapshot metadata or an error
      */
-    virtual Result<std::vector<SnapshotMetadata>> ListSnapshots() const = 0;
+    virtual common::Result<std::vector<SnapshotMetadata>> ListSnapshots() const = 0;
 
     /**
      * Deletes old snapshots keeping only the most recent ones.
      * @param keep_count Number of recent snapshots to keep
      * @return Result indicating success or failure
      */
-    virtual Result<bool> PruneSnapshots(size_t keep_count) = 0;
+    virtual common::Result<bool> PruneSnapshots(size_t keep_count) = 0;
 
     /**
      * Gets the path where snapshots are stored.

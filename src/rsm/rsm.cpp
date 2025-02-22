@@ -148,14 +148,6 @@ Result<SnapshotMetadata> ReplicatedStateMachine::CreateSnapshot(common::OutputSt
     metadata.version = 1;
     metadata.cluster_config = "";  // TODO: Add cluster config when implementing Raft
 
-    // Write metadata first
-    auto metadata_chunk = std::make_shared<common::DataChunk>(sizeof(metadata));
-    std::memcpy(metadata_chunk->Data(), &metadata, sizeof(metadata));
-    auto write_result = writer->Write(metadata_chunk);
-    if (!write_result.ok()) {
-        return Result<SnapshotMetadata>::failure(write_result.error());
-    }
-
     // Write state machine data
     // TODO: Implement state serialization in derived classes
 

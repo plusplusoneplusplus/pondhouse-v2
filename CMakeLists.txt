@@ -135,6 +135,7 @@ add_library(pondhouse_common
     src/format/parquet/parquet_reader.cpp
     src/format/parquet/parquet_writer.cpp
     src/rsm/rsm.cpp
+    src/rsm/snapshot_manager.cpp
     ${PROTO_SRCS}
 )
 
@@ -193,6 +194,7 @@ add_executable(
     tests/common/wal_test.cpp
     tests/rsm/replication_test.cpp
     tests/rsm/replicated_state_machine_test.cpp
+    tests/rsm/snapshot_manager_test.cpp
     tests/format/parquet/parquet_test.cpp
     tests/kv/compaction_metrics_test.cpp
     tests/kv/db_test.cpp
