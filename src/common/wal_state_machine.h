@@ -81,13 +81,13 @@ public:
         }
 
         // Open WAL file
-        auto result = wal_.open(GetWALPath(), false /* recover */);
+        auto result = wal_.Open(GetWALPath(), false /* recover */);
         if (!result.ok()) {
             return Result<bool>::failure(result.error());
         }
 
         // Replay WAL entries since checkpoint
-        auto entries = wal_.read(checkpoint_lsn_);
+        auto entries = wal_.Read(checkpoint_lsn_);
         if (!entries.ok()) {
             return Result<bool>::failure(entries.error());
         }
@@ -137,7 +137,7 @@ private:
         entry.set_lsn(INVALID_LSN);
 
         // Write to WAL first
-        auto wal_result = wal_.append(entry);
+        auto wal_result = wal_.Append(entry);
         if (!wal_result.ok()) {
             LOG_ERROR("Failed to write to WAL: %s", wal_result.error().message().c_str());
             return Result<void>::failure(wal_result.error());
@@ -279,7 +279,7 @@ private:
     }
 
     Result<void> RotateWAL() {
-        auto close_result = wal_.close();
+        auto close_result = wal_.Close();
         if (!close_result.ok()) {
             return Result<void>::failure(close_result.error());
         }
@@ -290,7 +290,7 @@ private:
             return Result<void>::failure(delete_result.error());
         }
 
-        auto open_result = wal_.open(GetWALPath(), false);
+        auto open_result = wal_.Open(GetWALPath(), false);
         if (!open_result.ok()) {
             return Result<void>::failure(open_result.error());
         }

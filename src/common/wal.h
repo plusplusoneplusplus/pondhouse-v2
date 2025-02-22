@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstring>
+#include <sstream>
 
 #include "append_only_fs.h"
 #include "log.h"
@@ -32,12 +33,12 @@ public:
 
     ~WAL() {
         if (handle_ != INVALID_HANDLE) {
-            close();
+            Close();
         }
     }
 
     // Open or create WAL file
-    common::Result<bool> open(const std::string& path, bool recover = false) {
+    common::Result<bool> Open(const std::string& path, bool recover = false) {
         LOG_STATUS("Opening WAL file: %s", path.c_str());
 
         path_ = path;
@@ -57,7 +58,7 @@ public:
         if (recover && size_result.value() > 0) {
             LOG_VERBOSE("Recovering from WAL file: %s", path.c_str());
 
-            auto entries = read(0);
+            auto entries = Read(0);
             if (!entries.ok()) {
                 LOG_ERROR("Failed to read entries: %s", entries.error().c_str());
                 return common::Result<bool>::failure(entries.error());
@@ -71,7 +72,7 @@ public:
     }
 
     // Append an entry to WAL
-    common::Result<LSN> append(T& entry) {
+    common::Result<LSN> Append(T& entry) {
         if (entry.lsn() == INVALID_LSN) {
             entry.set_lsn(inc_lsn());
         } else if (entry.lsn() != current_lsn()) {
@@ -114,7 +115,7 @@ public:
     }
 
     // Read entries from WAL starting from given LSN
-    common::Result<std::vector<T>> read(LSN start_lsn) {
+    common::Result<std::vector<T>> Read(LSN start_lsn) {
         std::vector<T> entries;
         auto size_result = fs_->Size(handle_);
         if (!size_result.ok()) {
@@ -202,7 +203,7 @@ public:
     }
 
     // Close WAL file
-    common::Result<bool> close() {
+    common::Result<bool> Close() {
         if (handle_ == INVALID_HANDLE) {
             return common::Result<bool>::success(true);
         }

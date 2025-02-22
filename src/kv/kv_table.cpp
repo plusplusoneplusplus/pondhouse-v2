@@ -154,11 +154,11 @@ common::Result<bool> KvTable::Recover() {
     // Replay WAL files in order
     for (const auto& wal_path : wal_files) {
         // Open WAL file
-        auto open_result = wal_->open(wal_path);
+        auto open_result = wal_->Open(wal_path);
         RETURN_IF_ERROR_T(ReturnType, open_result);
 
         // Read all entries
-        auto entries = wal_->read(0);
+        auto entries = wal_->Read(0);
         RETURN_IF_ERROR_T(ReturnType, entries);
 
         // Replay entries
@@ -185,7 +185,7 @@ common::Result<bool> KvTable::Recover() {
 
         // Close WAL file, except for the last one
         if (&wal_path != &wal_files.back()) {
-            auto close_result = wal_->close();
+            auto close_result = wal_->Close();
             RETURN_IF_ERROR_T(ReturnType, close_result);
         }
     }
@@ -201,7 +201,7 @@ common::Result<void> KvTable::Flush() {
 common::Result<common::LSN> KvTable::WriteToWAL(KvEntry& entry) {
     using ReturnType = common::Result<common::LSN>;
 
-    auto result = wal_->append(entry);
+    auto result = wal_->Append(entry);
     RETURN_IF_ERROR_T(ReturnType, result);
 
     LOG_CHECK(result.value() == next_wal_sequence_, "WAL sequence number mismatch");
@@ -248,11 +248,11 @@ common::Result<void> KvTable::RotateWAL() {
     RETURN_IF_ERROR_T(ReturnType, track_result);
 
     // Close current WAL
-    auto close_result = wal_->close();
+    auto close_result = wal_->Close();
     RETURN_IF_ERROR_T(ReturnType, close_result);
 
     // open new WAL
-    auto open_result = wal_->open(GetWALPath(next_wal_sequence_));
+    auto open_result = wal_->Open(GetWALPath(next_wal_sequence_));
     RETURN_IF_ERROR_T(ReturnType, open_result);
 
     LOG_VERBOSE("Rotated WAL, seq number=%llu, table state=%s",
