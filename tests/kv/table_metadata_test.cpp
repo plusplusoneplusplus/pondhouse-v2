@@ -260,7 +260,7 @@ TEST_F(TableMetadataTest, StateMachineStateSerialization) {
     auto state_result = state_machine.GetCurrentState();
     VERIFY_RESULT(state_result);
     auto state_data = state_result.value();
-    ASSERT_GT(state_data.Size(), 0);
+    ASSERT_GT(state_data->Size(), 0);
 
     // Create new state machine and restore state
     TableMetadataStateMachine recovered(fs_, "test_metadata2");

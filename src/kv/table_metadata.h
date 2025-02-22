@@ -156,8 +156,8 @@ public:
                               const Config& config = Config::Default())
         : common::WalStateMachine(std::move(fs), dir_path, config) {}
 
-    common::Result<common::DataChunk> GetCurrentState() override;
-    common::Result<void> RestoreState(const common::DataChunk& state_data) override;
+    common::Result<common::DataChunkPtr> GetCurrentState() override;
+    common::Result<void> RestoreState(const common::DataChunkPtr& state_data) override;
 
 private:
     // State machine methods

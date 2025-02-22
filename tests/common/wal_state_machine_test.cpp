@@ -32,17 +32,17 @@ protected:
         return Result<void>::success();
     }
 
-    Result<DataChunk> GetCurrentState() override {
-        DataChunk state(sizeof(int64_t));
-        std::memcpy(state.Data(), &value_, sizeof(int64_t));
-        return Result<DataChunk>::success(std::move(state));
+    Result<DataChunkPtr> GetCurrentState() override {
+        auto state = std::make_shared<DataChunk>(sizeof(int64_t));
+        std::memcpy(state->Data(), &value_, sizeof(int64_t));
+        return Result<DataChunkPtr>::success(state);
     }
 
-    Result<void> RestoreState(const DataChunk& state_data) override {
-        if (state_data.Size() != sizeof(int64_t)) {
+    Result<void> RestoreState(const DataChunkPtr& state_data) override {
+        if (state_data->Size() != sizeof(int64_t)) {
             return Result<void>::failure(Error(ErrorCode::InvalidArgument, "Invalid state size"));
         }
-        std::memcpy(&value_, state_data.Data(), sizeof(int64_t));
+        std::memcpy(&value_, state_data->Data(), sizeof(int64_t));
         return Result<void>::success();
     }
 };

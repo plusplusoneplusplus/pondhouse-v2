@@ -118,10 +118,10 @@ protected:
     virtual Result<void> ApplyEntry(const DataChunk& entry_data) = 0;
 
     // Get the current state for checkpointing
-    virtual Result<DataChunk> GetCurrentState() = 0;
+    virtual Result<DataChunkPtr> GetCurrentState() = 0;
 
     // Restore state from a checkpoint
-    virtual Result<void> RestoreState(const DataChunk& state_data) = 0;
+    virtual Result<void> RestoreState(const DataChunkPtr& state_data) = 0;
 
 private:
     // Apply a new entry to the state machine
@@ -185,7 +185,7 @@ private:
         }
 
         // Write state data
-        auto write_result = fs_->Append(file_result.value(), state_result.value());
+        auto write_result = fs_->Append(file_result.value(), *(state_result.value()));
         fs_->CloseFile(file_result.value());
 
         if (!write_result.ok()) {
@@ -269,7 +269,7 @@ private:
         }
 
         // Restore state from checkpoint
-        auto restore_result = RestoreState(read_result.value());
+        auto restore_result = RestoreState(std::make_shared<DataChunk>(std::move(read_result).value()));
         if (!restore_result.ok()) {
             return restore_result;
         }

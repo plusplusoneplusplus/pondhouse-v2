@@ -290,14 +290,14 @@ common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChu
     return common::Result<void>::success();
 }
 
-common::Result<common::DataChunk> TableMetadataStateMachine::GetCurrentState() {
-    common::DataChunk state;
-    Serialize(state);
-    return common::Result<common::DataChunk>::success(std::move(state));
+common::Result<common::DataChunkPtr> TableMetadataStateMachine::GetCurrentState() {
+    auto state = std::make_shared<common::DataChunk>();
+    Serialize(*state);
+    return common::Result<common::DataChunkPtr>::success(state);
 }
 
-common::Result<void> TableMetadataStateMachine::RestoreState(const common::DataChunk& state_data) {
-    if (!Deserialize(state_data)) {
+common::Result<void> TableMetadataStateMachine::RestoreState(const common::DataChunkPtr& state_data) {
+    if (!Deserialize(*state_data)) {
         return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Failed to parse state data");
     }
     return common::Result<void>::success();
