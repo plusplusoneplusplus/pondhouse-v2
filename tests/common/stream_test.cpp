@@ -30,7 +30,7 @@ public:
     FileSystemStreamFactory() : fs_(std::make_shared<MemoryAppendOnlyFileSystem>()) {}
 
     std::unique_ptr<InputStream> CreateInputStream(const std::string& data) override {
-        const std::string test_file = "test_input.txt";
+        const std::string test_file = "test_input_" + UUID::NewUUID().ToString() + ".txt";
 
         // Create and write to file
         auto writer_result = FileSystemOutputStream::Create(fs_, test_file);
@@ -51,7 +51,7 @@ public:
     }
 
     std::unique_ptr<OutputStream> CreateOutputStream() override {
-        const std::string test_file = "test_output.txt";
+        const std::string test_file = "test_output_" + UUID::NewUUID().ToString() + ".txt";
         auto result = FileSystemOutputStream::Create(fs_, test_file);
         if (!result.ok())
             return nullptr;
@@ -87,6 +87,49 @@ TEST_P(StreamTest, BasicRead) {
     ASSERT_NE(stream, nullptr);
 
     verifyStreamContents(stream.get(), test_data);
+}
+
+//
+// Test Setup:
+//      Tests raw data reading functionality with partial reads and EOF handling
+// Test Result:
+//      Verifies correct handling of raw data buffers and positions
+//
+TEST_P(StreamTest, RawDataReading) {
+    const std::string test_data = "Hello, World!";
+    auto stream = GetParam()->CreateInputStream(test_data);
+    ASSERT_NE(stream, nullptr);
+
+    std::vector<char> buffer(test_data.size());
+
+    // Read partial data
+    auto result = stream->Read(buffer.data(), 5);
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.value(), 5);
+    EXPECT_EQ(std::string(buffer.data(), 5), "Hello");
+    EXPECT_EQ(stream->Position(), 5);
+
+    // Read remaining data
+    result = stream->Read(buffer.data() + 5, test_data.size() - 5);
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.value(), test_data.size() - 5);
+    EXPECT_EQ(std::string(buffer.data(), test_data.size()), test_data);
+    EXPECT_EQ(stream->Position(), test_data.size());
+
+    // Try to read beyond end
+    result = stream->Read(buffer.data(), 1);
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.value(), 0);  // Should return 0 at end of stream
+
+    // Test null buffer
+    result = stream->Read(nullptr, 0);
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.value(), 0);
+
+    // Test zero length read
+    result = stream->Read(buffer.data(), 0);
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.value(), 0);
 }
 
 //

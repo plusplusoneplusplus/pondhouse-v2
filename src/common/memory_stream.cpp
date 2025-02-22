@@ -39,6 +39,19 @@ Result<DataChunkPtr> MemoryInputStream::Read(size_t length) {
     return Result<DataChunkPtr>::success(result);
 }
 
+Result<size_t> MemoryInputStream::Read(void* data, size_t size) {
+    if (position_ >= data_->Size()) {
+        // End of stream
+        return Result<size_t>::success(0);
+    }
+
+    size_t to_read = std::min(size, data_->Size() - position_);
+    std::memcpy(data, data_->Data() + position_, to_read);
+    position_ += to_read;
+
+    return Result<size_t>::success(to_read);
+}
+
 Result<size_t> MemoryInputStream::Size() const {
     return Result<size_t>::success(data_->Size());
 }

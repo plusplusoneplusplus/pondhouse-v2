@@ -73,10 +73,12 @@ FileSystemSnapshotManager::FileSystemSnapshotManager(std::shared_ptr<common::IAp
 Result<std::shared_ptr<ISnapshotManager>> FileSystemSnapshotManager::Create(
     std::shared_ptr<common::IAppendOnlyFileSystem> fs, const SnapshotConfig& config) {
     if (!fs) {
+        LOG_ERROR("Filesystem is null");
         return Result<std::shared_ptr<ISnapshotManager>>::failure(ErrorCode::InvalidArgument, "Filesystem is null");
     }
 
     if (config.snapshot_dir.empty()) {
+        LOG_ERROR("Snapshot directory is empty");
         return Result<std::shared_ptr<ISnapshotManager>>::failure(ErrorCode::InvalidArgument,
                                                                   "Snapshot directory is empty");
     }
@@ -193,6 +195,8 @@ Result<bool> FileSystemSnapshotManager::RestoreSnapshot(ISnapshotable* state, co
     if (!footer_result.ok()) {
         return Result<bool>::failure(footer_result.error());
     }
+
+    // TODO: Verify metadata
 
     // Seek back to start for snapshot data
     seek_result = stream->Seek(0);

@@ -40,6 +40,20 @@ Result<DataChunkPtr> FileSystemInputStream::Read(size_t length) {
     return Result<DataChunkPtr>::success(std::make_shared<DataChunk>(std::move(result.value())));
 }
 
+Result<size_t> FileSystemInputStream::Read(void* data, size_t size) {
+    auto result = fs_->Read(handle_, position_, size);
+    if (!result.ok()) {
+        return Result<size_t>::failure(result.error());
+    }
+    if (result.value().Size() == 0) {
+        return Result<size_t>::success(0);
+    }
+
+    position_ += result.value().Size();
+    std::memcpy(data, result.value().Data(), result.value().Size());
+    return Result<size_t>::success(result.value().Size());
+}
+
 Result<DataChunkPtr> FileSystemInputStream::ReadAt(size_t offset, size_t length) {
     auto result = fs_->Read(handle_, offset, length);
     if (!result.ok()) {

@@ -35,6 +35,14 @@ public:
     Result<DataChunkPtr> Read(size_t length) override;
 
     /**
+     * Reads raw data from the current position.
+     * @param data Pointer to the buffer to store the read data
+     * @param size The number of bytes to read
+     * @return Result containing the number of bytes read or an error
+     */
+    Result<size_t> Read(void* data, size_t size) override;
+
+    /**
      * Reads data from the specified position.
      * @param offset The offset to read from
      * @param length The number of bytes to read

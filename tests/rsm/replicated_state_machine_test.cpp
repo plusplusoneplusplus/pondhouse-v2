@@ -48,6 +48,16 @@ public:
 
     int GetValue() const { return value_.load(); }
 
+    // Add synchronization support
+    void WaitForLSN(uint64_t target_lsn) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock, [this, target_lsn] {
+            return GetLastExecutedLSN() != common::INVALID_LSN && GetLastExecutedLSN() >= target_lsn;
+        });
+
+        LOG_VERBOSE("WaitForLSN: %llu, GetLastExecutedLSN: %llu", target_lsn, GetLastExecutedLSN());
+    }
+
 protected:
     void ExecuteReplicatedLog(uint64_t lsn, const DataChunk& data) override {
         auto cmd = IntegerCommand::Deserialize(data);
@@ -64,8 +74,19 @@ protected:
         }
     }
 
+    void AfterExecuteReplicatedLog(uint64_t lsn) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cv_.notify_all();
+    }
+
+    void SaveState(common::OutputStream* writer) override { writer->Write(&value_, sizeof(value_)); }
+
+    void LoadState(common::InputStream* reader) override { reader->Read(&value_, sizeof(value_)); }
+
 private:
     std::atomic<int> value_{0};
+    std::mutex mutex_;
+    std::condition_variable cv_;
 };
 
 // State machine that can block execution for testing
@@ -101,6 +122,15 @@ public:
         execution_start_cv_.wait(lock, [this, expected_lsn] { return current_executing_lsn_ == expected_lsn; });
     }
 
+    void SaveState(common::OutputStream* writer) override { writer->Write(&value_, sizeof(value_)); }
+
+    void LoadState(common::InputStream* reader) override { reader->Read(&value_, sizeof(value_)); }
+
+    void SetNoneBlocking() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        none_blocking_ = true;
+    }
+
 protected:
     void ExecuteReplicatedLog(uint64_t lsn, const DataChunk& data) override {
         {
@@ -110,9 +140,11 @@ protected:
             execution_start_cv_.notify_all();
         }
 
-        // Wait for test to allow execution
-        WaitForOperation();
-        Reset();  // Reset for next operation
+        if (!none_blocking_) {
+            // Wait for test to allow execution
+            WaitForOperation();
+            Reset();  // Reset for next operation
+        }
 
         auto cmd = IntegerCommand::Deserialize(data);
         value_.fetch_add(cmd.value);
@@ -124,13 +156,17 @@ private:
     std::condition_variable cv_;
     std::condition_variable execution_start_cv_;
     bool can_proceed_{false};
+    bool none_blocking_{false};
     uint64_t current_executing_lsn_{INVALID_LSN};
 };
 
 class ReplicatedStateMachineTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        snapshot_config_.snapshot_dir = "test_snapshots";
+
         fs_ = std::make_shared<MemoryAppendOnlyFileSystem>();
+
         snapshot_manager_ = FileSystemSnapshotManager::Create(fs_, snapshot_config_).value();
         replication_ = std::make_shared<WalReplication>(fs_);
     }
@@ -153,7 +189,7 @@ TEST_F(ReplicatedStateMachineTest, BasicOperations) {
     // Initialize state machine
     ReplicationConfig config;
     config.path = "test.log";
-    auto result = state_machine.Initialize(config);
+    auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
     // Test Set operation
@@ -162,7 +198,7 @@ TEST_F(ReplicatedStateMachineTest, BasicOperations) {
     VERIFY_RESULT_MSG(result, "Should replicate Set command");
 
     // Wait for execution
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    state_machine.WaitForLSN(0);
     EXPECT_EQ(42, state_machine.GetValue()) << "Value should be set to 42";
     EXPECT_EQ(0, state_machine.GetLastExecutedLSN()) << "First entry should have LSN 0";
 
@@ -172,7 +208,7 @@ TEST_F(ReplicatedStateMachineTest, BasicOperations) {
     VERIFY_RESULT_MSG(result, "Should replicate Add command");
 
     // Wait for execution
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    state_machine.WaitForLSN(1);
     EXPECT_EQ(50, state_machine.GetValue()) << "Value should be incremented to 50";
     EXPECT_EQ(1, state_machine.GetLastExecutedLSN()) << "Second entry should have LSN 1";
 
@@ -182,7 +218,7 @@ TEST_F(ReplicatedStateMachineTest, BasicOperations) {
     VERIFY_RESULT_MSG(result, "Should replicate Subtract command");
 
     // Wait for execution
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    state_machine.WaitForLSN(2);
     EXPECT_EQ(40, state_machine.GetValue()) << "Value should be decremented to 40";
     EXPECT_EQ(2, state_machine.GetLastExecutedLSN()) << "Third entry should have LSN 2";
 }
@@ -199,7 +235,7 @@ TEST_F(ReplicatedStateMachineTest, ConcurrentOperations) {
     // Initialize state machine
     ReplicationConfig config;
     config.path = "concurrent.log";
-    auto result = state_machine.Initialize(config);
+    auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
     // Set initial value
@@ -250,7 +286,7 @@ TEST_F(ReplicatedStateMachineTest, StopAndDrainEmpty) {
     // Initialize state machine
     ReplicationConfig config;
     config.path = "empty.log";
-    auto result = state_machine.Initialize(config);
+    auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
     // Drain empty queue
@@ -271,7 +307,7 @@ TEST_F(ReplicatedStateMachineTest, StopAndDrainAlreadyStopped) {
     // Initialize and immediately close
     ReplicationConfig config;
     config.path = "stopped.log";
-    auto result = state_machine.Initialize(config);
+    auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
     result = state_machine.Close();
@@ -294,7 +330,7 @@ TEST_F(ReplicatedStateMachineTest, LastPassedLSN) {
     // Initialize state machine
     ReplicationConfig config;
     config.path = "blocking.log";
-    auto result = state_machine.Initialize(config);
+    auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
     // Queue up first operation
@@ -304,7 +340,7 @@ TEST_F(ReplicatedStateMachineTest, LastPassedLSN) {
 
     // Wait for first operation to start executing
     state_machine.WaitForExecutionStart(0);
-    EXPECT_EQ(0, state_machine.GetLastExecutedLSN()) << "No operations should be completed";
+    EXPECT_EQ(common::INVALID_LSN, state_machine.GetLastExecutedLSN()) << "No operations should be completed";
     EXPECT_EQ(0, state_machine.GetLastPassedLSN()) << "First operation should be passed to execution";
 
     // Queue up second operation
@@ -331,6 +367,187 @@ TEST_F(ReplicatedStateMachineTest, LastPassedLSN) {
     EXPECT_EQ(1, state_machine.GetLastExecutedLSN()) << "Both operations should be completed";
     EXPECT_EQ(1, state_machine.GetLastPassedLSN()) << "Both operations should be passed to execution";
     EXPECT_EQ(2, state_machine.GetValue()) << "Both operations should update value";
+}
+
+//
+// Test Setup:
+//      Test basic snapshot creation and restoration
+// Test Result:
+//      State should be correctly saved and restored from snapshot
+//
+TEST_F(ReplicatedStateMachineTest, BasicSnapshot) {
+    // Initialize state machine
+    ReplicationConfig config;
+    config.path = "snapshot_test.log";
+
+    {
+        IntegerStateMachine state_machine(replication_, snapshot_manager_);
+
+        auto result = state_machine.Initialize(config, snapshot_config_);
+        VERIFY_RESULT_MSG(result, "Should initialize state machine");
+
+        // Set initial value and create snapshot
+        auto set_cmd = IntegerCommand::Serialize(IntegerCommand::Op::Set, 42);
+        result = state_machine.Replicate(set_cmd);
+        VERIFY_RESULT_MSG(result, "Should replicate Set command");
+        state_machine.WaitForLSN(0);
+
+        // Create snapshot
+        auto snapshot_result = state_machine.TriggerSnapshot();
+        VERIFY_RESULT_MSG(snapshot_result, "Should create snapshot");
+        auto snapshot_metadata = snapshot_result.value();
+        EXPECT_EQ(0, snapshot_metadata.lsn) << "Snapshot LSN should match last executed LSN";
+    }
+
+    {
+        // Create new state machine and recover
+        IntegerStateMachine new_state_machine(replication_, snapshot_manager_);
+        auto result = new_state_machine.Initialize(config, snapshot_config_);
+        VERIFY_RESULT_MSG(result, "Should initialize new state machine");
+        result = new_state_machine.Recover();
+        VERIFY_RESULT_MSG(result, "Should recover from snapshot");
+        EXPECT_EQ(42, new_state_machine.GetValue()) << "Restored value should match original";
+    }
+}
+
+//
+// Test Setup:
+//      Test snapshot with concurrent operations
+// Test Result:
+//      Snapshot should capture consistent state despite concurrent operations
+//
+TEST_F(ReplicatedStateMachineTest, ConcurrentSnapshot) {
+    ReplicationConfig config;
+    config.path = "concurrent_snapshot.log";
+
+    {
+        // Initialize state machine
+        BlockingStateMachine state_machine(replication_, snapshot_manager_);
+
+        auto result = state_machine.Initialize(config, snapshot_config_);
+        VERIFY_RESULT_MSG(result, "Should initialize state machine");
+
+        // Set initial value
+        auto set_cmd = IntegerCommand::Serialize(IntegerCommand::Op::Set, 100);
+        result = state_machine.Replicate(set_cmd);
+        VERIFY_RESULT_MSG(result, "Should replicate Set command");
+        state_machine.AllowOperation();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        // Start a thread that continuously updates the value
+        std::atomic<bool> stop_thread{false};
+        std::thread update_thread([&]() {
+            while (!stop_thread) {
+                auto add_cmd = IntegerCommand::Serialize(IntegerCommand::Op::Add, 1);
+                auto result = state_machine.Replicate(add_cmd);
+                EXPECT_TRUE(result.ok()) << "Should replicate Add command";
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                state_machine.AllowOperation();  // Allow each operation to complete
+            }
+        });
+
+        // Create snapshot while updates are happening
+        auto snapshot_result = state_machine.TriggerSnapshot();
+        VERIFY_RESULT_MSG(snapshot_result, "Should create snapshot");
+
+        // Stop update thread
+        stop_thread = true;
+        update_thread.join();
+    }
+
+    {
+        // Create new state machine and recover
+        BlockingStateMachine new_state_machine(replication_, snapshot_manager_);
+        auto result = new_state_machine.Initialize(config, snapshot_config_);
+        VERIFY_RESULT_MSG(result, "Should initialize new state machine");
+
+        new_state_machine.SetNoneBlocking();
+
+        result = new_state_machine.Recover();
+        VERIFY_RESULT_MSG(result, "Should recover state");
+        EXPECT_GE(new_state_machine.GetValue(), 100) << "Recovered value should be at least initial value";
+    }
+}
+
+//
+// Test Setup:
+//      Test recovery failure cases
+// Test Result:
+//      Should handle various error conditions gracefully
+//
+TEST_F(ReplicatedStateMachineTest, RecoveryFailures) {
+    IntegerStateMachine state_machine(replication_, snapshot_manager_);
+
+    // Initialize state machine
+    ReplicationConfig config;
+    config.path = "failure_test.log";
+    auto result = state_machine.Initialize(config, snapshot_config_);
+    VERIFY_RESULT_MSG(result, "Should initialize state machine");
+
+    // Test recovery with no snapshots or logs
+    result = state_machine.Recover();
+    VERIFY_RESULT_MSG(result, "Should handle recovery with no state");
+    EXPECT_EQ(0, state_machine.GetValue()) << "Value should remain at initial state";
+
+    // Test recovery with uninitialized state machine
+    IntegerStateMachine uninitialized_machine(replication_, snapshot_manager_);
+    result = uninitialized_machine.Recover();
+    EXPECT_FALSE(result.ok()) << "Should fail to recover uninitialized state machine";
+}
+
+//
+// Test Setup:
+//      Test recovery with multiple snapshots and logs
+// Test Result:
+//      Should recover to the latest state using the most recent snapshot and logs
+//
+TEST_F(ReplicatedStateMachineTest, CompleteRecovery) {
+    IntegerStateMachine state_machine(replication_, snapshot_manager_);
+
+    // Initialize state machine
+    ReplicationConfig config;
+    config.path = "complete_recovery.log";
+    auto result = state_machine.Initialize(config, snapshot_config_);
+    VERIFY_RESULT_MSG(result, "Should initialize state machine");
+
+    // Create initial state
+    auto set_cmd = IntegerCommand::Serialize(IntegerCommand::Op::Set, 100);
+    result = state_machine.Replicate(set_cmd);
+    VERIFY_RESULT_MSG(result, "Should replicate Set command");
+    state_machine.WaitForLSN(0);
+
+    // Create first snapshot
+    auto snapshot_result = state_machine.TriggerSnapshot();
+    VERIFY_RESULT_MSG(snapshot_result, "Should create first snapshot");
+
+    // Add more operations and create another snapshot
+    for (int i = 1; i <= 5; i++) {
+        auto add_cmd = IntegerCommand::Serialize(IntegerCommand::Op::Add, 10);
+        result = state_machine.Replicate(add_cmd);
+        VERIFY_RESULT_MSG(result, "Should replicate Add command");
+        state_machine.WaitForLSN(i);
+    }
+
+    snapshot_result = state_machine.TriggerSnapshot();
+    VERIFY_RESULT_MSG(snapshot_result, "Should create second snapshot");
+
+    // Add final operations
+    for (int i = 6; i <= 8; i++) {
+        auto add_cmd = IntegerCommand::Serialize(IntegerCommand::Op::Add, 5);
+        result = state_machine.Replicate(add_cmd);
+        VERIFY_RESULT_MSG(result, "Should replicate final Add commands");
+        state_machine.WaitForLSN(i);
+    }
+
+    // Create new state machine and recover
+    IntegerStateMachine recovery_machine(replication_, snapshot_manager_);
+    result = recovery_machine.Initialize(config, snapshot_config_);
+    VERIFY_RESULT_MSG(result, "Should initialize recovery machine");
+
+    result = recovery_machine.Recover();
+    VERIFY_RESULT_MSG(result, "Should recover state");
+    EXPECT_EQ(165, recovery_machine.GetValue()) << "Should recover to final state (100 + 5*10 + 3*5)";
+    EXPECT_EQ(8, recovery_machine.GetLastExecutedLSN()) << "Should execute all log entries";
 }
 
 }  // namespace pond::test
