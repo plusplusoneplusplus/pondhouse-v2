@@ -64,6 +64,10 @@ protected:
         }
     }
 
+    void SaveState(common::OutputStream* writer) override { writer->Write(&value_, sizeof(value_)); }
+
+    void LoadState(common::InputStream* reader) override { reader->Read(&value_, sizeof(value_)); }
+
 private:
     std::atomic<int> value_{0};
 };
@@ -101,6 +105,10 @@ public:
         execution_start_cv_.wait(lock, [this, expected_lsn] { return current_executing_lsn_ == expected_lsn; });
     }
 
+    void SaveState(common::OutputStream* writer) override { writer->Write(&value_, sizeof(value_)); }
+
+    void LoadState(common::InputStream* reader) override { reader->Read(&value_, sizeof(value_)); }
+
 protected:
     void ExecuteReplicatedLog(uint64_t lsn, const DataChunk& data) override {
         {
@@ -130,7 +138,10 @@ private:
 class ReplicatedStateMachineTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        snapshot_config_.snapshot_dir = "test_snapshots";
+
         fs_ = std::make_shared<MemoryAppendOnlyFileSystem>();
+
         snapshot_manager_ = FileSystemSnapshotManager::Create(fs_, snapshot_config_).value();
         replication_ = std::make_shared<WalReplication>(fs_);
     }
@@ -153,7 +164,7 @@ TEST_F(ReplicatedStateMachineTest, BasicOperations) {
     // Initialize state machine
     ReplicationConfig config;
     config.path = "test.log";
-    auto result = state_machine.Initialize(config);
+    auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
     // Test Set operation
@@ -199,7 +210,7 @@ TEST_F(ReplicatedStateMachineTest, ConcurrentOperations) {
     // Initialize state machine
     ReplicationConfig config;
     config.path = "concurrent.log";
-    auto result = state_machine.Initialize(config);
+    auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
     // Set initial value
@@ -250,7 +261,7 @@ TEST_F(ReplicatedStateMachineTest, StopAndDrainEmpty) {
     // Initialize state machine
     ReplicationConfig config;
     config.path = "empty.log";
-    auto result = state_machine.Initialize(config);
+    auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
     // Drain empty queue
@@ -271,7 +282,7 @@ TEST_F(ReplicatedStateMachineTest, StopAndDrainAlreadyStopped) {
     // Initialize and immediately close
     ReplicationConfig config;
     config.path = "stopped.log";
-    auto result = state_machine.Initialize(config);
+    auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
     result = state_machine.Close();
@@ -294,7 +305,7 @@ TEST_F(ReplicatedStateMachineTest, LastPassedLSN) {
     // Initialize state machine
     ReplicationConfig config;
     config.path = "blocking.log";
-    auto result = state_machine.Initialize(config);
+    auto result = state_machine.Initialize(config, snapshot_config_);
     VERIFY_RESULT_MSG(result, "Should initialize state machine");
 
     // Queue up first operation

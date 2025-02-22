@@ -35,6 +35,12 @@ public:
 
     // Get the last passed LSN
     virtual uint64_t GetLastPassedLSN() const = 0;
+
+    // Save the state of the state machine to a stream, used for snapshots
+    virtual void SaveState(common::OutputStream* writer) = 0;
+
+    // Load the state of the state machine from a stream, used for restoring from snapshots
+    virtual void LoadState(common::InputStream* reader) = 0;
 };
 
 // Entry for background execution
@@ -54,9 +60,8 @@ public:
                            std::shared_ptr<ISnapshotManager> snapshot_manager);
     ~ReplicatedStateMachine();
 
-    Result<bool> Initialize(const ReplicationConfig& config);
+    Result<bool> Initialize(const ReplicationConfig& config, const SnapshotConfig& snapshot_config);
     Result<bool> Close();
-    Result<bool> ConfigureSnapshots(const SnapshotConfig& config);
     Result<SnapshotMetadata> TriggerSnapshot();
     Result<void> StopAndDrain();
     Result<bool> Replicate(const DataChunk& data);
@@ -65,15 +70,15 @@ public:
     uint64_t GetLastExecutedLSN() const override;
     uint64_t GetLastPassedLSN() const override;
 
-    // ISnapshotable implementation
-    Result<SnapshotMetadata> CreateSnapshot(common::OutputStream* writer) final override;
-    Result<bool> ApplySnapshot(common::InputStream* reader, const SnapshotMetadata& metadata) final override;
-    Result<SnapshotMetadata> GetLastSnapshotMetadata() const final override;
-
 private:
     void Start();
     void Stop();
     void ExecuteLoop();
+
+    // ISnapshotable implementation
+    Result<SnapshotMetadata> CreateSnapshot(common::OutputStream* writer) final override;
+    Result<bool> ApplySnapshot(common::InputStream* reader, const SnapshotMetadata& metadata) final override;
+    Result<SnapshotMetadata> GetLastSnapshotMetadata() const final override;
 
 private:
     std::shared_ptr<IReplication> replication_;

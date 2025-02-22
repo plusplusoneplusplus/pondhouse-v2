@@ -21,10 +21,16 @@ ReplicatedStateMachine::~ReplicatedStateMachine() {
     Close();
 }
 
-Result<bool> ReplicatedStateMachine::Initialize(const ReplicationConfig& config) {
+Result<bool> ReplicatedStateMachine::Initialize(const ReplicationConfig& config,
+                                                const SnapshotConfig& snapshot_config) {
     auto result = replication_->Initialize(config);
     if (!result.ok()) {
         return result;
+    }
+
+    {
+        auto lock = std::lock_guard(mutex_);
+        snapshot_config_ = snapshot_config;
     }
 
     // Start background execution thread
@@ -35,12 +41,6 @@ Result<bool> ReplicatedStateMachine::Initialize(const ReplicationConfig& config)
 Result<bool> ReplicatedStateMachine::Close() {
     Stop();
     return replication_->Close();
-}
-
-Result<bool> ReplicatedStateMachine::ConfigureSnapshots(const SnapshotConfig& config) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    snapshot_config_ = config;
-    return Result<bool>::success(true);
 }
 
 Result<SnapshotMetadata> ReplicatedStateMachine::TriggerSnapshot() {
@@ -149,7 +149,7 @@ Result<SnapshotMetadata> ReplicatedStateMachine::CreateSnapshot(common::OutputSt
     metadata.cluster_config = ClusterConfig();  // TODO: Add cluster config when implementing Raft
 
     // Write state machine data
-    // TODO: Implement state serialization in derived classes
+    SaveState(writer);
 
     last_snapshot_metadata_ = metadata;
     return Result<SnapshotMetadata>::success(metadata);
@@ -178,7 +178,7 @@ Result<bool> ReplicatedStateMachine::ApplySnapshot(common::InputStream* reader, 
     }
 
     // Apply state machine data
-    // TODO: Implement state deserialization in derived classes
+    LoadState(reader);
 
     // Update state machine
     last_executed_lsn_.store(metadata.lsn);

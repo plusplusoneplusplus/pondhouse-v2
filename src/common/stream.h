@@ -22,6 +22,14 @@ public:
     virtual Result<DataChunkPtr> Read(size_t length) = 0;
 
     /**
+     * Reads raw data from the current position.
+     * @param data Pointer to the buffer to store the read data
+     * @param size The number of bytes to read
+     * @return Result containing the number of bytes read or an error
+     */
+    virtual Result<size_t> Read(void* data, size_t size) = 0;
+
+    /**
      * Gets the size of the stream.
      * @return Result containing the stream size or an error
      */
