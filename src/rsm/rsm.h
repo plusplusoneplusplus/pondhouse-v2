@@ -10,11 +10,12 @@
 #include "common/data_chunk.h"
 #include "common/result.h"
 #include "rsm/replication.h"
+#include "rsm/snapshot.h"
 
 namespace pond::rsm {
 
 /**
- * Interface for a replicated state machine that combines both replication and execution
+ * Interface for a replicated state machine that combines replication, execution.
  * This provides a complete abstraction for a state machine that can:
  * 1. Replicate entries across nodes (via IReplication)
  * 2. Execute committed entries (via IReplicatedLogExecutor)
@@ -44,117 +45,53 @@ struct PendingEntry {
     PendingEntry(uint64_t l, const DataChunk& d) : lsn(l), data(d) {}
 };
 
-class ReplicatedStateMachine : public IReplicatedStateMachine {
+/**
+ * Replicated state machine that combines replication, execution, and snapshotting.
+ */
+class ReplicatedStateMachine : public IReplicatedStateMachine, public ISnapshotable {
 public:
-    ReplicatedStateMachine(std::shared_ptr<IReplication> replication)
-        : replication_(std::move(replication)), running_(false) {}
+    ReplicatedStateMachine(std::shared_ptr<IReplication> replication,
+                           std::shared_ptr<ISnapshotManager> snapshot_manager);
+    ~ReplicatedStateMachine();
 
-    ~ReplicatedStateMachine() { Close(); }
+    Result<bool> Initialize(const ReplicationConfig& config);
+    Result<bool> Close();
+    Result<bool> ConfigureSnapshots(const SnapshotConfig& config);
+    Result<SnapshotMetadata> TriggerSnapshot();
+    Result<void> StopAndDrain();
+    Result<bool> Replicate(const DataChunk& data);
 
-    Result<bool> Initialize(const ReplicationConfig& config) {
-        auto result = replication_->Initialize(config);
-        if (!result.ok()) {
-            return result;
-        }
+    // IReplicatedStateMachine interface
+    uint64_t GetLastExecutedLSN() const override;
+    uint64_t GetLastPassedLSN() const override;
 
-        // Start background execution thread
-        Start();
-        return Result<bool>::success(true);
-    }
-
-    Result<bool> Close() {
-        Stop();
-        return replication_->Close();
-    }
-
-    // Stop the execution thread after draining all pending entries
-    Result<void> StopAndDrain() {
-        if (!running_) {
-            return Result<void>::success();
-        }
-
-        // Wait for queue to be empty
-        {
-            std::unique_lock<std::mutex> lock(mutex_);
-            cv_.wait(lock, [this] { return pending_entries_.empty(); });
-        }
-
-        // Now stop the thread
-        Stop();
-        return Result<void>::success();
-    }
-
-    Result<bool> Replicate(const DataChunk& data) {
-        auto result = replication_->Append(data);
-        if (!result.ok()) {
-            LOG_ERROR("Failed to replicate data: %s", result.error().message().c_str());
-            return Result<bool>::failure(result.error());
-        }
-
-        // Push to execution queue
-        {
-            auto lsn = result.value();
-            std::lock_guard<std::mutex> lock(mutex_);
-            pending_entries_.emplace(lsn, data);
-            last_passed_lsn_.store(lsn);
-        }
-        cv_.notify_one();
-
-        return Result<bool>::success(true);
-    }
-
-    uint64_t GetLastExecutedLSN() const override { return last_executed_lsn_.load(); }
-
-    uint64_t GetLastPassedLSN() const override { return last_passed_lsn_.load(); }
+    // ISnapshotable implementation
+    Result<SnapshotMetadata> CreateSnapshot(common::OutputStream* writer) final override;
+    Result<bool> ApplySnapshot(common::InputStream* reader, const SnapshotMetadata& metadata) final override;
+    Result<SnapshotMetadata> GetLastSnapshotMetadata() const final override;
 
 private:
-    void Start() {
-        running_ = true;
-        execute_thread_ = std::thread(&ReplicatedStateMachine::ExecuteLoop, this);
-    }
-
-    void Stop() {
-        if (running_) {
-            running_ = false;
-            cv_.notify_all();
-            if (execute_thread_.joinable()) {
-                execute_thread_.join();
-            }
-        }
-    }
-
-    void ExecuteLoop() {
-        while (running_) {
-            std::unique_lock<std::mutex> lock(mutex_);
-            cv_.wait(lock, [this] { return !running_ || !pending_entries_.empty(); });
-
-            if (!running_) {
-                break;
-            }
-
-            // Get next entry to execute
-            auto entry = std::move(pending_entries_.front());
-            pending_entries_.pop();
-            lock.unlock();
-
-            // Execute entry
-            ExecuteReplicatedLog(entry.lsn, entry.data);
-            last_executed_lsn_.store(entry.lsn);
-            cv_.notify_all();
-        }
-    }
+    void Start();
+    void Stop();
+    void ExecuteLoop();
 
 private:
     std::shared_ptr<IReplication> replication_;
     std::atomic<uint64_t> last_executed_lsn_{0};
     std::atomic<uint64_t> last_passed_lsn_{0};
+    std::atomic<uint64_t> last_snapshot_lsn_{0};
 
     // Background execution thread
     std::thread execute_thread_;
     std::atomic<bool> running_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::queue<PendingEntry> pending_entries_;
+
+    // Snapshot support
+    std::shared_ptr<ISnapshotManager> snapshot_manager_;
+    SnapshotConfig snapshot_config_;
+    SnapshotMetadata last_snapshot_metadata_;
 };
 
 }  // namespace pond::rsm

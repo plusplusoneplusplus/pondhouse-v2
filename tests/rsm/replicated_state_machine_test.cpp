@@ -8,6 +8,7 @@
 #include "common/memory_append_only_fs.h"
 #include "rsm/replication.h"
 #include "rsm/rsm.h"
+#include "rsm/snapshot_manager.h"
 #include "rsm/wal_replication.h"
 #include "test_helper.h"
 
@@ -42,7 +43,8 @@ struct IntegerCommand {
 // Simple state machine that maintains a single integer value
 class IntegerStateMachine : public ReplicatedStateMachine {
 public:
-    IntegerStateMachine(std::shared_ptr<IReplication> replication) : ReplicatedStateMachine(std::move(replication)) {}
+    IntegerStateMachine(std::shared_ptr<IReplication> replication, std::shared_ptr<ISnapshotManager> snapshot_manager)
+        : ReplicatedStateMachine(std::move(replication), std::move(snapshot_manager)) {}
 
     int GetValue() const { return value_.load(); }
 
@@ -69,7 +71,8 @@ private:
 // State machine that can block execution for testing
 class BlockingStateMachine : public ReplicatedStateMachine {
 public:
-    BlockingStateMachine(std::shared_ptr<IReplication> replication) : ReplicatedStateMachine(std::move(replication)) {}
+    BlockingStateMachine(std::shared_ptr<IReplication> replication, std::shared_ptr<ISnapshotManager> snapshot_manager)
+        : ReplicatedStateMachine(std::move(replication), std::move(snapshot_manager)) {}
 
     int GetValue() const { return value_.load(); }
 
@@ -128,11 +131,14 @@ class ReplicatedStateMachineTest : public ::testing::Test {
 protected:
     void SetUp() override {
         fs_ = std::make_shared<MemoryAppendOnlyFileSystem>();
+        snapshot_manager_ = FileSystemSnapshotManager::Create(fs_, snapshot_config_).value();
         replication_ = std::make_shared<WalReplication>(fs_);
     }
 
     std::shared_ptr<MemoryAppendOnlyFileSystem> fs_;
     std::shared_ptr<WalReplication> replication_;
+    std::shared_ptr<ISnapshotManager> snapshot_manager_;
+    SnapshotConfig snapshot_config_;
 };
 
 //
@@ -142,7 +148,7 @@ protected:
 //      All operations should be executed in order and the final value should be correct
 //
 TEST_F(ReplicatedStateMachineTest, BasicOperations) {
-    IntegerStateMachine state_machine(replication_);
+    IntegerStateMachine state_machine(replication_, snapshot_manager_);
 
     // Initialize state machine
     ReplicationConfig config;
@@ -188,7 +194,7 @@ TEST_F(ReplicatedStateMachineTest, BasicOperations) {
 //      All operations should be executed in order despite concurrent replication
 //
 TEST_F(ReplicatedStateMachineTest, ConcurrentOperations) {
-    IntegerStateMachine state_machine(replication_);
+    IntegerStateMachine state_machine(replication_, snapshot_manager_);
 
     // Initialize state machine
     ReplicationConfig config;
@@ -239,7 +245,7 @@ TEST_F(ReplicatedStateMachineTest, ConcurrentOperations) {
 //      Should return success immediately when queue is empty
 //
 TEST_F(ReplicatedStateMachineTest, StopAndDrainEmpty) {
-    IntegerStateMachine state_machine(replication_);
+    IntegerStateMachine state_machine(replication_, snapshot_manager_);
 
     // Initialize state machine
     ReplicationConfig config;
@@ -260,7 +266,7 @@ TEST_F(ReplicatedStateMachineTest, StopAndDrainEmpty) {
 //      Should return success immediately when already stopped
 //
 TEST_F(ReplicatedStateMachineTest, StopAndDrainAlreadyStopped) {
-    IntegerStateMachine state_machine(replication_);
+    IntegerStateMachine state_machine(replication_, snapshot_manager_);
 
     // Initialize and immediately close
     ReplicationConfig config;
@@ -283,7 +289,7 @@ TEST_F(ReplicatedStateMachineTest, StopAndDrainAlreadyStopped) {
 //      last_passed_lsn should reflect the LSN of operations that have started execution
 //
 TEST_F(ReplicatedStateMachineTest, LastPassedLSN) {
-    BlockingStateMachine state_machine(replication_);
+    BlockingStateMachine state_machine(replication_, snapshot_manager_);
 
     // Initialize state machine
     ReplicationConfig config;

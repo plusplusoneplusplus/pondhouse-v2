@@ -134,6 +134,7 @@ add_library(pondhouse_common
     src/format/parquet/append_only_output_stream.cpp
     src/format/parquet/parquet_reader.cpp
     src/format/parquet/parquet_writer.cpp
+    src/rsm/rsm.cpp
     ${PROTO_SRCS}
 )
 
