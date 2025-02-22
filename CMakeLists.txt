@@ -115,6 +115,7 @@ add_library(pondhouse_common
     src/common/log.cpp
     src/common/bloom_filter.cpp
     src/common/crc.cpp
+    src/common/error.cpp
     src/kv/kv_entry.cpp
     src/kv/kv_table.cpp
     src/kv/record.cpp
@@ -186,6 +187,7 @@ add_executable(
     tests/common/uuid_test.cpp
     tests/common/wal_state_machine_test.cpp
     tests/common/wal_test.cpp
+    tests/rsm/replication_test.cpp
     tests/format/parquet/parquet_test.cpp
     tests/kv/compaction_metrics_test.cpp
     tests/kv/db_test.cpp

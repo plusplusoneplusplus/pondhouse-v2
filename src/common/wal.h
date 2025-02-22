@@ -192,11 +192,12 @@ public:
             offset += detail::HEADER_SIZE + entry_size;
 
             start_lsn = lsn + 1;
-            LOG_VERBOSE("Completed reading entry from WAL: LSN=%zu", lsn);
+            LOG_VERBOSE("Completed reading entry from WAL: LSN=%llu", lsn);
         }
 
         if (!entries.empty()) {
             current_lsn_ = entries.back().lsn() + 1;
+            LOG_VERBOSE("Updated current LSN from WAL: LSN=%llu", current_lsn_.load());
         }
 
         return common::Result<std::vector<T>>::success(std::move(entries));

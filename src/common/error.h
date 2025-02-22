@@ -111,11 +111,7 @@ public:
     const std::string& message() const { return message_; }
     const char* c_str() const { return message_.c_str(); }
 
-    std::string to_string() const {
-        std::ostringstream ss;
-        ss << "Error: " << static_cast<int>(code_) << " " << message_;
-        return ss.str();
-    }
+    std::string to_string() const;
 
 private:
     ErrorCode code_;
