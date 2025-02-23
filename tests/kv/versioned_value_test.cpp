@@ -25,7 +25,7 @@ TEST_F(VersionedValueTest, BasicOperationsWithDataChunk) {
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(v1->value().Data()), v1->value().Size()), "value1");
     EXPECT_EQ(v1->version(), version1);
     EXPECT_EQ(v1->txn_id(), txn1);
-    EXPECT_FALSE(v1->is_deleted());
+    EXPECT_FALSE(v1->IsDeleted());
     EXPECT_EQ(v1->prev_version(), nullptr);
 }
 
@@ -40,7 +40,7 @@ TEST_F(VersionedValueTest, BasicOperationsWithString) {
     EXPECT_EQ(v1->value(), "value1");
     EXPECT_EQ(v1->version(), version1);
     EXPECT_EQ(v1->txn_id(), txn1);
-    EXPECT_FALSE(v1->is_deleted());
+    EXPECT_FALSE(v1->IsDeleted());
     EXPECT_EQ(v1->prev_version(), nullptr);
 }
 

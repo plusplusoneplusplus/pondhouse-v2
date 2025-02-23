@@ -47,17 +47,21 @@ public:
     class Iterator : public common::Iterator<Key, Value> {
     public:
         explicit Iterator(std::unique_ptr<common::Iterator<Key, Value>> iter, std::mutex& mutex)
-            : iter_(std::move(iter)), mutex_(mutex) {}
+            : iter_(std::move(iter)), mutex_(mutex) {
+            AdvanceToValidRecord();
+        }
         ~Iterator() override = default;
 
         void Seek(const Key& target) override {
             std::lock_guard<std::mutex> lock(mutex_);
             iter_->Seek(target);
+            AdvanceToValidRecord();
         }
 
         void Next() override {
             std::lock_guard<std::mutex> lock(mutex_);
             iter_->Next();
+            AdvanceToValidRecord();
         }
 
         bool Valid() const override {
@@ -76,6 +80,18 @@ public:
         }
 
     private:
+        // Advances the iterator until it finds a non-deleted record or reaches the end
+        void AdvanceToValidRecord() {
+            while (iter_->Valid()) {
+                const auto& version_chain = iter_->value();
+                // Check if the latest version is a deletion marker
+                if (!version_chain->IsDeleted()) {
+                    break;
+                }
+                iter_->Next();
+            }
+        }
+
         std::unique_ptr<common::Iterator<Key, Value>> iter_;
         std::mutex& mutex_;
     };

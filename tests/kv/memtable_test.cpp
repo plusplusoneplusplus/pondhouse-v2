@@ -391,4 +391,51 @@ TEST_F(MemTableTest, DeleteOperations) {
     VERIFY_RESULT(table->Delete("key2", 0 /* txn_id */));
 }
 
+//
+// Test Setup:
+//      Insert multiple key-value pairs and delete some of them
+//      Verify iterator behavior with deleted records
+// Test Result:
+//      Iterator should skip deleted records
+//      Iterator should show the correct version of records
+//
+TEST_F(MemTableTest, IteratorWithDeletedRecords) {
+    auto txn1 = NextTxnId();
+    auto txn2 = NextTxnId();
+
+    // Insert initial records
+    VERIFY_RESULT(table->Put("key1", CreateTestValue("value1"), txn1));
+    VERIFY_RESULT(table->Put("key2", CreateTestValue("value2"), txn1));
+    VERIFY_RESULT(table->Put("key3", CreateTestValue("value3"), txn1));
+
+    // Delete key2
+    VERIFY_RESULT(table->Delete("key2", txn2));
+
+    // Create iterator and verify it skips deleted records
+    auto it = table->NewIterator();
+    std::vector<std::string> seen_keys;
+    std::vector<std::string> seen_values;
+
+    for (; it->Valid();) {
+        auto key = it->key();
+        const auto& versioned_value = it->value().get();
+        const common::DataChunk& value = versioned_value->value();
+        seen_keys.push_back(key);
+        seen_values.push_back(std::string(reinterpret_cast<const char*>(value.Data()), value.Size()));
+        it->Next();
+    }
+
+    // Should only see key1 and key3, key2 should be skipped
+    ASSERT_EQ(seen_keys.size(), 2);
+    EXPECT_EQ(seen_keys[0], "key1");
+    EXPECT_EQ(seen_keys[1], "key3");
+    EXPECT_EQ(seen_values[0], "value1");
+    EXPECT_EQ(seen_values[1], "value3");
+
+    // Verify seeking behavior with deleted records
+    it->Seek("key2");
+    EXPECT_TRUE(it->Valid());
+    EXPECT_EQ(it->key(), "key3");  // Should skip key2 and land on key3
+}
+
 }  // namespace pond::kv
