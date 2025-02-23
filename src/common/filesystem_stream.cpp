@@ -7,7 +7,15 @@ namespace pond::common {
 
 // FileSystemInputStream implementation
 FileSystemInputStream::FileSystemInputStream(std::shared_ptr<IAppendOnlyFileSystem> fs, FileHandle handle)
-    : fs_(std::move(fs)), handle_(handle), position_(0) {}
+    : fs_(std::move(fs)), handle_(handle), position_(0) {
+    auto size_result = fs_->Size(handle_);
+    if (!size_result.ok()) {
+        LOG_ERROR("Failed to get size of file: %s", size_result.error().message().c_str());
+        return;
+    }
+
+    size_ = size_result.value();
+}
 
 FileSystemInputStream::~FileSystemInputStream() {
     if (handle_ != INVALID_HANDLE) {
@@ -32,7 +40,11 @@ Result<std::unique_ptr<FileSystemInputStream>> FileSystemInputStream::Create(std
 }
 
 Result<DataChunkPtr> FileSystemInputStream::Read(size_t length) {
-    auto result = fs_->Read(handle_, position_, length);
+    if (position_ >= size_) {
+        return Result<DataChunkPtr>::success(std::make_shared<DataChunk>());
+    }
+
+    auto result = fs_->Read(handle_, position_, std::min(length, size_ - position_));
     if (!result.ok()) {
         return Result<DataChunkPtr>::failure(result.error());
     }
@@ -41,7 +53,11 @@ Result<DataChunkPtr> FileSystemInputStream::Read(size_t length) {
 }
 
 Result<size_t> FileSystemInputStream::Read(void* data, size_t size) {
-    auto result = fs_->Read(handle_, position_, size);
+    if (position_ >= size_) {
+        return Result<size_t>::success(0);
+    }
+
+    auto result = fs_->Read(handle_, position_, std::min(size, size_ - position_));
     if (!result.ok()) {
         return Result<size_t>::failure(result.error());
     }
@@ -55,7 +71,11 @@ Result<size_t> FileSystemInputStream::Read(void* data, size_t size) {
 }
 
 Result<DataChunkPtr> FileSystemInputStream::ReadAt(size_t offset, size_t length) {
-    auto result = fs_->Read(handle_, offset, length);
+    if (offset >= size_) {
+        return Result<DataChunkPtr>::success(std::make_shared<DataChunk>());
+    }
+
+    auto result = fs_->Read(handle_, offset, std::min(length, size_ - offset));
     if (!result.ok()) {
         return Result<DataChunkPtr>::failure(result.error());
     }
@@ -63,20 +83,35 @@ Result<DataChunkPtr> FileSystemInputStream::ReadAt(size_t offset, size_t length)
 }
 
 Result<size_t> FileSystemInputStream::Size() const {
-    return fs_->Size(handle_);
+    return Result<size_t>::success(size_);
+}
+
+Result<bool> FileSystemInputStream::UpdateSize(size_t size) {
+    auto current_size = fs_->Size(handle_);
+    if (!current_size.ok()) {
+        return Result<bool>::failure(current_size.error());
+    }
+
+    if (size > current_size.value()) {
+        return Result<bool>::failure(ErrorCode::InvalidArgument,
+                                     "Cannot expand file size through FileSystemInputStream");
+    }
+
+    size_ = size;
+    if (position_ > size_) {
+        position_ = size_;
+    }
+
+    return Result<bool>::success(true);
 }
 
 Result<bool> FileSystemInputStream::Seek(size_t position) {
-    auto size_result = Size();
-    if (!size_result.ok()) {
-        return Result<bool>::failure(size_result.error());
-    }
-
-    if (position > size_result.value()) {
-        return Result<bool>::failure(ErrorCode::InvalidArgument, "Position beyond end of file");
+    if (position > size_) {
+        return Result<bool>::failure(ErrorCode::EndOfStream, "Position beyond end of file");
     }
 
     position_ = position;
+
     return Result<bool>::success(true);
 }
 
