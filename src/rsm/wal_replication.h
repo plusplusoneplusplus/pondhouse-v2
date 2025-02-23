@@ -18,11 +18,11 @@ public:
 
     // IReplication interface implementation
     Result<bool> Initialize(const ReplicationConfig& config) override {
-        if (config.path.empty()) {
+        if (config.directory.empty()) {
             return Result<bool>::failure(common::ErrorCode::InvalidArgument, "Path cannot be empty");
         }
         config_ = config;
-        return wal_.Open(config.path, false /* recover */);
+        return wal_.Open(GetFilePath(), false /* recover */);
     }
 
     Result<bool> Bootstrap() override {
@@ -60,6 +60,8 @@ public:
     uint64_t GetCurrentIndex() const override { return wal_.current_lsn(); }
 
     void ResetIndex() override { wal_.reset_lsn(); }
+
+    std::string GetFilePath() const { return config_.directory + "/wal.log"; }
 
 private:
     std::shared_ptr<common::IAppendOnlyFileSystem> fs_;

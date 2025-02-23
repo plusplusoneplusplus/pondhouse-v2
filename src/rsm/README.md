@@ -24,7 +24,16 @@ The Replicated State Machine (RSM) component provides a framework for implementi
   - Queue-based execution ordering
   - Support for draining pending entries
 
-#### 4. I/O Abstractions
+#### 4. Snapshot Support
+- `ISnapshotable`: Interface for snapshot operations
+- `ISnapshotManager`: Interface for snapshot management
+- `FileSystemSnapshotManager`: Implementation using filesystem
+  - Footer-based snapshot format
+  - Atomic snapshot creation
+  - Metadata tracking
+  - Retention policy support
+
+#### 5. I/O Abstractions
 - Stream interfaces for data handling
   - `InputStream`/`OutputStream` base interfaces
   - Memory-based implementation
@@ -40,7 +49,7 @@ The Replicated State Machine (RSM) component provides a framework for implementi
    - [ ] Add membership changes
 
 2. **State Transfer**
-   - [ ] Implement snapshot mechanism
+   - [x] Implement snapshot mechanism
    - [ ] Add incremental state transfer
    - [ ] Support catch-up for lagging nodes
 
@@ -56,6 +65,7 @@ The Replicated State Machine (RSM) component provides a framework for implementi
    - [ ] Add caching layer for frequently accessed state
 
 2. **Monitoring & Observability**
+   - [x] Add execution notification hooks
    - [ ] Add metrics collection
    - [ ] Implement health checks
    - [ ] Add tracing support
@@ -102,9 +112,12 @@ When contributing to the RSM component:
 2. Update documentation for interface changes
 3. Follow the existing code style
 4. Consider backward compatibility
+5. Add appropriate synchronization for thread safety
 
 ## Testing
 The component includes comprehensive tests:
 - Unit tests for individual components
 - Integration tests for end-to-end flows
-- Parameterized tests for different implementations 
+- Parameterized tests for different implementations
+- Synchronization-based tests for concurrent operations
+- Snapshot and recovery tests 

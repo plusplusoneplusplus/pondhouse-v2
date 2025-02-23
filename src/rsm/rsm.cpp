@@ -28,6 +28,11 @@ Result<bool> ReplicatedStateMachine::Initialize(const ReplicationConfig& config,
         return result;
     }
 
+    result = snapshot_manager_->Initialize(snapshot_config);
+    if (!result.ok()) {
+        return result;
+    }
+
     {
         auto lock = std::lock_guard(mutex_);
         snapshot_config_ = snapshot_config;

@@ -229,11 +229,21 @@ std::string TableMetadataStateMachineState::ToString(bool verbose) const {
 }
 
 // TableMetadataStateMachine implementations
-common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChunk& entry_data) {
+
+TableMetadataStateMachine::TableMetadataStateMachine(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
+                                                     const std::string& dir_path,
+                                                     const rsm::ReplicationConfig& config,
+                                                     const rsm::SnapshotConfig& snapshot_config)
+    : rsm::ReplicatedStateMachine(std::make_shared<rsm::WalReplication>(fs),
+                                  rsm::FileSystemSnapshotManager::Create(fs, snapshot_config).value()),
+      fs_(fs),
+      dir_path_(dir_path) {}
+
+void TableMetadataStateMachine::ExecuteReplicatedLog(uint64_t lsn, const common::DataChunk& entry_data) {
     TableMetadataEntry entry;
     if (!entry.Deserialize(entry_data)) {
-        return common::Result<void>::failure(common::ErrorCode::InvalidArgument,
-                                             "Failed to deserialize metadata entry");
+        LOG_ERROR("Failed to deserialize metadata entry");
+        return;
     }
 
     switch (entry.op_type()) {
@@ -280,27 +290,24 @@ common::Result<void> TableMetadataStateMachine::ApplyEntry(const common::DataChu
                     }
                 }
             }
-
             break;
 
         case MetadataOpType::Unknown:
-            return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Unknown metadata operation type");
+            LOG_ERROR("Unknown metadata operation type");
+            break;
     }
-
-    return common::Result<void>::success();
 }
 
-common::Result<common::DataChunkPtr> TableMetadataStateMachine::GetCurrentState() {
-    auto state = std::make_shared<common::DataChunk>();
-    Serialize(*state);
-    return common::Result<common::DataChunkPtr>::success(state);
+void TableMetadataStateMachine::SaveState(common::OutputStream* writer) {
+    auto data = Serialize();
+    writer->Write(data.Data(), data.Size());
 }
 
-common::Result<void> TableMetadataStateMachine::RestoreState(const common::DataChunkPtr& state_data) {
-    if (!Deserialize(*state_data)) {
-        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Failed to parse state data");
-    }
-    return common::Result<void>::success();
+void TableMetadataStateMachine::LoadState(common::InputStream* reader) {
+    auto result = reader->Read(reader->Size().value());
+
+    LOG_CHECK(result.ok(), "Failed to read state data");
+    LOG_CHECK(Deserialize(*result.value()), "Failed to parse state data");
 }
 
 }  // namespace pond::kv

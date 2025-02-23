@@ -212,7 +212,7 @@ public:
                            largest_key};
         std::vector<FileInfo> files{file_info};
         TableMetadataEntry entry(MetadataOpType::CreateSSTable, files);
-        auto track_result = metadata_state_machine_->Apply(entry.Serialize());
+        auto track_result = metadata_state_machine_->Replicate(entry.Serialize());
         if (!track_result.ok()) {
             LOG_ERROR("Failed to track SSTable creation in metadata: %s", track_result.error().message().c_str());
             // Continue despite tracking failure - the SSTable is still valid
@@ -536,7 +536,7 @@ private:
 
         // Update metadata state machine
         TableMetadataEntry compact_entry(MetadataOpType::CompactFiles, {new_file}, all_source_files);
-        auto track_result = metadata_state_machine_->Apply(compact_entry.Serialize());
+        auto track_result = metadata_state_machine_->Replicate(compact_entry.Serialize());
         if (!track_result.ok()) {
             return common::Result<FileInfo>::failure(track_result.error());
         }

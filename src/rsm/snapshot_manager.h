@@ -26,6 +26,8 @@ public:
 
     ~FileSystemSnapshotManager() override = default;
 
+    common::Result<bool> Initialize(const SnapshotConfig& config) override;
+
     /**
      * Creates a new snapshot.
      * @param state The state machine to snapshot

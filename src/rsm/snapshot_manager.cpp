@@ -70,6 +70,11 @@ FileSystemSnapshotManager::FileSystemSnapshotManager(std::shared_ptr<common::IAp
                                                      const SnapshotConfig& config)
     : fs_(std::move(fs)), config_(config) {}
 
+common::Result<bool> FileSystemSnapshotManager::Initialize(const SnapshotConfig& config) {
+    config_ = config;
+    return common::Result<bool>::success(true);
+}
+
 Result<std::shared_ptr<ISnapshotManager>> FileSystemSnapshotManager::Create(
     std::shared_ptr<common::IAppendOnlyFileSystem> fs, const SnapshotConfig& config) {
     if (!fs) {
@@ -202,6 +207,12 @@ Result<bool> FileSystemSnapshotManager::RestoreSnapshot(ISnapshotable* state, co
     seek_result = stream->Seek(0);
     if (!seek_result.ok()) {
         return Result<bool>::failure(seek_result.error());
+    }
+
+    // exclude footer from the snapshot
+    auto exclude_result = stream->UpdateSize(size_result.value() - kFooterSize);
+    if (!exclude_result.ok()) {
+        return Result<bool>::failure(exclude_result.error());
     }
 
     // Apply snapshot using the state machine

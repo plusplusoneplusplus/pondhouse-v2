@@ -267,8 +267,10 @@ std::string KvTable::GetWALPath(size_t sequence_number) const {
 }
 
 common::Result<void> KvTable::TrackMetadataOp(MetadataOpType op_type, const std::vector<FileInfo>& files) {
+    using ReturnType = common::Result<void>;
     TableMetadataEntry entry(op_type, files, {}, next_wal_sequence_);
-    return metadata_state_machine_->Apply(entry.Serialize());
+    RETURN_IF_ERROR_T(ReturnType, metadata_state_machine_->Replicate(entry.Serialize()));
+    return common::Result<void>::success();
 }
 
 }  // namespace pond::kv

@@ -7,9 +7,8 @@
 
 #include "common/data_chunk.h"
 #include "common/serializable.h"
-#include "common/wal.h"
-#include "common/wal_state_machine.h"
 #include "proto/kv.pb.h"
+#include "rsm/api.h"
 
 namespace pond::kv {
 
@@ -149,19 +148,31 @@ protected:
 };
 
 // Table metadata state machine
-class TableMetadataStateMachine : public common::WalStateMachine, public TableMetadataStateMachineState {
+class TableMetadataStateMachine : public rsm::ReplicatedStateMachine, public TableMetadataStateMachineState {
 public:
     TableMetadataStateMachine(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
                               const std::string& dir_path,
-                              const Config& config = Config::Default())
-        : common::WalStateMachine(std::move(fs), dir_path, config) {}
+                              const rsm::ReplicationConfig& config = rsm::ReplicationConfig::Default(),
+                              const rsm::SnapshotConfig& snapshot_config = rsm::SnapshotConfig::Default("snapshots"));
 
-    common::Result<common::DataChunkPtr> GetCurrentState() override;
-    common::Result<void> RestoreState(const common::DataChunkPtr& state_data) override;
+    common::Result<bool> Open() {
+        auto result =
+            Initialize(rsm::ReplicationConfig{.directory = dir_path_}, rsm::SnapshotConfig{.snapshot_dir = dir_path_});
+        if (!result.ok()) {
+            return result;
+        }
+        return Recover();
+    }
+
+protected:
+    // ReplicatedStateMachine interface
+    void ExecuteReplicatedLog(uint64_t lsn, const common::DataChunk& data) override;
+    void SaveState(common::OutputStream* writer) override;
+    void LoadState(common::InputStream* reader) override;
 
 private:
-    // State machine methods
-    common::Result<void> ApplyEntry(const common::DataChunk& entry_data) override;
+    std::shared_ptr<common::IAppendOnlyFileSystem> fs_;
+    std::string dir_path_;
 };
 
 }  // namespace pond::kv

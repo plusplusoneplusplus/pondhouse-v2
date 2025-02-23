@@ -466,29 +466,29 @@ TEST_F(SSTableManagerTest, MetadataStateTracking) {
     EXPECT_EQ(ToRecord(result.value())->Get<std::string>(0).value(), "value150");
 }
 
-TEST_F(SSTableManagerTest, MetadataStateCheckpointing) {
+TEST_F(SSTableManagerTest, MetadataStateSnapshotting) {
     // Create several SSTables to generate metadata entries
     for (int i = 0; i < 5; i++) {
         auto memtable = CreateTestMemTable(i * 100, 100);
         ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
     }
 
-    // Create a checkpoint
-    ASSERT_TRUE(metadata_state_machine_->CreateCheckpoint().ok());
+    // Create a snapshot
+    ASSERT_TRUE(metadata_state_machine_->TriggerSnapshot().ok());
 
-    // Verify checkpoint file exists
+    // Verify snapshot file exists
     auto list_result = fs_->List("test_db_metadata");
     ASSERT_TRUE(list_result.ok());
-    bool found_checkpoint = false;
+    bool found_snapshot = false;
     for (const auto& file : list_result.value()) {
-        if (file.starts_with(TableMetadataStateMachine::CHECKPOINT_FILE_PREFIX)) {
-            found_checkpoint = true;
+        if (file.ends_with(".snapshot")) {
+            found_snapshot = true;
             break;
         }
     }
-    ASSERT_TRUE(found_checkpoint);
+    ASSERT_TRUE(found_snapshot);
 
-    // Create new manager instance and verify it recovers from checkpoint
+    // Create new manager instance and verify it recovers from snapshot
     auto new_metadata_state_machine = std::make_shared<TableMetadataStateMachine>(fs_, "test_db_metadata");
     ASSERT_TRUE(new_metadata_state_machine->Open().ok());
     auto new_manager = std::make_unique<SSTableManager>(fs_, "test_db", new_metadata_state_machine);

@@ -103,11 +103,29 @@ public:
 };
 
 /**
+ * Configuration for snapshot management.
+ */
+struct SnapshotConfig {
+    size_t snapshot_interval = 10000;  // Number of entries between snapshots
+    size_t keep_snapshots = 3;         // Number of snapshots to retain
+    std::string snapshot_dir;          // Directory to store snapshots
+    size_t chunk_size = 1024 * 1024;   // Size of chunks for streaming snapshots (1MB)
+
+    static SnapshotConfig Default(const std::string& dir) {
+        SnapshotConfig config;
+        config.snapshot_dir = dir;
+        return config;
+    }
+};
+
+/**
  * Manager for handling snapshots, including creation, storage, and cleanup.
  */
 class ISnapshotManager {
 public:
     virtual ~ISnapshotManager() = default;
+
+    virtual common::Result<bool> Initialize(const SnapshotConfig& config) = 0;
 
     /**
      * Creates a new snapshot.
@@ -143,21 +161,4 @@ public:
      */
     virtual std::string GetSnapshotPath() const = 0;
 };
-
-/**
- * Configuration for snapshot management.
- */
-struct SnapshotConfig {
-    size_t snapshot_interval = 10000;  // Number of entries between snapshots
-    size_t keep_snapshots = 3;         // Number of snapshots to retain
-    std::string snapshot_dir;          // Directory to store snapshots
-    size_t chunk_size = 1024 * 1024;   // Size of chunks for streaming snapshots (1MB)
-
-    static SnapshotConfig Default(const std::string& dir) {
-        SnapshotConfig config;
-        config.snapshot_dir = dir;
-        return config;
-    }
-};
-
 }  // namespace pond::rsm

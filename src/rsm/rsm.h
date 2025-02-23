@@ -69,6 +69,8 @@ public:
     Result<bool> Initialize(const ReplicationConfig& config, const SnapshotConfig& snapshot_config);
     Result<bool> Close();
     Result<void> StopAndDrain();
+
+    // Replicate a log entry
     Result<bool> Replicate(const DataChunk& data);
 
     // IReplicatedStateMachine interface
