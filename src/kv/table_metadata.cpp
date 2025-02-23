@@ -267,7 +267,11 @@ void TableMetadataStateMachine::ExecuteReplicatedLog(uint64_t lsn, const common:
             }
             break;
         case MetadataOpType::FlushMemTable: {
-            sstable_flush_wal_sequence_ = std::max(sstable_flush_wal_sequence_, entry.sequence());
+            LOG_CHECK(
+                sstable_flush_wal_sequence_ == common::INVALID_LSN || entry.sequence() >= sstable_flush_wal_sequence_,
+                "FlushMemTable called multiple times");
+            sstable_flush_wal_sequence_ = entry.sequence();
+
             TruncateLogFiles(sstable_flush_wal_sequence_);
             break;
         }

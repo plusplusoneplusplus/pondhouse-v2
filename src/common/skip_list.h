@@ -148,12 +148,12 @@ public:
 
             return node_->key;
         }
-        common::Result<V> value() const override {
+        const V& value() const override {
             if (!Valid()) {
-                return common::Result<V>::failure(common::ErrorCode::InvalidOperation, "Iterator is not valid");
+                throw std::runtime_error("Iterator is not valid");
             }
 
-            return common::Result<V>::success(node_->value);
+            return node_->value;
         }
 
         void Next() override {

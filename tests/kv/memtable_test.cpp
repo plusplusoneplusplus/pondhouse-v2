@@ -235,9 +235,7 @@ TEST_F(MemTableTest, IteratorBasicOperations) {
         auto key = it->key();
         EXPECT_EQ(key, keys[count]);
 
-        auto value_result = it->value();
-        VERIFY_RESULT(value_result);
-        const auto& versioned_value = value_result.value().get();
+        const auto& versioned_value = it->value().get();
         const common::DataChunk& value = versioned_value->value();
         EXPECT_EQ(std::string(reinterpret_cast<const char*>(value.Data()), value.Size()),
                   "value" + std::to_string(count));
@@ -267,9 +265,7 @@ TEST_F(MemTableTest, IteratorErrorHandling) {
     EXPECT_THROW(it->key(), std::runtime_error);
 
     // Test value() on invalid iterator
-    auto value = it->value();
-    EXPECT_FALSE(value.ok());
-    EXPECT_EQ(value.error().code(), common::ErrorCode::InvalidOperation);
+    EXPECT_THROW(it->value(), std::runtime_error);
 
     // Test Seek with empty key
     it->Seek("");

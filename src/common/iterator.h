@@ -47,9 +47,9 @@ public:
     /**
      * Returns the current value.
      * Must only be called when Valid() returns true.
-     * @return Result containing the current value or an error
+     * @return The current value
      */
-    virtual common::Result<V> value() const = 0;
+    virtual const V& value() const = 0;
 
 protected:
     Iterator() = default;
@@ -67,6 +67,8 @@ template <typename K, typename V>
 class SnapshotIterator : public Iterator<K, V> {
 public:
     SnapshotIterator(HybridTime read_time) : Iterator<K, V>(), read_time_(read_time) {}
+
+    virtual common::HybridTime version() const = 0;
 
 protected:
     HybridTime read_time_;

@@ -70,7 +70,7 @@ public:
             return iter_->key();
         }
 
-        common::Result<Value> value() const override {
+        const Value& value() const override {
             std::lock_guard<std::mutex> lock(mutex_);
             return iter_->value();
         }

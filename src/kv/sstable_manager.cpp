@@ -161,9 +161,7 @@ public:
             }
             largest_key = key;
 
-            auto value_result = iter->value();
-            RETURN_IF_ERROR_T(ReturnType, value_result);
-            const auto& versioned_value = value_result.value().get();
+            const auto& versioned_value = iter->value().get();
             auto result = writer.Add(key, versioned_value->value(), versioned_value->version());
             RETURN_IF_ERROR_T(ReturnType, result);
             entry_count++;
