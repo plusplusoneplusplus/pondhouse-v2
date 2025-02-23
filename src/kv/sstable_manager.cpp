@@ -153,9 +153,9 @@ public:
         size_t entry_count = 0;
 
         // Write entries from MemTable
-        std::unique_ptr<MemTable::Iterator> iter = memtable.NewIterator();
+        auto iter = memtable.NewIterator();
         while (iter->Valid()) {
-            auto key = iter->key().value();
+            auto key = iter->key();
             if (smallest_key.empty()) {
                 smallest_key = key;
             }

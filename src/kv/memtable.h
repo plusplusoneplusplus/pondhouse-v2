@@ -44,57 +44,43 @@ public:
     size_t GetEntryCount() const;
 
     // Iterator interface
-    class Iterator {
+    class Iterator : public common::Iterator<Key, Value> {
     public:
-        explicit Iterator(common::Iterator<Key, Value>* it, std::mutex& mutex) : iter_(it), mutex_(mutex) {}
-        ~Iterator() = default;
+        explicit Iterator(std::unique_ptr<common::Iterator<Key, Value>> iter, std::mutex& mutex)
+            : iter_(std::move(iter)), mutex_(mutex) {}
+        ~Iterator() override = default;
 
-        // Thread-safe operations
-        bool Valid() const {
+        void Seek(const Key& target) override {
+            std::lock_guard<std::mutex> lock(mutex_);
+            iter_->Seek(target);
+        }
+
+        void Next() override {
+            std::lock_guard<std::mutex> lock(mutex_);
+            iter_->Next();
+        }
+
+        bool Valid() const override {
             std::lock_guard<std::mutex> lock(mutex_);
             return iter_->Valid();
         }
 
-        common::Result<void> Next() {
+        const Key& key() const override {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (!iter_->Valid()) {
-                return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "Iterator is not valid");
-            }
-            iter_->Next();
-            return common::Result<void>::success();
+            return iter_->key();
         }
 
-        common::Result<void> Seek(const Key& key) {
-            if (key.empty()) {
-                return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Cannot seek to empty key");
-            }
+        common::Result<Value> value() const override {
             std::lock_guard<std::mutex> lock(mutex_);
-            iter_->Seek(key);
-            return common::Result<void>::success();
-        }
-
-        common::Result<Key> key() const {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!iter_->Valid()) {
-                return common::Result<Key>::failure(common::ErrorCode::InvalidOperation, "Iterator is not valid");
-            }
-            return common::Result<Key>::success(iter_->key());
-        }
-
-        common::Result<Value> value() const {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!iter_->Valid()) {
-                return common::Result<Value>::failure(common::ErrorCode::InvalidOperation, "Iterator is not valid");
-            }
-            return common::Result<Value>::success(iter_->value().value());
+            return iter_->value();
         }
 
     private:
         std::unique_ptr<common::Iterator<Key, Value>> iter_;
-        std::mutex& mutex_;  // Reference to the mutex for thread-safe operations
+        std::mutex& mutex_;
     };
 
-    std::unique_ptr<Iterator> NewIterator() const;
+    std::unique_ptr<common::Iterator<Key, Value>> NewIterator() const;
 
     const MemTableMetadata& GetMetadata() const { return metadata_; }
     MemTableMetadata& GetMetadata() { return metadata_; }

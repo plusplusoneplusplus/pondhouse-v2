@@ -232,9 +232,8 @@ TEST_F(MemTableTest, IteratorBasicOperations) {
     size_t count = 0;
 
     for (; it->Valid();) {
-        auto key_result = it->key();
-        VERIFY_RESULT(key_result);
-        EXPECT_EQ(key_result.value(), keys[count]);
+        auto key = it->key();
+        EXPECT_EQ(key, keys[count]);
 
         auto value_result = it->value();
         VERIFY_RESULT(value_result);
@@ -243,18 +242,17 @@ TEST_F(MemTableTest, IteratorBasicOperations) {
         EXPECT_EQ(std::string(reinterpret_cast<const char*>(value.Data()), value.Size()),
                   "value" + std::to_string(count));
 
-        VERIFY_RESULT(it->Next());
+        it->Next();
         count++;
     }
     EXPECT_EQ(count, keys.size());
 
     // Test seek
-    auto seek_result = it->Seek("key3");
-    VERIFY_RESULT(seek_result);
+    it->Seek("key3");
     EXPECT_TRUE(it->Valid());
-    auto key_result = it->key();
-    VERIFY_RESULT(key_result);
-    EXPECT_EQ(key_result.value(), "key3");
+
+    auto key = it->key();
+    EXPECT_EQ(key, "key3");
 }
 
 TEST_F(MemTableTest, IteratorErrorHandling) {
@@ -263,24 +261,19 @@ TEST_F(MemTableTest, IteratorErrorHandling) {
     EXPECT_FALSE(it->Valid());
 
     // Test Next() on invalid iterator
-    auto next_result = it->Next();
-    EXPECT_FALSE(next_result.ok());
-    EXPECT_EQ(next_result.error().code(), common::ErrorCode::InvalidOperation);
+    EXPECT_THROW(it->Next(), std::runtime_error);
 
     // Test key() on invalid iterator
-    auto key_result = it->key();
-    EXPECT_FALSE(key_result.ok());
-    EXPECT_EQ(key_result.error().code(), common::ErrorCode::InvalidOperation);
+    EXPECT_THROW(it->key(), std::runtime_error);
 
     // Test value() on invalid iterator
-    auto value_result = it->value();
-    EXPECT_FALSE(value_result.ok());
-    EXPECT_EQ(value_result.error().code(), common::ErrorCode::InvalidOperation);
+    auto value = it->value();
+    EXPECT_FALSE(value.ok());
+    EXPECT_EQ(value.error().code(), common::ErrorCode::InvalidOperation);
 
     // Test Seek with empty key
-    auto seek_result = it->Seek("");
-    EXPECT_FALSE(seek_result.ok());
-    EXPECT_EQ(seek_result.error().code(), common::ErrorCode::InvalidArgument);
+    it->Seek("");
+    EXPECT_FALSE(it->Valid());
 }
 
 TEST_F(MemTableTest, IteratorConcurrency) {
@@ -303,23 +296,36 @@ TEST_F(MemTableTest, IteratorConcurrency) {
                 int op = j % 3;
                 switch (op) {
                     case 0: {
-                        auto next_result = it->Next();
-                        if (next_result.ok())
-                            successful_operations++;
+                        try {
+                            it->Next();
+                            if (it->Valid()) {
+                                successful_operations++;
+                            }
+                        } catch (const std::runtime_error& e) {
+                            // Do nothing
+                        }
                         break;
                     }
                     case 1: {
-                        auto seek_result = it->Seek(keys[j % keys.size()]);
-                        if (seek_result.ok())
-                            successful_operations++;
+                        try {
+                            it->Seek(keys[j % keys.size()]);
+                            if (it->Valid()) {
+                                successful_operations++;
+                            }
+                        } catch (const std::runtime_error& e) {
+                            // Do nothing
+                        }
                         break;
                     }
                     case 2: {
-                        if (it->Valid()) {
-                            auto key_result = it->key();
-                            auto value_result = it->value();
-                            if (key_result.ok() && value_result.ok())
+                        try {
+                            if (it->Valid()) {
+                                auto key = it->key();
+                                auto value = it->value();
                                 successful_operations++;
+                            }
+                        } catch (const std::runtime_error& e) {
+                            // Do nothing
                         }
                         break;
                     }

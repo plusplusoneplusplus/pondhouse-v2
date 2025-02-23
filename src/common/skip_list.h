@@ -141,16 +141,26 @@ public:
             : list_(list), node_(list->head_->next[0].load(std::memory_order_acquire)) {}
 
         bool Valid() const override { return node_ != nullptr; }
-        const K& key() const override { return node_->key; }
+        const K& key() const override {
+            if (!Valid()) {
+                throw std::runtime_error("Iterator is not valid");
+            }
+
+            return node_->key;
+        }
         common::Result<V> value() const override {
             if (!Valid()) {
                 return common::Result<V>::failure(common::ErrorCode::InvalidOperation, "Iterator is not valid");
             }
+
             return common::Result<V>::success(node_->value);
         }
 
         void Next() override {
-            assert(Valid());
+            if (!Valid()) {
+                throw std::runtime_error("Iterator is not valid");
+            }
+
             node_ = node_->next[0].load(std::memory_order_acquire);
         }
 

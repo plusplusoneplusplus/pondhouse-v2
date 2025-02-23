@@ -162,8 +162,10 @@ size_t MemTable::CalculateEntrySize(const Key& key, const Value& value) const {
 
 // Iterator implementation
 
-std::unique_ptr<MemTable::Iterator> MemTable::NewIterator() const {
-    return std::make_unique<Iterator>(table_->NewIterator(), mutex_);
+std::unique_ptr<common::Iterator<Key, MemTable::Value>> MemTable::NewIterator() const {
+    std::unique_ptr<common::Iterator<Key, Value>> iter;
+    iter.reset(table_->NewIterator());
+    return std::make_unique<Iterator>(std::move(iter), mutex_);
 }
 
 }  // namespace pond::kv
