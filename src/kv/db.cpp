@@ -166,7 +166,7 @@ common::Result<void> DB::DropTable(const std::string& table_name) {
 
     // Remove table directory
     std::string table_path = GetTablePath(table_name);
-    auto remove_result = fs_->DeleteDirectory(table_path);
+    auto remove_result = fs_->DeleteDirectory(table_path, true /*recursive to delete non-empty directory*/);
     if (!remove_result.ok()) {
         return common::Result<void>::failure(remove_result.error());
     }

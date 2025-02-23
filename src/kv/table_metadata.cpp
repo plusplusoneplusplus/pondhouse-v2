@@ -284,6 +284,10 @@ void TableMetadataStateMachine::ExecuteReplicatedLog(uint64_t lsn, const common:
 }
 
 void TableMetadataStateMachine::TruncateLogFiles(uint64_t sequence) {
+    if (sequence == common::INVALID_LSN) {
+        return;
+    }
+
     // Move all log sequences less than current sequence to pending GC
     // Keep the last sequence untouched
     if (active_log_sequences_.size() > 1) {

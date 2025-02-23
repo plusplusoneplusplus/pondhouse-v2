@@ -6,6 +6,7 @@
 #include <random>
 
 #include "common/data_chunk.h"
+#include "common/iterator.h"
 
 namespace pond::common {
 
@@ -130,29 +131,33 @@ public:
      */
     [[nodiscard]] size_t Size() const { return size_.load(std::memory_order_relaxed); }
 
-    class Iterator {
+    class SkipListIterator : public Iterator<K, V> {
     private:
         const SkipList* list_;
         Node* node_;
 
     public:
-        explicit Iterator(const SkipList* list)
+        explicit SkipListIterator(const SkipList* list)
             : list_(list), node_(list->head_->next[0].load(std::memory_order_acquire)) {}
 
-        bool Valid() const { return node_ != nullptr; }
-        const K& key() const { return node_->key; }
-        const V& value() const { return node_->value; }
-        V& value() { return node_->value; }
+        bool Valid() const override { return node_ != nullptr; }
+        const K& key() const override { return node_->key; }
+        common::Result<V> value() const override {
+            if (!Valid()) {
+                return common::Result<V>::failure(common::ErrorCode::InvalidOperation, "Iterator is not valid");
+            }
+            return common::Result<V>::success(node_->value);
+        }
 
-        void Next() {
+        void Next() override {
             assert(Valid());
             node_ = node_->next[0].load(std::memory_order_acquire);
         }
 
-        void Seek(const K& target) { node_ = list_->findGreaterOrEqual(target, nullptr); }
+        void Seek(const K& target) override { node_ = list_->findGreaterOrEqual(target, nullptr); }
     };
 
-    Iterator* NewIterator() const { return new Iterator(this); }
+    Iterator<K, V>* NewIterator() const { return new SkipListIterator(this); }
 };
 
 }  // namespace pond::common

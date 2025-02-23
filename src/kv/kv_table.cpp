@@ -281,7 +281,22 @@ std::string KvTable::GetWALPath(size_t sequence_number) const {
 common::Result<void> KvTable::TrackMetadataOp(MetadataOpType op_type, const std::vector<FileInfo>& files) {
     using ReturnType = common::Result<void>;
     TableMetadataEntry entry(op_type, files, {}, next_wal_sequence_);
-    RETURN_IF_ERROR_T(ReturnType, metadata_state_machine_->Replicate(entry.Serialize()));
+
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool done = false;
+
+    auto result = metadata_state_machine_->Replicate(entry.Serialize(), [&]() {
+        std::unique_lock<std::mutex> lock(mtx);
+        done = true;
+        cv.notify_one();
+    });
+    RETURN_IF_ERROR_T(ReturnType, result);
+
+    // Wait for the operation to complete
+    std::unique_lock<std::mutex> lock(mtx);
+    cv.wait(lock, [&] { return done; });
+
     return common::Result<void>::success();
 }
 
