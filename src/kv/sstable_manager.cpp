@@ -211,7 +211,7 @@ public:
                            smallest_key,
                            largest_key};
         std::vector<FileInfo> files{file_info};
-        TableMetadataEntry entry(MetadataOpType::CreateSSTable, files);
+        TableMetadataEntry entry(MetadataOpType::CreateSSTable, files, {}, memtable.GetMetadata().GetFlushSequence());
         auto track_result = metadata_state_machine_->Replicate(entry.Serialize());
         if (!track_result.ok()) {
             LOG_ERROR("Failed to track SSTable creation in metadata: %s", track_result.error().message().c_str());
