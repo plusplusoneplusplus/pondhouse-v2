@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -53,8 +54,9 @@ public:
 struct PendingEntry {
     uint64_t lsn;
     DataChunk data;
+    std::function<void()> callback;
 
-    PendingEntry(uint64_t l, const DataChunk& d) : lsn(l), data(d) {}
+    PendingEntry(uint64_t l, const DataChunk& d, std::function<void()> c) : lsn(l), data(d), callback(c) {}
 };
 
 /**
@@ -71,7 +73,10 @@ public:
     Result<void> StopAndDrain();
 
     // Replicate a log entry
-    Result<bool> Replicate(const DataChunk& data);
+    // @param data The data to replicate
+    // @param callback The callback to call when the log entry is committed and executed
+    // @return Result<bool> Success if the log entry is replicated, error otherwise
+    Result<bool> Replicate(const DataChunk& data, std::function<void()> callback = nullptr);
 
     // IReplicatedStateMachine interface
     uint64_t GetLastExecutedLSN() const override;

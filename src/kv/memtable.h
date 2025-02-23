@@ -46,7 +46,7 @@ public:
     // Iterator interface
     class Iterator {
     public:
-        explicit Iterator(common::SkipList<Key, Value>::Iterator* it, std::mutex& mutex) : iter_(it), mutex_(mutex) {}
+        explicit Iterator(common::Iterator<Key, Value>* it, std::mutex& mutex) : iter_(it), mutex_(mutex) {}
         ~Iterator() = default;
 
         // Thread-safe operations
@@ -81,17 +81,16 @@ public:
             return common::Result<Key>::success(iter_->key());
         }
 
-        common::Result<std::reference_wrapper<const Value>> value() const {
+        common::Result<Value> value() const {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!iter_->Valid()) {
-                return common::Result<std::reference_wrapper<const Value>>::failure(common::ErrorCode::InvalidOperation,
-                                                                                    "Iterator is not valid");
+                return common::Result<Value>::failure(common::ErrorCode::InvalidOperation, "Iterator is not valid");
             }
-            return common::Result<std::reference_wrapper<const Value>>::success(std::cref(iter_->value()));
+            return common::Result<Value>::success(iter_->value().value());
         }
 
     private:
-        std::unique_ptr<common::SkipList<Key, Value>::Iterator> iter_;
+        std::unique_ptr<common::Iterator<Key, Value>> iter_;
         std::mutex& mutex_;  // Reference to the mutex for thread-safe operations
     };
 

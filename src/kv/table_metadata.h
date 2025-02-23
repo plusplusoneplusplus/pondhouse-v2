@@ -140,7 +140,7 @@ protected:
     std::unordered_map<size_t, std::vector<FileInfo>> sstable_files_;  // Level -> Files mapping
     std::unordered_map<size_t, uint64_t> level_sizes_;                 // Level -> Total size mapping
     uint64_t total_size_{0};
-    uint64_t sstable_flush_wal_sequence_{0};
+    uint64_t sstable_flush_wal_sequence_{common::INVALID_LSN};
     std::vector<uint64_t>
         active_log_sequences_;  // Sequence numbers of log files that must be kept (memtable not flushed)
     std::vector<uint64_t>

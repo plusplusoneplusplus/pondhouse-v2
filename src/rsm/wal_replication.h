@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "common/append_only_fs.h"
@@ -33,6 +34,8 @@ public:
     Result<bool> Close() override { return wal_.Close(); }
 
     Result<uint64_t> Append(const DataChunk& data) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+
         ReplicationEntry entry;
         entry.SetIndex(common::INVALID_LSN);  // Let WAL assign the index
         entry.SetData(data);                  // Store the data directly
@@ -44,6 +47,8 @@ public:
     }
 
     Result<std::vector<DataChunk>> Read(uint64_t start_index) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+
         auto result = wal_.Read(start_index);
         if (!result.ok()) {
             return Result<std::vector<DataChunk>>::failure(result.error());
@@ -57,9 +62,15 @@ public:
         return Result<std::vector<DataChunk>>::success(std::move(entries));
     }
 
-    uint64_t GetCurrentIndex() const override { return wal_.current_lsn(); }
+    uint64_t GetCurrentIndex() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return wal_.current_lsn();
+    }
 
-    void ResetIndex() override { wal_.reset_lsn(); }
+    void ResetIndex() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        wal_.reset_lsn();
+    }
 
     std::string GetFilePath() const { return config_.directory + "/wal.log"; }
 
@@ -67,6 +78,7 @@ private:
     std::shared_ptr<common::IAppendOnlyFileSystem> fs_;
     ReplicationConfig config_;
     common::WAL<ReplicationEntry> wal_;
+    mutable std::mutex mutex_;
 };
 
 }  // namespace pond::rsm

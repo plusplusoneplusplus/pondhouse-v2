@@ -149,7 +149,7 @@ Result<void> ReplicatedStateMachine::StopAndDrain() {
     return Result<void>::success();
 }
 
-Result<bool> ReplicatedStateMachine::Replicate(const DataChunk& data) {
+Result<bool> ReplicatedStateMachine::Replicate(const DataChunk& data, std::function<void()> callback) {
     if (!initialized_) {
         return Result<bool>::failure(ErrorCode::InvalidOperation, "State machine not initialized");
     }
@@ -164,7 +164,7 @@ Result<bool> ReplicatedStateMachine::Replicate(const DataChunk& data) {
     {
         auto lsn = result.value();
         std::lock_guard<std::mutex> lock(mutex_);
-        pending_entries_.emplace(lsn, data);
+        pending_entries_.emplace(lsn, data, callback);
         last_passed_lsn_.store(lsn);
     }
     cv_.notify_one();
@@ -223,6 +223,10 @@ void ReplicatedStateMachine::ExecuteLoop() {
         }
 
         AfterExecuteReplicatedLog(entry.lsn);
+
+        if (entry.callback) {
+            entry.callback();
+        }
 
         cv_.notify_all();
     }

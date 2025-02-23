@@ -99,26 +99,26 @@ public:
 
     // Block until operation is allowed to proceed
     void WaitForOperation() {
-        std::unique_lock<std::mutex> lock(mutex_);
-        cv_.wait(lock, [this] { return can_proceed_; });
+        std::unique_lock<std::mutex> lock(blocking_mutex_);
+        blocking_cv_.wait(lock, [this] { return can_proceed_; });
     }
 
     // Allow one operation to proceed
     void AllowOperation() {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::mutex> lock(blocking_mutex_);
         can_proceed_ = true;
-        cv_.notify_one();
+        blocking_cv_.notify_one();
     }
 
     // Reset the blocking state
     void Reset() {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::mutex> lock(blocking_mutex_);
         can_proceed_ = false;
     }
 
     // Wait for an operation to start executing
     void WaitForExecutionStart(uint64_t expected_lsn) {
-        std::unique_lock<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(blocking_mutex_);
         execution_start_cv_.wait(lock, [this, expected_lsn] { return current_executing_lsn_ == expected_lsn; });
     }
 
@@ -127,7 +127,7 @@ public:
     void LoadState(common::InputStream* reader) override { reader->Read(&value_, sizeof(value_)); }
 
     void SetNoneBlocking() {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::mutex> lock(blocking_mutex_);
         none_blocking_ = true;
     }
 
@@ -135,7 +135,7 @@ protected:
     void ExecuteReplicatedLog(uint64_t lsn, const DataChunk& data) override {
         {
             // Notify that execution is starting
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<std::mutex> lock(blocking_mutex_);
             current_executing_lsn_ = lsn;
             execution_start_cv_.notify_all();
         }
@@ -152,8 +152,8 @@ protected:
 
 private:
     std::atomic<int> value_{0};
-    std::mutex mutex_;
-    std::condition_variable cv_;
+    std::mutex blocking_mutex_;
+    std::condition_variable blocking_cv_;
     std::condition_variable execution_start_cv_;
     bool can_proceed_{false};
     bool none_blocking_{false};
@@ -221,6 +221,46 @@ TEST_F(ReplicatedStateMachineTest, BasicOperations) {
     state_machine.WaitForLSN(2);
     EXPECT_EQ(40, state_machine.GetValue()) << "Value should be decremented to 40";
     EXPECT_EQ(2, state_machine.GetLastExecutedLSN()) << "Third entry should have LSN 2";
+}
+
+//
+// Test Setup:
+//      Test replication with callback functionality
+// Test Result:
+//      Callback should be executed after the operation is committed and executed
+//
+TEST_F(ReplicatedStateMachineTest, ReplicateWithCallback) {
+    IntegerStateMachine state_machine(replication_, snapshot_manager_);
+
+    // Initialize state machine
+    ReplicationConfig config;
+    config.directory = "callback_test";
+    auto result = state_machine.Initialize(config, snapshot_config_);
+    VERIFY_RESULT_MSG(result, "Should initialize state machine");
+
+    // Test Set operation with callback
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool set_completed = false;
+    bool set_callback_executed = false;
+
+    auto set_cmd = IntegerCommand::Serialize(IntegerCommand::Op::Set, 100);
+    result = state_machine.Replicate(set_cmd, [&]() {
+        std::unique_lock<std::mutex> lock(mtx);
+        set_callback_executed = true;
+        set_completed = true;
+        cv.notify_one();
+    });
+    VERIFY_RESULT_MSG(result, "Should replicate Set command with callback");
+
+    // Wait for callback to complete
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        cv.wait(lock, [&] { return set_completed; });
+    }
+    EXPECT_EQ(100, state_machine.GetValue()) << "Value should be set to 100";
+    EXPECT_TRUE(set_callback_executed) << "Callback should have been executed";
+    EXPECT_EQ(0, state_machine.GetLastExecutedLSN()) << "First entry should have LSN 0";
 }
 
 //
@@ -453,6 +493,9 @@ TEST_F(ReplicatedStateMachineTest, ConcurrentSnapshot) {
         // Stop update thread
         stop_thread = true;
         update_thread.join();
+
+        auto drain_result = state_machine.StopAndDrain();
+        VERIFY_RESULT_MSG(drain_result, "Should drain all operations");
     }
 
     {
