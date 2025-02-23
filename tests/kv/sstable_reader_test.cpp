@@ -589,14 +589,12 @@ TEST_F(SSTableReaderTest, IteratorInvalidOperations) {
     // Test Next() on invalid iterator
     iter->Seek("key3");  // Seek past all entries
     EXPECT_FALSE(iter->Valid());
-    EXPECT_FALSE(iter->Next());
 
     // Test seeking on closed reader
     SSTableReader closed_reader(fs_, "nonexistent.sst");
     auto closed_iter = closed_reader.NewIterator();
     closed_iter->SeekToFirst();
     EXPECT_FALSE(closed_iter->Valid());
-    EXPECT_FALSE(closed_iter->Next());
 }
 
 TEST_F(SSTableReaderTest, IteratorConcurrentAccess) {

@@ -5,6 +5,7 @@
 
 #include "common/append_only_fs.h"
 #include "common/data_chunk.h"
+#include "common/iterator.h"
 #include "common/result.h"
 #include "kv/sstable_format.h"
 
@@ -134,7 +135,7 @@ public:
      * Iterator provides sequential access to entries in the SSTable.
      * Supports seeking to specific keys and sequential scanning.
      */
-    class Iterator {
+    class Iterator : public common::SnapshotIterator<std::string, common::DataChunk> {
     public:
         // Iterator traits for STL compatibility
         using iterator_category = std::forward_iterator_tag;
@@ -158,35 +159,35 @@ public:
          * Check if the iterator is positioned at a valid entry.
          * @return true if valid, false if we've reached the end
          */
-        [[nodiscard]] bool Valid() const;
+        [[nodiscard]] bool Valid() const override;
 
         /**
          * Get the key at the current position.
          * Must only be called when Valid() returns true.
          * @return The current key
          */
-        [[nodiscard]] const std::string& key() const;
+        [[nodiscard]] const std::string& key() const override;
 
         /**
          * Get the value at the current position.
          * Must only be called when Valid() returns true.
          * @return The current value
          */
-        [[nodiscard]] const common::DataChunk& value() const;
+        [[nodiscard]] const common::DataChunk& value() const override;
 
         /**
          * Get the version (timestamp) at the current position.
          * Must only be called when Valid() returns true.
          * @return The current version
          */
-        [[nodiscard]] common::HybridTime version() const;
+        [[nodiscard]] common::HybridTime version() const override;
 
         /**
          * Advance to the next entry.
          * Must only be called when Valid() returns true.
          * @return true if successful, false if we've reached the end
          */
-        bool Next();
+        void Next() override;
 
         /**
          * Position at the first entry in the table.
@@ -197,7 +198,7 @@ public:
          * Position at the first entry with a key >= target.
          * @param target The target key to seek to
          */
-        void Seek(const std::string& target);
+        void Seek(const std::string& target) override;
 
         // STL iterator support
         Iterator& operator++() {

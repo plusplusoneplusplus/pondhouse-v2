@@ -715,11 +715,14 @@ private:
 
 // Iterator implementation
 SSTableReader::Iterator::Iterator(SSTableReader* reader, common::HybridTime read_time, bool seek_to_first)
-    : impl_(std::make_unique<Impl>(reader, read_time, seek_to_first)) {}
+    : common::SnapshotIterator<std::string, common::DataChunk>(read_time),
+      impl_(std::make_unique<Impl>(reader, read_time, seek_to_first)) {}
 
 SSTableReader::Iterator::~Iterator() = default;
 
-SSTableReader::Iterator::Iterator(const Iterator& other) : impl_(std::make_unique<Impl>(*other.impl_)) {}
+SSTableReader::Iterator::Iterator(const Iterator& other)
+    : common::SnapshotIterator<std::string, common::DataChunk>(other.read_time_),
+      impl_(std::make_unique<Impl>(*other.impl_)) {}
 
 SSTableReader::Iterator& SSTableReader::Iterator::operator=(const Iterator& other) {
     if (this != &other) {
@@ -744,8 +747,8 @@ const common::DataChunk& SSTableReader::Iterator::value() const {
     return impl_->value();
 }
 
-bool SSTableReader::Iterator::Next() {
-    return impl_->Next();
+void SSTableReader::Iterator::Next() {
+    impl_->Next();
 }
 
 void SSTableReader::Iterator::SeekToFirst() {
