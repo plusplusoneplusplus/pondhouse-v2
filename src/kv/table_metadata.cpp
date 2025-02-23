@@ -267,34 +267,37 @@ void TableMetadataStateMachine::ExecuteReplicatedLog(uint64_t lsn, const common:
             }
             break;
         case MetadataOpType::FlushMemTable: {
-            AddFiles(entry.added_files());
             sstable_flush_wal_sequence_ = std::max(sstable_flush_wal_sequence_, entry.sequence());
+            TruncateLogFiles(sstable_flush_wal_sequence_);
             break;
         }
         case MetadataOpType::RotateWAL:
             // When WAL is rotated, add the new log sequence to active list
             AddActiveLogSequence(entry.sequence());
-
-            // Move all log sequences less than current sequence to pending GC
-            // Keep the last sequence untouched
-            if (active_log_sequences_.size() > 1) {
-                for (auto i = 0; i < active_log_sequences_.size() - 1; ++i) {
-                    auto last = active_log_sequences_.back();
-                    for (auto it = active_log_sequences_.begin(); it != active_log_sequences_.end();) {
-                        if (*it < sstable_flush_wal_sequence_ && *it != last) {
-                            AddPendingGCSequence(*it);
-                            it = active_log_sequences_.erase(it);
-                        } else {
-                            ++it;
-                        }
-                    }
-                }
-            }
+            TruncateLogFiles(sstable_flush_wal_sequence_);
             break;
 
         case MetadataOpType::Unknown:
             LOG_ERROR("Unknown metadata operation type");
             break;
+    }
+}
+
+void TableMetadataStateMachine::TruncateLogFiles(uint64_t sequence) {
+    // Move all log sequences less than current sequence to pending GC
+    // Keep the last sequence untouched
+    if (active_log_sequences_.size() > 1) {
+        for (auto i = 0; i < active_log_sequences_.size() - 1; ++i) {
+            auto last = active_log_sequences_.back();
+            for (auto it = active_log_sequences_.begin(); it != active_log_sequences_.end();) {
+                if (*it <= sequence && *it != last) {
+                    AddPendingGCSequence(*it);
+                    it = active_log_sequences_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
     }
 }
 

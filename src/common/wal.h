@@ -216,11 +216,21 @@ public:
 
     LSN current_lsn() const { return current_lsn_.load(); }
 
+    void set_current_lsn(LSN lsn) { current_lsn_ = lsn; }
+
     void reset_lsn() { current_lsn_ = 0; }
 
     LSN inc_lsn() { return current_lsn_++; }
 
     FileHandle handle() const { return handle_; }
+
+    // Gets the current size of the WAL file
+    Result<size_t> Size() const {
+        if (handle_ == INVALID_HANDLE) {
+            return Result<size_t>::failure(ErrorCode::InvalidOperation, "WAL file not open");
+        }
+        return fs_->Size(handle_);
+    }
 
 protected:
     std::shared_ptr<IAppendOnlyFileSystem> fs_;

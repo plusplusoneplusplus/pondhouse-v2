@@ -203,12 +203,9 @@ TEST_F(TableTest, WALRotation) {
 
     // Verify WAL files were created
     std::vector<std::string> wal_files;
-    for (size_t i = 0; i < 10; i++) {
-        std::string wal_path = "test_table.wal." + std::to_string(i);
+    for (size_t i = 0; i < 20; i++) {
+        std::string wal_path = "test_table/" + std::to_string(i) + ".wal";
         auto exists = fs_->Exists(wal_path);
-        if (!exists) {
-            break;
-        }
         wal_files.push_back(wal_path);
     }
 

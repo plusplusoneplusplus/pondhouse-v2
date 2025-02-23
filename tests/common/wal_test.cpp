@@ -201,4 +201,44 @@ TEST_F(WALTest, CorruptedEntry) {
     EXPECT_FALSE(read_result.ok()) << "Should not read valid entry";
 }
 
+TEST_F(WALTest, Size) {
+    auto _ = fs_->DeleteFiles({"test_size.wal"});
+
+    WAL<KvEntry> wal(fs_);
+    auto result = wal.Open("test_size.wal");
+    VERIFY_RESULT_MSG(result, "Should open WAL file");
+
+    // Initial size should be 0
+    auto size_result = wal.Size();
+    VERIFY_RESULT_MSG(size_result, "Should get initial size");
+    EXPECT_EQ(0, size_result.value()) << "Initial size should be 0";
+
+    // Write some entries and verify size increases
+    auto entry1 = createTestEntry("key1", "value1", INVALID_LSN, 100, EntryType::Put);
+    auto append_result = wal.Append(entry1);
+    VERIFY_RESULT_MSG(append_result, "Should append first entry");
+
+    size_result = wal.Size();
+    VERIFY_RESULT_MSG(size_result, "Should get size after first entry");
+    EXPECT_GT(size_result.value(), 0) << "Size should increase after append";
+    size_t size_after_first = size_result.value();
+
+    // Write another entry and verify size increases further
+    auto entry2 = createTestEntry("key2", "value2", INVALID_LSN, 200, EntryType::Put);
+    append_result = wal.Append(entry2);
+    VERIFY_RESULT_MSG(append_result, "Should append second entry");
+
+    size_result = wal.Size();
+    VERIFY_RESULT_MSG(size_result, "Should get size after second entry");
+    EXPECT_GT(size_result.value(), size_after_first) << "Size should increase after second append";
+
+    // Close WAL and verify size fails
+    auto close_result = wal.Close();
+    VERIFY_RESULT_MSG(close_result, "Should close WAL");
+
+    size_result = wal.Size();
+    EXPECT_FALSE(size_result.ok()) << "Size should fail on closed WAL";
+    EXPECT_EQ(ErrorCode::InvalidOperation, size_result.error().code()) << "Should return InvalidOperation error";
+}
+
 }  // namespace pond::test

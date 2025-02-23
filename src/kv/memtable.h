@@ -16,6 +16,13 @@ namespace pond::kv {
 // Constants
 static constexpr size_t DEFAULT_MEMTABLE_SIZE = 64 * 1024 * 1024;  // 64MB
 
+struct MemTableMetadata {
+    uint64_t flush_sequence_{0};
+
+    uint64_t GetFlushSequence() const { return flush_sequence_; }
+    void SetFlushSequence(uint64_t sequence) { flush_sequence_ = sequence; }
+};
+
 class MemTable {
 public:
     using Key = std::string;
@@ -90,6 +97,9 @@ public:
 
     std::unique_ptr<Iterator> NewIterator() const;
 
+    const MemTableMetadata& GetMetadata() const { return metadata_; }
+    MemTableMetadata& GetMetadata() { return metadata_; }
+
 private:
     size_t CalculateEntrySize(const Key& key, const Value& value) const;
 
@@ -97,6 +107,7 @@ private:
     mutable std::mutex mutex_;
     std::atomic<size_t> approximate_memory_usage_{0};
     size_t max_size_;
+    MemTableMetadata metadata_;
 };
 
 }  // namespace pond::kv

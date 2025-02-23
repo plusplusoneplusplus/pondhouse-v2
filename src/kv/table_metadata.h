@@ -170,6 +170,9 @@ protected:
     void SaveState(common::OutputStream* writer) override;
     void LoadState(common::InputStream* reader) override;
 
+    // private methods
+    void TruncateLogFiles(uint64_t sequence);
+
 private:
     std::shared_ptr<common::IAppendOnlyFileSystem> fs_;
     std::string dir_path_;
