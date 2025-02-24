@@ -26,12 +26,6 @@ public:
         MetadataProperties props;
     };
 
-    // Add enum for iterator version behavior
-    enum class VersionBehavior {
-        LatestOnly,  // Only return the latest version <= read_time (default)
-        AllVersions  // Return all versions <= read_time in descending order
-    };
-
     // Constructor takes filesystem and path
     SSTableReader(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& path);
     ~SSTableReader();
@@ -114,7 +108,7 @@ public:
      * @return A new iterator instance
      */
     [[nodiscard]] std::unique_ptr<Iterator> NewIterator(common::HybridTime read_time = common::MaxHybridTime(),
-                                                        VersionBehavior version_behavior = VersionBehavior::LatestOnly);
+                                                        common::IteratorMode mode = common::IteratorMode::Default);
 
     /**
      * Get an iterator pointing to the beginning of the SSTable.
@@ -123,7 +117,7 @@ public:
      * @return An iterator pointing to the first entry
      */
     [[nodiscard]] Iterator begin(common::HybridTime read_time = common::MaxHybridTime(),
-                                 VersionBehavior version_behavior = VersionBehavior::LatestOnly);
+                                 common::IteratorMode mode = common::IteratorMode::Default);
 
     /**
      * Get an iterator representing the end of the SSTable.
@@ -155,7 +149,7 @@ public:
 
         explicit Iterator(SSTableReader* reader,
                           common::HybridTime read_time = common::MaxHybridTime(),
-                          VersionBehavior version_behavior = VersionBehavior::LatestOnly,
+                          common::IteratorMode mode = common::IteratorMode::Default,
                           bool seek_to_first = true);
         ~Iterator();
 

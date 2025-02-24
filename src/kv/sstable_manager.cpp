@@ -360,8 +360,8 @@ private:
         // Create iterators for source files
         for (const auto& reader : ctx->readers) {
             ctx->iterators.push_back(
-                reader->NewIterator(MaxHybridTime(),                                /*max time to include all versions*/
-                                    SSTableReader::VersionBehavior::AllVersions));  // Get all versions for merging
+                reader->NewIterator(MaxHybridTime(),                     /*max time to include all versions*/
+                                    IteratorMode::IncludeAllVersions));  // Get all versions for merging
             ctx->iterators.back()->SeekToFirst();
             total_memory_usage += sizeof(SSTableReader::Iterator);  // Approximate iterator memory usage
         }
@@ -397,8 +397,8 @@ private:
             // Create iterators for L1 files
             for (const auto& reader : ctx->l1_readers) {
                 ctx->l1_iterators.push_back(
-                    reader->NewIterator(MaxHybridTime(), /*max time to include all versions*/
-                                        SSTableReader::VersionBehavior::AllVersions));  // Get all versions for merging
+                    reader->NewIterator(MaxHybridTime(),                     /*max time to include all versions*/
+                                        IteratorMode::IncludeAllVersions));  // Get all versions for merging
                 ctx->l1_iterators.back()->SeekToFirst();
             }
         }
