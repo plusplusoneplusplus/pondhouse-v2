@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <queue>
 #include <string>
 #include <vector>
 
@@ -333,6 +334,163 @@ TEST(SnapshotIteratorTest, VersionVisibility) {
         EXPECT_EQ(iter.key(), "key3");
         EXPECT_EQ(iter.value(), "value3_v2");
         EXPECT_EQ(iter.version(), HybridTime(200));
+    }
+}
+
+//
+// Test Setup:
+//      Create multiple mock iterators with overlapping keys in L0
+//      Test union iterator's merging behavior
+// Test Result:
+//      Verify correct key ordering and version visibility
+//      Confirm proper handling of overlapping keys in L0
+//
+TEST(UnionIteratorTest, BasicMerging) {
+    using VV = MockSnapshotIterator::VersionedValue;
+
+    // L0 data with overlapping keys
+    std::map<std::string, std::vector<VV>> l0_data1 = {
+        {"key1", {{.value = "value1_new", .version = HybridTime(200), .is_tombstone = false}}},
+        {"key3", {{.value = "value3_new", .version = HybridTime(200), .is_tombstone = false}}},
+    };
+
+    std::map<std::string, std::vector<VV>> l0_data2 = {
+        {"key1", {{.value = "value1_old", .version = HybridTime(100), .is_tombstone = false}}},
+        {"key2", {{.value = "value2", .version = HybridTime(100), .is_tombstone = false}}},
+    };
+
+    // L1 data (no overlapping keys within level)
+    std::map<std::string, std::vector<VV>> l1_data1 = {
+        {"key4", {{.value = "value4", .version = HybridTime(100), .is_tombstone = false}}},
+    };
+
+    std::map<std::string, std::vector<VV>> l1_data2 = {
+        {"key5", {{.value = "value5", .version = HybridTime(100), .is_tombstone = false}}},
+    };
+
+    // Create iterators
+    std::vector<std::shared_ptr<SnapshotIterator<std::string, std::string>>> l0_iters;
+    l0_iters.push_back(std::make_shared<MockSnapshotIterator>(l0_data1, HybridTime(300), IteratorMode::Default));
+    l0_iters.push_back(std::make_shared<MockSnapshotIterator>(l0_data2, HybridTime(300), IteratorMode::Default));
+
+    std::vector<std::vector<std::shared_ptr<SnapshotIterator<std::string, std::string>>>> level_iters;
+    std::vector<std::shared_ptr<SnapshotIterator<std::string, std::string>>> l1_iters;
+    l1_iters.push_back(std::make_shared<MockSnapshotIterator>(l1_data1, HybridTime(300), IteratorMode::Default));
+    l1_iters.push_back(std::make_shared<MockSnapshotIterator>(l1_data2, HybridTime(300), IteratorMode::Default));
+    level_iters.push_back(l1_iters);
+
+    // Create union iterator
+    UnionIterator<std::string, std::string> iter(l0_iters, level_iters, HybridTime(300), IteratorMode::Default);
+
+    // Verify iteration order and values
+    iter.Seek("");
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key1");
+    EXPECT_EQ(iter.value(), "value1_new");  // Should get newer version from l0_data1
+    EXPECT_EQ(iter.version(), HybridTime(200));
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key2");
+    EXPECT_EQ(iter.value(), "value2");
+    EXPECT_EQ(iter.version(), HybridTime(100));
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key3");
+    EXPECT_EQ(iter.value(), "value3_new");
+    EXPECT_EQ(iter.version(), HybridTime(200));
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key4");
+    EXPECT_EQ(iter.value(), "value4");
+    EXPECT_EQ(iter.version(), HybridTime(100));
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key5");
+    EXPECT_EQ(iter.value(), "value5");
+    EXPECT_EQ(iter.version(), HybridTime(100));
+
+    iter.Next();
+    ASSERT_FALSE(iter.Valid());
+}
+
+//
+// Test Setup:
+//      Test union iterator with tombstones and different modes
+// Test Result:
+//      Verify correct handling of tombstones in different modes
+//      Confirm proper version visibility with tombstones
+//
+TEST(UnionIteratorTest, TombstoneHandling) {
+    using VV = MockSnapshotIterator::VersionedValue;
+
+    // L0 data with tombstones
+    std::map<std::string, std::vector<VV>> l0_data1 = {
+        {"key1", {{.value = "", .version = HybridTime(200), .is_tombstone = true}}},
+        {"key2", {{.value = "value2_new", .version = HybridTime(200), .is_tombstone = false}}},
+    };
+
+    std::map<std::string, std::vector<VV>> l0_data2 = {
+        {"key1", {{.value = "value1_old", .version = HybridTime(100), .is_tombstone = false}}},
+    };
+
+    // L1 data
+    std::map<std::string, std::vector<VV>> l1_data = {
+        {"key3", {{.value = "", .version = HybridTime(100), .is_tombstone = true}}},
+    };
+
+    // Create iterators
+    std::vector<std::shared_ptr<SnapshotIterator<std::string, std::string>>> l0_iters;
+    l0_iters.push_back(
+        std::make_shared<MockSnapshotIterator>(l0_data1, HybridTime(300), IteratorMode::IncludeTombstones));
+    l0_iters.push_back(
+        std::make_shared<MockSnapshotIterator>(l0_data2, HybridTime(300), IteratorMode::IncludeTombstones));
+
+    std::vector<std::vector<std::shared_ptr<SnapshotIterator<std::string, std::string>>>> level_iters;
+    std::vector<std::shared_ptr<SnapshotIterator<std::string, std::string>>> l1_iters;
+    l1_iters.push_back(
+        std::make_shared<MockSnapshotIterator>(l1_data, HybridTime(300), IteratorMode::IncludeTombstones));
+    level_iters.push_back(l1_iters);
+
+    // Test with default mode (should skip tombstones)
+    {
+        UnionIterator<std::string, std::string> iter(l0_iters, level_iters, HybridTime(300), IteratorMode::Default);
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");  // Should skip key1 (tombstone)
+        EXPECT_EQ(iter.value(), "value2_new");
+        EXPECT_EQ(iter.version(), HybridTime(200));
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());  // Should skip key3 (tombstone)
+    }
+
+    // Test with IncludeTombstones mode
+    {
+        UnionIterator<std::string, std::string> iter(
+            l0_iters, level_iters, HybridTime(300), IteratorMode::IncludeTombstones);
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_TRUE(iter.IsTombstone());
+        EXPECT_EQ(iter.version(), HybridTime(200));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_FALSE(iter.IsTombstone());
+        EXPECT_EQ(iter.version(), HybridTime(200));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key3");
+        EXPECT_TRUE(iter.IsTombstone());
+        EXPECT_EQ(iter.version(), HybridTime(100));
     }
 }
 
