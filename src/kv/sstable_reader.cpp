@@ -465,13 +465,10 @@ public:
         common::HybridTime version;
     };
 
-    Impl(SSTableReader* reader,
-         common::HybridTime read_time,
-         VersionBehavior version_behavior,
-         bool seek_to_first = true)
+    Impl(SSTableReader* reader, common::HybridTime read_time, common::IteratorMode mode, bool seek_to_first = true)
         : reader_(reader),
           read_time_(read_time),
-          version_behavior_(version_behavior),
+          mode_(mode),
           valid_(false),
           current_block_idx_(0),
           block_pos_(0),
@@ -550,7 +547,8 @@ public:
             return false;
         }
 
-        if (version_behavior_ == VersionBehavior::AllVersions && current_version_idx_ < visible_versions_.size() - 1) {
+        if (common::CheckIteratorMode(mode_, common::IteratorMode::IncludeAllVersions)
+            && current_version_idx_ < visible_versions_.size() - 1) {
             // If we're iterating all versions and have more versions of current key
             current_version_idx_++;
             RestoreVersion(current_version_idx_);
@@ -728,7 +726,8 @@ private:
                     });
 
                     // If we only want latest version, clear all but the first
-                    if (version_behavior_ == VersionBehavior::LatestOnly && !visible_versions_.empty()) {
+                    if (!common::CheckIteratorMode(mode_, common::IteratorMode::IncludeAllVersions)
+                        && !visible_versions_.empty()) {
                         visible_versions_.resize(1);
                     }
 
@@ -767,7 +766,7 @@ private:
 
     SSTableReader* reader_;
     common::HybridTime read_time_;
-    VersionBehavior version_behavior_;
+    common::IteratorMode mode_;
     bool valid_;
     size_t current_block_idx_;
     common::DataChunk current_block_;
@@ -782,10 +781,10 @@ private:
 // Iterator implementation
 SSTableReader::Iterator::Iterator(SSTableReader* reader,
                                   common::HybridTime read_time,
-                                  VersionBehavior version_behavior,
+                                  common::IteratorMode mode,
                                   bool seek_to_first)
     : common::SnapshotIterator<std::string, common::DataChunk>(read_time, common::IteratorMode::Default),
-      impl_(std::make_unique<Impl>(reader, read_time, version_behavior, seek_to_first)) {}
+      impl_(std::make_unique<Impl>(reader, read_time, mode, seek_to_first)) {}
 
 SSTableReader::Iterator::~Iterator() = default;
 
@@ -833,16 +832,16 @@ bool SSTableReader::Iterator::IsTombstone() const {
 }
 
 std::unique_ptr<SSTableReader::Iterator> SSTableReader::NewIterator(common::HybridTime read_time,
-                                                                    VersionBehavior version_behavior) {
-    return std::make_unique<Iterator>(this, read_time, version_behavior, true);
+                                                                    common::IteratorMode mode) {
+    return std::make_unique<Iterator>(this, read_time, mode, true);
 }
 
-SSTableReader::Iterator SSTableReader::begin(common::HybridTime read_time, VersionBehavior version_behavior) {
-    return Iterator(this, read_time, version_behavior, true);
+SSTableReader::Iterator SSTableReader::begin(common::HybridTime read_time, common::IteratorMode mode) {
+    return Iterator(this, read_time, mode, true);
 }
 
 SSTableReader::Iterator SSTableReader::end() {
-    return Iterator(this, common::MaxHybridTime(), VersionBehavior::LatestOnly, false);
+    return Iterator(this, common::MaxHybridTime(), common::IteratorMode::Default, false);
 }
 
 }  // namespace pond::kv

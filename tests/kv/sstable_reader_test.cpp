@@ -1151,7 +1151,7 @@ TEST_F(SSTableReaderTest, AllVersionsIterator) {
     VERIFY_RESULT(reader.Open());
 
     // Test reading with AllVersions behavior
-    auto iter = reader.NewIterator(MaxHybridTime(), SSTableReader::VersionBehavior::AllVersions);
+    auto iter = reader.NewIterator(MaxHybridTime(), IteratorMode::IncludeAllVersions);
 
     // Check key1's versions (should see all three versions)
     ASSERT_TRUE(iter->Valid());
@@ -1310,7 +1310,7 @@ TEST_F(SSTableReaderTest, TombstoneHandling) {
     }
 
     // Test iteration with AllVersions behavior
-    auto iter = reader.NewIterator(t3, SSTableReader::VersionBehavior::AllVersions);
+    auto iter = reader.NewIterator(t3, IteratorMode::IncludeAllVersions);
 
     // Check key1 versions
     iter->Seek("key1");

@@ -185,6 +185,7 @@ add_executable(
     tests/common/crc_test.cpp
     tests/common/data_chunk_test.cpp
     tests/common/error_test.cpp
+    tests/common/iterator_test.cpp
     tests/common/lru_cache_test.cpp
     tests/common/result_test.cpp
     tests/common/stream_test.cpp

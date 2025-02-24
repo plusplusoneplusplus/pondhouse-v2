@@ -8,10 +8,23 @@
 
 namespace pond::common {
 
-enum class IteratorMode {
-    Default,
-    IncludeTombstones,
+enum class IteratorMode : uint64_t {
+    Default = 0,
+    IncludeTombstones = 1 << 1,
+    IncludeAllVersions = 1 << 2,
 };
+
+inline IteratorMode operator|(IteratorMode a, IteratorMode b) {
+    return static_cast<IteratorMode>(static_cast<int>(a) | static_cast<int>(b));
+}
+
+inline IteratorMode operator&(IteratorMode a, IteratorMode b) {
+    return static_cast<IteratorMode>(static_cast<int>(a) & static_cast<int>(b));
+}
+
+inline bool CheckIteratorMode(IteratorMode mode, IteratorMode flag) {
+    return (mode & flag) == flag;
+}
 
 /**
  * Common interface for iterating over key-value pairs in storage.
