@@ -31,7 +31,7 @@ protected:
         }
 
         for (const auto& [key, value] : entries) {
-            VERIFY_RESULT(writer.Add(key, stringToChunk(value), GetNextHybridTime()));
+            VERIFY_RESULT(writer.Add(key, stringToChunk(value), GetNextHybridTime(), false));
         }
         VERIFY_RESULT(writer.Finish());
     }
@@ -708,12 +708,12 @@ TEST_F(SSTableReaderTest, IteratorWithTimestamp) {
     HybridTime t3(300);
 
     // Add entries with different versions
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v3"), t3));
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2));
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1));
-    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t2));
-    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1));
-    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v1"), t1));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v3"), t3, false));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2, false));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t2, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1, false));
+    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v1"), t1, false));
     VERIFY_RESULT(writer.Finish());
 
     SSTableReader reader(fs_, "test.sst");
@@ -833,11 +833,11 @@ TEST_F(SSTableReaderTest, IteratorSeekWithTimestamp) {
     HybridTime t2(200);
 
     // Add entries with different versions
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2));
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1));
-    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1));
-    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v2"), t2));
-    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v1"), t1));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2, false));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1, false));
+    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v2"), t2, false));
+    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v1"), t1, false));
     VERIFY_RESULT(writer.Finish());
 
     SSTableReader reader(fs_, "test.sst");
@@ -905,10 +905,10 @@ TEST_F(SSTableReaderTest, IteratorRangeBasedForWithTimestamp) {
     HybridTime t1(100);
     HybridTime t2(200);
 
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2));
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1));
-    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t2));
-    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2, false));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t2, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1, false));
     VERIFY_RESULT(writer.Finish());
 
     SSTableReader reader(fs_, "test.sst");
@@ -1139,12 +1139,12 @@ TEST_F(SSTableReaderTest, AllVersionsIterator) {
     HybridTime t3(300);
 
     // Add entries with different versions
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v3"), t3));
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2));
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1));
-    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t2));
-    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1));
-    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v1"), t1));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v3"), t3, false));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2, false));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t2, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1, false));
+    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v1"), t1, false));
     VERIFY_RESULT(writer.Finish());
 
     SSTableReader reader(fs_, "test.sst");

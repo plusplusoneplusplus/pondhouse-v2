@@ -34,17 +34,22 @@ public:
      * @return Result<bool> indicating success or failure
      */
     [[nodiscard]] common::Result<bool> Add(const std::string& key, const common::DataChunk& value) {
-        return Add(key, value, common::MinHybridTime());
+        return Add(key, value, common::MinHybridTime(), false);
     }
 
     /**
      * Add a key-value pair with version to the SSTable.
      * Keys must be added in sorted order.
+     * @param key The key to add
+     * @param value The value to add
+     * @param version The version of the key
+     * @param is_tombstone Whether the key is a tombstone
      * @return Result<bool> indicating success or failure
      */
     [[nodiscard]] common::Result<bool> Add(const std::string& key,
                                            const common::DataChunk& value,
-                                           common::HybridTime version);
+                                           common::HybridTime version,
+                                           bool is_tombstone);
 
     /**
      * Finalize the SSTable and write all remaining data to disk.

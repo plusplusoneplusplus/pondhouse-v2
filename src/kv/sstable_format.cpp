@@ -240,9 +240,10 @@ std::vector<uint8_t> DataBlockEntry::SerializeHeader() const {
     std::vector<uint8_t> buffer(kHeaderSize);
     uint8_t* ptr = buffer.data();
 
-    uint32_t le_key_len = util::HostToLittleEndian32(key_length);
-    std::memcpy(ptr, &le_key_len, sizeof(le_key_len));
-    ptr += sizeof(le_key_len);
+    uint32_t flagAndKeyLength = flags << 16 | key_length;
+    uint32_t le_flagAndKeyLength = util::HostToLittleEndian32(flagAndKeyLength);
+    std::memcpy(ptr, &le_flagAndKeyLength, sizeof(le_flagAndKeyLength));
+    ptr += sizeof(le_flagAndKeyLength);
 
     uint32_t le_value_len = util::HostToLittleEndian32(value_length);
     std::memcpy(ptr, &le_value_len, sizeof(le_value_len));
@@ -256,10 +257,11 @@ bool DataBlockEntry::DeserializeHeader(const uint8_t* data, size_t size) {
 
     const uint8_t* ptr = data;
 
-    uint32_t le_key_len;
-    std::memcpy(&le_key_len, ptr, sizeof(le_key_len));
-    key_length = util::LittleEndianToHost32(le_key_len);
-    ptr += sizeof(le_key_len);
+    uint32_t flagAndKeyLength;
+    std::memcpy(&flagAndKeyLength, ptr, sizeof(flagAndKeyLength));
+    flags = flagAndKeyLength >> 16;
+    key_length = flagAndKeyLength & 0xFFFF;
+    ptr += sizeof(flagAndKeyLength);
 
     uint32_t le_value_len;
     std::memcpy(&le_value_len, ptr, sizeof(le_value_len));
@@ -355,7 +357,10 @@ std::vector<uint8_t> IndexBlockEntry::Serialize(const std::string& largest_key) 
     return buffer;
 }
 
-bool DataBlockBuilder::Add(const std::string& user_key, common::HybridTime version, const common::DataChunk& value) {
+bool DataBlockBuilder::Add(const std::string& user_key,
+                           common::HybridTime version,
+                           const common::DataChunk& value,
+                           bool is_tombstone /*= false*/) {
     InternalKey internal_key(user_key, version);
     size_t entry_size = DataBlockEntry::kHeaderSize + internal_key.size() + value.Size();
 
@@ -363,7 +368,7 @@ bool DataBlockBuilder::Add(const std::string& user_key, common::HybridTime versi
         return false;
     }
 
-    entries_.push_back({std::move(internal_key), value});
+    entries_.push_back({is_tombstone, std::move(internal_key), value});
     current_size_ += entry_size;
     return true;
 }
@@ -379,6 +384,10 @@ std::vector<uint8_t> DataBlockBuilder::Finish() {
     // Write all entries
     for (const auto& entry : entries_) {
         DataBlockEntry header;
+        if (entry.is_tombstone) {
+            header.flags |= DataBlockEntry::FLAG_TOMBSTONE;
+        }
+
         header.key_length = entry.key.size();
         header.value_length = entry.value.Size();
 

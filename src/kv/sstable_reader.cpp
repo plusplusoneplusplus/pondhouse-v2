@@ -247,6 +247,10 @@ public:
             if (current_key.user_key() == key) {
                 // Found matching key
                 if (current_key.version() <= version) {
+                    if (entry.IsTombstone()) {
+                        return common::Result<common::DataChunk>::failure(common::ErrorCode::NotFound, "Key not found");
+                    }
+
                     // If no specific version requested or exact version match, return immediately
                     const uint8_t* value_ptr = block_data.Data() + pos + DataBlockEntry::kHeaderSize + entry.key_length;
                     return common::Result<common::DataChunk>::success(common::DataChunk(value_ptr, entry.value_length));

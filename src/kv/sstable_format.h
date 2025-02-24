@@ -108,12 +108,14 @@ static_assert(sizeof(BlockFooter) == BlockFooter::kFooterSize, "BlockFooter size
 
 // Entry in a data block
 struct DataBlockEntry {
-    uint32_t key_length{0};    // Length of internal key
+    static constexpr uint8_t FLAG_TOMBSTONE = 0x01;
+    uint16_t flags{0};         // Add flags field to indicate tombstone
+    uint16_t key_length{0};    // Length of internal key
     uint32_t value_length{0};  // Length of value
     // Followed by key_length bytes of internal key
     // Then value_length bytes of value
 
-    static constexpr size_t kHeaderSize = 8;  // key_length + value_length
+    static constexpr size_t kHeaderSize = 8;  // flags + key_length + value_length
 
     // Serializes just the header (caller must append key and value data)
     std::vector<uint8_t> SerializeHeader() const;
@@ -123,6 +125,8 @@ struct DataBlockEntry {
 
     // Full serialization including key and value
     std::vector<uint8_t> Serialize(const InternalKey& key, const common::DataChunk& value) const;
+
+    bool IsTombstone() const { return (flags & FLAG_TOMBSTONE) != 0; }
 };
 
 // Entry in an index block
@@ -150,7 +154,10 @@ public:
     static constexpr size_t kTargetBlockSize = 4 * 1024 * 1024;  // 4MB target
 
     // Returns false if block would exceed target size
-    bool Add(const std::string& user_key, common::HybridTime version, const common::DataChunk& value);
+    bool Add(const std::string& user_key,
+             common::HybridTime version,
+             const common::DataChunk& value,
+             bool is_tombstone = false);
 
     // Finalize block and get its contents
     std::vector<uint8_t> Finish();
@@ -174,6 +181,7 @@ public:
 
 private:
     struct Entry {
+        bool is_tombstone{false};
         InternalKey key;
         common::DataChunk value;
     };

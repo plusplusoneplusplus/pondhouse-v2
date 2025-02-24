@@ -1,9 +1,11 @@
+
 #include "kv/sstable_writer.h"
 
 #include <gtest/gtest.h>
 
 #include "common/memory_append_only_fs.h"
 #include "kv/sstable_format.h"
+#include "kv/sstable_reader.h"
 #include "test_helper.h"
 
 using namespace pond::common;
@@ -225,7 +227,7 @@ TEST_F(SSTableWriterTest, MultiVersionBasic) {
     };
 
     for (const auto& entry : entries) {
-        VERIFY_RESULT_MSG(writer.Add(entry.key, entry.value, entry.version),
+        VERIFY_RESULT_MSG(writer.Add(entry.key, entry.value, entry.version, false),
                           "Failed to add entry " + std::string(entry.key));
     }
 
@@ -250,7 +252,7 @@ TEST_F(SSTableWriterTest, MultiVersionBasic) {
 TEST_F(SSTableWriterTest, InvalidVersion) {
     SSTableWriter writer(fs_, "test.sst");
 
-    auto result = writer.Add("key1", stringToChunk("value1"), InvalidHybridTime());
+    auto result = writer.Add("key1", stringToChunk("value1"), InvalidHybridTime(), false);
     ASSERT_FALSE(result.ok());
     EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
 }
@@ -275,9 +277,9 @@ TEST_F(SSTableWriterTest, MultiVersionOrderDescending) {
     // Add versions out of order
     for (const auto& entry : entries) {
         if (i == 2) {  // expect failure since the order is not descending
-            EXPECT_FALSE(writer.Add(entry.key, entry.value, entry.version).ok());
+            EXPECT_FALSE(writer.Add(entry.key, entry.value, entry.version, false).ok());
         } else {
-            VERIFY_RESULT_MSG(writer.Add(entry.key, entry.value, entry.version),
+            VERIFY_RESULT_MSG(writer.Add(entry.key, entry.value, entry.version, false),
                               "Failed to add entry " + std::string(entry.key));
         }
         i++;
@@ -296,10 +298,10 @@ TEST_F(SSTableWriterTest, MultiVersionWithFilter) {
     HybridTime t2(200);
 
     // Add multiple versions of keys
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t2));
-    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t1));
-    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t2));
-    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t1));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t2, false));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t1, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t2, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t1, false));
 
     VERIFY_RESULT(writer.Finish());
 
@@ -332,8 +334,8 @@ TEST_F(SSTableWriterTest, MultiVersionLargeValues) {
         std::string value1 = large_value_base + "_v1_" + std::to_string(i);
         std::string value2 = large_value_base + "_v2_" + std::to_string(i);
 
-        VERIFY_RESULT(writer.Add(key, stringToChunk(value1), t2));
-        VERIFY_RESULT(writer.Add(key, stringToChunk(value2), t1));
+        VERIFY_RESULT(writer.Add(key, stringToChunk(value1), t2, false));
+        VERIFY_RESULT(writer.Add(key, stringToChunk(value2), t1, false));
     }
 
     VERIFY_RESULT(writer.Finish());
@@ -354,6 +356,55 @@ TEST_F(SSTableWriterTest, MultiVersionLargeValues) {
     ASSERT_TRUE(index_footer.Deserialize(index_block.Data() + index_block.Size() - BlockFooter::kFooterSize,
                                          BlockFooter::kFooterSize));
     EXPECT_GT(index_footer.entry_count, 1);  // Should have multiple blocks
+}
+
+TEST_F(SSTableWriterTest, TombstoneOperations) {
+    SSTableWriter writer(fs_, "test.sst");
+
+    HybridTime t1(100);
+    HybridTime t2(200);
+
+    // Add tombstone for the same key with newer version
+    VERIFY_RESULT(writer.Add("key1", stringToChunk(""), t2, true));
+
+    // Add regular key-value pair
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1"), t1, false));
+
+    // Add another key with tombstone
+    VERIFY_RESULT(writer.Add("key2", stringToChunk(""), t1, true));
+
+    VERIFY_RESULT(writer.Finish());
+
+    // Verify file exists
+    ASSERT_TRUE(fs_->Exists("test.sst"));
+
+    // Read file and verify structure
+    auto read_result = readEntireFile("test.sst");
+    VERIFY_RESULT(read_result);
+    auto data = read_result.value();
+
+    // Verify footer
+    Footer footer;
+    ASSERT_TRUE(footer.Deserialize(data.Data() + data.Size() - Footer::kFooterSize, Footer::kFooterSize));
+    EXPECT_EQ(footer.magic_number, Footer::kMagicNumber);
+
+    // Create reader to verify key1
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+
+    // Read key1 at different timestamps
+    {
+        // At t2, should return tombstone
+        auto result = reader.Get("key1", t2);
+        ASSERT_FALSE(result.ok());
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+    }
+    {
+        // At t1, should return regular value
+        auto result = reader.Get("key1", t1);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value1");
+    }
 }
 
 }  // namespace

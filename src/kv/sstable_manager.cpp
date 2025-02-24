@@ -164,7 +164,8 @@ public:
             largest_key = key;
 
             const auto& versioned_value = iter->value().get();
-            auto result = writer.Add(key, versioned_value->value(), versioned_value->version());
+            auto result =
+                writer.Add(key, versioned_value->value(), versioned_value->version(), versioned_value->IsDeleted());
             RETURN_IF_ERROR_T(ReturnType, result);
             entry_count++;
             iter->Next();
@@ -462,20 +463,25 @@ private:
                 break;  // All iterators exhausted
             }
 
+            struct ValueTuple {
+                common::DataChunk value;
+                bool is_tombstone;
+            };
+
             // Collect all versions for current key
-            std::vector<std::pair<common::HybridTime, common::DataChunk>> versions;
+            std::vector<std::pair<common::HybridTime, ValueTuple>> versions;
 
             // Check L0 iterators first (they have newer versions)
             for (const auto& iter : iterators) {
                 if (iter->Valid() && iter->key() == current_key) {
-                    versions.emplace_back(iter->version(), iter->value());
+                    versions.emplace_back(iter->version(), ValueTuple(iter->value(), false /* FIX ME */));
                 }
             }
 
             // Check L1 iterators
             for (const auto& iter : l1_iterators) {
                 if (iter->Valid() && iter->key() == current_key) {
-                    versions.emplace_back(iter->version(), iter->value());
+                    versions.emplace_back(iter->version(), ValueTuple(iter->value(), false /* FIX ME */));
                 }
             }
 
@@ -483,8 +489,8 @@ private:
             std::sort(versions.begin(), versions.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
 
             // Write all versions to target file
-            for (const auto& [version, value] : versions) {
-                auto add_result = writer.Add(current_key, value, version);
+            for (const auto& [version, valueTuple] : versions) {
+                auto add_result = writer.Add(current_key, valueTuple.value, version, valueTuple.is_tombstone);
                 if (!add_result.ok()) {
                     return common::Result<bool>::failure(add_result.error());
                 }

@@ -25,7 +25,10 @@ public:
         }
     }
 
-    common::Result<bool> Add(const std::string& key, const common::DataChunk& value, common::HybridTime version) {
+    common::Result<bool> Add(const std::string& key,
+                             const common::DataChunk& value,
+                             common::HybridTime version,
+                             bool is_tombstone) {
         if (finished_) {
             return common::Result<bool>::failure(common::ErrorCode::InvalidOperation, "Writer is already finished");
         }
@@ -67,7 +70,7 @@ public:
         }
 
         // Try to add to current data block
-        if (!data_builder_.Add(key, version, value)) {
+        if (!data_builder_.Add(key, version, value, is_tombstone)) {
             // Current block is full, flush it
             auto flush_result = FlushDataBlock();
             if (!flush_result.ok()) {
@@ -75,7 +78,7 @@ public:
             }
 
             // Try again with empty block
-            if (!data_builder_.Add(key, version, value)) {
+            if (!data_builder_.Add(key, version, value, is_tombstone)) {
                 return common::Result<bool>::failure(common::ErrorCode::InvalidArgument, "Entry too large for block");
             }
         }
@@ -251,8 +254,9 @@ SSTableWriter::~SSTableWriter() = default;
 
 common::Result<bool> SSTableWriter::Add(const std::string& key,
                                         const common::DataChunk& value,
-                                        common::HybridTime version) {
-    return impl_->Add(key, value, version);
+                                        common::HybridTime version,
+                                        bool is_tombstone) {
+    return impl_->Add(key, value, version, is_tombstone);
 }
 
 common::Result<bool> SSTableWriter::Finish() {

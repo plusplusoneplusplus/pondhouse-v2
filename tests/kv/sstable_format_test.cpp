@@ -485,7 +485,7 @@ TEST_F(SSTableFormatTest, DataBlockEntryWithInternalKey) {
     InternalKey key(user_key, version);
     DataChunk value = DataChunk::FromString("test_value");
 
-    DataBlockEntry entry{static_cast<uint32_t>(key.size()), static_cast<uint32_t>(value.Size())};
+    DataBlockEntry entry{0 /*flags*/, static_cast<uint16_t>(key.size()), static_cast<uint32_t>(value.Size())};
     auto serialized = entry.Serialize(key, value);
 
     // Verify size
@@ -554,6 +554,83 @@ TEST_F(SSTableFormatTest, DataBlockBuilderWithVersioning) {
             // Second entry should be older version
             EXPECT_EQ(decoded_key.version(), version1);
             EXPECT_EQ(decoded_value, "value1");
+        }
+    }
+}
+
+TEST_F(SSTableFormatTest, DataBlockEntryTombstone) {
+    DataBlockEntry entry;
+
+    // Verify default entry is not a tombstone
+    EXPECT_FALSE(entry.IsTombstone());
+
+    // Set tombstone flag and verify
+    entry.flags = DataBlockEntry::FLAG_TOMBSTONE;
+    EXPECT_TRUE(entry.IsTombstone());
+
+    // Set multiple flags including tombstone
+    entry.flags = DataBlockEntry::FLAG_TOMBSTONE | 0x02;
+    EXPECT_TRUE(entry.IsTombstone());
+
+    // Clear tombstone flag and verify
+    entry.flags = 0x02;
+    EXPECT_FALSE(entry.IsTombstone());
+}
+
+TEST_F(SSTableFormatTest, DataBlockBuilderWithTombstone) {
+    DataBlockBuilder builder;
+    HybridTime version1(100);
+    HybridTime version2(200);
+
+    // Add regular key-value pair
+    ASSERT_TRUE(builder.Add("key1", version1, DataChunk::FromString("value1")));
+
+    // Add tombstone for the same key with newer version
+    ASSERT_TRUE(builder.Add("key1", version2, DataChunk::FromString(""), true /* is_tombstone */));
+
+    // Add another key with tombstone
+    ASSERT_TRUE(builder.Add("key2", version1, DataChunk::FromString(""), true /* is_tombstone */));
+
+    // Finish block
+    auto block = builder.Finish();
+    ASSERT_FALSE(block.empty());
+
+    // Verify block footer
+    BlockFooter footer;
+    size_t footer_offset = block.size() - BlockFooter::kFooterSize;
+    ASSERT_TRUE(footer.Deserialize(block.data() + footer_offset, BlockFooter::kFooterSize));
+    EXPECT_EQ(footer.entry_count, 3);
+
+    // Verify entries
+    size_t offset = 0;
+    for (int i = 0; i < 3; i++) {
+        DataBlockEntry entry;
+        ASSERT_TRUE(entry.DeserializeHeader(block.data() + offset, DataBlockEntry::kHeaderSize));
+        offset += DataBlockEntry::kHeaderSize;
+
+        InternalKey decoded_key;
+        ASSERT_TRUE(decoded_key.Deserialize(block.data() + offset, entry.key_length));
+        offset += entry.key_length;
+
+        std::string decoded_value(reinterpret_cast<const char*>(block.data() + offset), entry.value_length);
+        offset += entry.value_length;
+
+        if (i == 0) {
+            // First entry should be key1 with version1
+            EXPECT_EQ(decoded_key.user_key(), "key1");
+            EXPECT_EQ(decoded_key.version(), version1);
+            EXPECT_EQ(decoded_value, "value1");
+            EXPECT_FALSE(entry.IsTombstone());
+        } else if (i == 1) {
+            // Second entry should be key1 with version2 (tombstone)
+            EXPECT_EQ(decoded_key.user_key(), "key1");
+            EXPECT_EQ(decoded_key.version(), version2);
+            EXPECT_TRUE(entry.IsTombstone());
+        } else {
+            // Third entry should be key2 with version1 (tombstone)
+            EXPECT_EQ(decoded_key.user_key(), "key2");
+            EXPECT_EQ(decoded_key.version(), version1);
+            EXPECT_TRUE(entry.IsTombstone());
         }
     }
 }
