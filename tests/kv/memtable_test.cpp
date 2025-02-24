@@ -438,4 +438,67 @@ TEST_F(MemTableTest, IteratorWithDeletedRecords) {
     EXPECT_EQ(it->key(), "key3");  // Should skip key2 and land on key3
 }
 
+//
+// Test Setup:
+//      Insert multiple key-value pairs and delete some of them
+//      Verify iterator behavior with IncludeTombstones mode
+// Test Result:
+//      Iterator should include deleted records when in IncludeTombstones mode
+//      Iterator should show the correct version of records including tombstones
+//
+TEST_F(MemTableTest, IteratorWithIncludeTombstones) {
+    auto txn1 = NextTxnId();
+    auto txn2 = NextTxnId();
+
+    // Insert initial records
+    VERIFY_RESULT(table->Put("key1", CreateTestValue("value1"), txn1));
+    VERIFY_RESULT(table->Put("key2", CreateTestValue("value2"), txn1));
+    VERIFY_RESULT(table->Put("key3", CreateTestValue("value3"), txn1));
+
+    // Delete key2
+    VERIFY_RESULT(table->Delete("key2", txn2));
+
+    // Create iterator with IncludeTombstones mode
+    auto it = table->NewIterator(common::IteratorMode::IncludeTombstones);
+    std::vector<std::string> seen_keys;
+    std::vector<std::string> seen_values;
+    std::vector<bool> is_tombstone;
+
+    for (; it->Valid();) {
+        auto key = it->key();
+        const auto& versioned_value = it->value().get();
+        seen_keys.push_back(key);
+        is_tombstone.push_back(it->IsTombstone());
+
+        if (!it->IsTombstone()) {
+            const common::DataChunk& value = versioned_value->value();
+            seen_values.push_back(std::string(reinterpret_cast<const char*>(value.Data()), value.Size()));
+        } else {
+            seen_values.push_back("");  // Empty string for tombstone
+        }
+        it->Next();
+    }
+
+    // Should see all keys including the deleted one
+    ASSERT_EQ(seen_keys.size(), 3);
+    EXPECT_EQ(seen_keys[0], "key1");
+    EXPECT_EQ(seen_keys[1], "key2");
+    EXPECT_EQ(seen_keys[2], "key3");
+
+    // Verify values and tombstone status
+    EXPECT_EQ(seen_values[0], "value1");
+    EXPECT_EQ(seen_values[1], "");  // Tombstone
+    EXPECT_EQ(seen_values[2], "value3");
+
+    EXPECT_FALSE(is_tombstone[0]);
+    EXPECT_TRUE(is_tombstone[1]);
+    EXPECT_FALSE(is_tombstone[2]);
+
+    // Verify seeking behavior with tombstones
+    it->Seek("key2");
+    EXPECT_TRUE(it->Valid());
+    EXPECT_EQ(it->key(), "key2");  // Should find the tombstone
+    EXPECT_TRUE(it->IsTombstone());
+}
+
 }  // namespace pond::kv

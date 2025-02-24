@@ -155,7 +155,8 @@ public:
         size_t entry_count = 0;
 
         // Write entries from MemTable
-        auto iter = memtable.NewIterator();
+        // The mode should be IncludeTombstones because we want to include tombstones in the SSTable
+        auto iter = memtable.NewIterator(common::IteratorMode::IncludeTombstones);
         while (iter->Valid()) {
             auto key = iter->key();
             if (smallest_key.empty()) {
@@ -474,14 +475,14 @@ private:
             // Check L0 iterators first (they have newer versions)
             for (const auto& iter : iterators) {
                 if (iter->Valid() && iter->key() == current_key) {
-                    versions.emplace_back(iter->version(), ValueTuple(iter->value(), false /* FIX ME */));
+                    versions.emplace_back(iter->version(), ValueTuple(iter->value(), iter->IsTombstone()));
                 }
             }
 
             // Check L1 iterators
             for (const auto& iter : l1_iterators) {
                 if (iter->Valid() && iter->key() == current_key) {
-                    versions.emplace_back(iter->version(), ValueTuple(iter->value(), false /* FIX ME */));
+                    versions.emplace_back(iter->version(), ValueTuple(iter->value(), iter->IsTombstone()));
                 }
             }
 

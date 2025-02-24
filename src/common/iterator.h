@@ -8,6 +8,11 @@
 
 namespace pond::common {
 
+enum class IteratorMode {
+    Default,
+    IncludeTombstones,
+};
+
 /**
  * Common interface for iterating over key-value pairs in storage.
  * This interface is used by various components like MemTable, SSTable, and KvTable
@@ -16,6 +21,8 @@ namespace pond::common {
 template <typename K, typename V>
 class Iterator {
 public:
+    Iterator(IteratorMode mode) : mode_(mode) {}
+
     virtual ~Iterator() = default;
 
     /**
@@ -68,12 +75,15 @@ protected:
     // Allow moving
     Iterator(Iterator&&) = default;
     Iterator& operator=(Iterator&&) = default;
+
+protected:
+    IteratorMode mode_;
 };
 
 template <typename K, typename V>
 class SnapshotIterator : public Iterator<K, V> {
 public:
-    SnapshotIterator(HybridTime read_time) : Iterator<K, V>(), read_time_(read_time) {}
+    SnapshotIterator(HybridTime read_time, IteratorMode mode) : Iterator<K, V>(mode), read_time_(read_time) {}
 
     virtual common::HybridTime version() const = 0;
 

@@ -12,7 +12,10 @@ namespace pond::kv {
 MemTable::MemTable(size_t max_size)
     : table_(std::make_unique<common::SkipList<Key, Value>>()), approximate_memory_usage_(0), max_size_(max_size) {}
 
-common::Result<void> MemTable::Put(const Key& key, const RawValue& value, uint64_t txn_id) {
+common::Result<void> MemTable::Put(const Key& key,
+                                   const RawValue& value,
+                                   uint64_t txn_id,
+                                   std::optional<common::HybridTime> version) {
     if (key.size() > MAX_KEY_SIZE) {
         return common::Result<void>::failure(common::ErrorCode::InvalidArgument,
                                              "Key size exceeds maximum allowed size");
@@ -41,7 +44,7 @@ common::Result<void> MemTable::Put(const Key& key, const RawValue& value, uint64
     table_->Get(key, current_version);
 
     // Create new version
-    auto version_time = common::GetNextHybridTime();
+    auto version_time = version.value_or(common::GetNextHybridTime());
     Value new_version;
     if (current_version) {
         new_version = current_version->CreateNewVersion(value, version_time, txn_id);
@@ -103,26 +106,25 @@ common::Result<MemTable::RawValue> MemTable::GetForTxn(const Key& key, uint64_t 
     return common::Result<RawValue>::success(value_ref->get());
 }
 
-common::Result<void> MemTable::Delete(const Key& key, uint64_t txn_id) {
+common::Result<void> MemTable::Delete(const Key& key, uint64_t txn_id, std::optional<common::HybridTime> version) {
     if (ShouldFlush()) {
         return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "MemTable is full");
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // Get current version chain
+    // Get current version chain if it exists
     Value current_version;
-    if (!table_->Get(key, current_version)) {
-        // key not found, just return success
-        return common::Result<void>::success();
-    }
+    table_->Get(key, current_version);  // Don't check return value since we always write a marker
 
     // Create deletion marker
-    auto version_time = common::GetNextHybridTime();
-    auto deletion_version = current_version->CreateDeletionMarker(version_time, txn_id);
+    auto version_time = version.value_or(common::GetNextHybridTime());
+    auto deletion_version = current_version ? current_version->CreateDeletionMarker(version_time, txn_id)
+                                            : std::make_shared<DataChunkVersionedValue>(
+                                                  DataChunk(), version_time, txn_id, true /*is_deleted*/);
 
     // Calculate size change
-    size_t old_size = CalculateEntrySize(key, current_version);
+    size_t old_size = current_version ? CalculateEntrySize(key, current_version) : 0;
     size_t new_size = CalculateEntrySize(key, deletion_version);
     approximate_memory_usage_ = approximate_memory_usage_ - old_size + new_size;
 
@@ -162,10 +164,10 @@ size_t MemTable::CalculateEntrySize(const Key& key, const Value& value) const {
 
 // Iterator implementation
 
-std::unique_ptr<common::Iterator<Key, MemTable::Value>> MemTable::NewIterator() const {
+std::unique_ptr<common::Iterator<Key, MemTable::Value>> MemTable::NewIterator(common::IteratorMode mode) const {
     std::unique_ptr<common::Iterator<Key, Value>> iter;
     iter.reset(table_->NewIterator());
-    return std::make_unique<Iterator>(std::move(iter), mutex_);
+    return std::make_unique<Iterator>(std::move(iter), mutex_, mode);
 }
 
 }  // namespace pond::kv

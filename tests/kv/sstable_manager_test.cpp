@@ -1173,4 +1173,146 @@ TEST_F(SSTableManagerTest, VersionedReadAfterMerge) {
     EXPECT_EQ(stats.physical_reads, 3);  // Should only read the merged file
 }
 
+//
+// Test Setup:
+//      Create multiple SSTable files with overlapping versions and tombstones
+//      Perform L0 to L1 merges at different stages
+// Test Result:
+//      Verify correct version visibility at each stage
+//      Ensure tombstones properly hide older versions after merges
+//
+TEST_F(SSTableManagerTest, MergeWithTombstones) {
+    // Create initial MemTable and SSTable
+    auto memtable = std::make_shared<MemTable>();
+    HybridTime t1(100);  // Oldest
+    HybridTime t2(200);
+    HybridTime t3(300);
+    HybridTime t4(400);
+    HybridTime t5(500);  // Newest
+
+    // Stage 1: Initial writes to L0
+    VERIFY_RESULT(memtable->Put("key1", DataChunk::FromString("value1_v1"), 0, t1));
+    VERIFY_RESULT(memtable->Put("key2", DataChunk::FromString("value2_v1"), 0, t1));
+    VERIFY_RESULT(memtable->Put("key3", DataChunk::FromString("value3_v1"), 0, t1));
+    auto flush_result = manager_->CreateSSTableFromMemTable(*memtable);
+    VERIFY_RESULT(flush_result);
+    memtable = std::make_shared<MemTable>();
+
+    // Stage 2: More writes to L0
+    VERIFY_RESULT(memtable->Put("key1", DataChunk::FromString("value1_v2"), 0, t2));
+    VERIFY_RESULT(memtable->Put("key2", DataChunk::FromString("value2_v2"), 0, t2));
+    flush_result = manager_->CreateSSTableFromMemTable(*memtable);
+    VERIFY_RESULT(flush_result);
+    memtable = std::make_shared<MemTable>();
+
+    // First merge: L0 -> L1
+    auto merge_result = manager_->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Stage 3: Delete some keys
+    VERIFY_RESULT(memtable->Delete("key1", 0, t3));  // Delete key1
+    VERIFY_RESULT(memtable->Delete("key2", 0, t3));  // Delete key2
+    flush_result = manager_->CreateSSTableFromMemTable(*memtable);
+    VERIFY_RESULT(flush_result);
+    memtable = std::make_shared<MemTable>();
+
+    // Second merge: L0 -> L1
+    merge_result = manager_->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Stage 4: New writes after deletes
+    VERIFY_RESULT(memtable->Put("key1", DataChunk::FromString("value1_v4"), 0, t4));  // Resurrect key1
+    VERIFY_RESULT(memtable->Put("key3", DataChunk::FromString("value3_v4"), 0, t4));  // Update key3
+    flush_result = manager_->CreateSSTableFromMemTable(*memtable);
+    VERIFY_RESULT(flush_result);
+    memtable = std::make_shared<MemTable>();
+
+    // Stage 5: Final updates
+    VERIFY_RESULT(memtable->Put("key2", DataChunk::FromString("value2_v5"), 0, t5));  // Resurrect key2
+    VERIFY_RESULT(memtable->Delete("key3", 0, t5));                                   // Delete key3
+    flush_result = manager_->CreateSSTableFromMemTable(*memtable);
+    VERIFY_RESULT(flush_result);
+    memtable = std::make_shared<MemTable>();
+
+    // Final merge: L0 -> L1
+    merge_result = manager_->MergeL0ToL1();
+    VERIFY_RESULT(merge_result);
+
+    // Verify final state at different timestamps
+    // At t1 (initial state)
+    {
+        auto result = manager_->Get("key1", t1);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value1_v1");
+
+        result = manager_->Get("key2", t1);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value2_v1");
+
+        result = manager_->Get("key3", t1);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value3_v1");
+    }
+
+    // At t2 (after first updates)
+    {
+        auto result = manager_->Get("key1", t2);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value1_v2");
+
+        result = manager_->Get("key2", t2);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value2_v2");
+
+        result = manager_->Get("key3", t2);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value3_v1");
+    }
+
+    // At t3 (after deletes)
+    {
+        auto result = manager_->Get("key1", t3);
+        ASSERT_FALSE(result.ok());
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+
+        result = manager_->Get("key2", t3);
+        ASSERT_FALSE(result.ok());
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+
+        result = manager_->Get("key3", t3);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value3_v1");
+    }
+
+    // At t4 (after resurrections)
+    {
+        auto result = manager_->Get("key1", t4);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value1_v4");
+
+        result = manager_->Get("key2", t4);
+        ASSERT_FALSE(result.ok());
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+
+        result = manager_->Get("key3", t4);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value3_v4");
+    }
+
+    // At t5 (final state)
+    {
+        auto result = manager_->Get("key1", t5);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value1_v4");
+
+        result = manager_->Get("key2", t5);
+        VERIFY_RESULT(result);
+        EXPECT_EQ(result.value().ToString(), "value2_v5");
+
+        result = manager_->Get("key3", t5);
+        ASSERT_FALSE(result.ok());
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+    }
+}
+
 }  // namespace
