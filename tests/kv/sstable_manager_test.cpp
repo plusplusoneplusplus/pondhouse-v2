@@ -1115,4 +1115,62 @@ TEST_F(SSTableManagerTest, MergeL0ToL1_KeyRangeWithOverlap) {
     }
 }
 
+TEST_F(SSTableManagerTest, VersionedReadAfterMerge) {
+    // Create initial L1 file with version 1
+    {
+        auto memtable = std::make_unique<MemTable>();
+        auto record = std::make_unique<Record>(schema_);
+        record->Set(0, std::string("value1"));
+        ASSERT_TRUE(memtable->Put("test_key", record->Serialize(), 0 /* txn_id */).ok());
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+        VERIFY_RESULT(manager_->MergeL0ToL1());  // Move to L1
+    }
+
+    HybridTime version0 = GetNextHybridTime();
+
+    // Create L0 files with newer versions
+    {
+        // Version 2
+        auto memtable = std::make_unique<MemTable>();
+        auto record = std::make_unique<Record>(schema_);
+        record->Set(0, std::string("value2"));
+        ASSERT_TRUE(memtable->Put("test_key", record->Serialize(), 0 /* txn_id */).ok());
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    HybridTime version1 = GetNextHybridTime();
+
+    {
+        // Version 3
+        auto memtable = std::make_unique<MemTable>();
+        auto record = std::make_unique<Record>(schema_);
+        record->Set(0, std::string("value3"));
+        ASSERT_TRUE(memtable->Put("test_key", record->Serialize(), 0 /* txn_id */).ok());
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    HybridTime version2 = GetNextHybridTime();
+
+    // Merge L0 to L1 (this will include the original L1 file)
+    VERIFY_RESULT(manager_->MergeL0ToL1());
+
+    // Verify reads after merge
+    auto result_v3 = manager_->Get("test_key", version2);
+    ASSERT_TRUE(result_v3.ok());
+    EXPECT_EQ(ToRecord(result_v3.value())->Get<std::string>(0).value(), "value3");
+
+    // Older versions should be found after merge
+    auto result_v2 = manager_->Get("test_key", version1);
+    EXPECT_TRUE(result_v2.ok());
+    EXPECT_EQ(ToRecord(result_v2.value())->Get<std::string>(0).value(), "value2");
+
+    auto result_v1 = manager_->Get("test_key", version0);
+    EXPECT_TRUE(result_v1.ok());
+    EXPECT_EQ(ToRecord(result_v1.value())->Get<std::string>(0).value(), "value1");
+
+    // Verify physical read count
+    auto stats = manager_->GetStats();
+    EXPECT_EQ(stats.physical_reads, 3);  // Should only read the merged file
+}
+
 }  // namespace

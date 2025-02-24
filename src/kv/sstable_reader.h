@@ -26,6 +26,12 @@ public:
         MetadataProperties props;
     };
 
+    // Add enum for iterator version behavior
+    enum class VersionBehavior {
+        LatestOnly,  // Only return the latest version <= read_time (default)
+        AllVersions  // Return all versions <= read_time in descending order
+    };
+
     // Constructor takes filesystem and path
     SSTableReader(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& path);
     ~SSTableReader();
@@ -52,7 +58,7 @@ public:
      * @return Result<DataChunk> containing the value if found, or empty if not found
      */
     [[nodiscard]] common::Result<common::DataChunk> Get(const std::string& key,
-                                                        common::HybridTime version = common::MinHybridTime());
+                                                        common::HybridTime version = common::MaxHybridTime());
 
     /**
      * Check if a key might exist in the SSTable.
@@ -104,16 +110,20 @@ public:
      * Create a new iterator for scanning the SSTable.
      * The caller takes ownership of the returned iterator.
      * @param read_time Optional timestamp to get a consistent view of data up to this time
+     * @param version_behavior Controls whether to return all versions or just the latest
      * @return A new iterator instance
      */
-    [[nodiscard]] std::unique_ptr<Iterator> NewIterator(common::HybridTime read_time = common::MaxHybridTime());
+    [[nodiscard]] std::unique_ptr<Iterator> NewIterator(common::HybridTime read_time = common::MaxHybridTime(),
+                                                        VersionBehavior version_behavior = VersionBehavior::LatestOnly);
 
     /**
      * Get an iterator pointing to the beginning of the SSTable.
      * @param read_time Optional timestamp to get a consistent view of data up to this time
+     * @param version_behavior Controls whether to return all versions or just the latest
      * @return An iterator pointing to the first entry
      */
-    [[nodiscard]] Iterator begin(common::HybridTime read_time = common::MaxHybridTime());
+    [[nodiscard]] Iterator begin(common::HybridTime read_time = common::MaxHybridTime(),
+                                 VersionBehavior version_behavior = VersionBehavior::LatestOnly);
 
     /**
      * Get an iterator representing the end of the SSTable.
@@ -145,6 +155,7 @@ public:
 
         explicit Iterator(SSTableReader* reader,
                           common::HybridTime read_time = common::MaxHybridTime(),
+                          VersionBehavior version_behavior = VersionBehavior::LatestOnly,
                           bool seek_to_first = true);
         ~Iterator();
 

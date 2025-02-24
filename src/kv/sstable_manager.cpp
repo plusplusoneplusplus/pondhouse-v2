@@ -10,6 +10,8 @@
 #include "kv/memtable.h"
 #include "kv/table_metadata.h"
 
+using namespace pond::common;
+
 namespace pond::kv {
 
 namespace {
@@ -69,7 +71,7 @@ public:
         LoadExistingSSTables();
     }
 
-    common::Result<common::DataChunk> Get(const std::string& key) {
+    common::Result<common::DataChunk> Get(const std::string& key, common::HybridTime version) {
         std::shared_lock<std::shared_mutex> lock(mutex_);
 
         if (sstables_.empty()) {
@@ -93,7 +95,7 @@ public:
                 continue;
             }
 
-            auto result = reader->Get(key);
+            auto result = reader->Get(key, version);
             if (result.ok()) {
                 return result;
             }
@@ -120,7 +122,7 @@ public:
                     continue;
                 }
 
-                auto result = reader->Get(key);
+                auto result = reader->Get(key, version);
                 if (result.ok()) {
                     return result;
                 }
@@ -355,7 +357,9 @@ private:
 
         // Create iterators for source files
         for (const auto& reader : ctx->readers) {
-            ctx->iterators.push_back(reader->NewIterator());
+            ctx->iterators.push_back(
+                reader->NewIterator(MaxHybridTime(),                                /*max time to include all versions*/
+                                    SSTableReader::VersionBehavior::AllVersions));  // Get all versions for merging
             ctx->iterators.back()->SeekToFirst();
             total_memory_usage += sizeof(SSTableReader::Iterator);  // Approximate iterator memory usage
         }
@@ -390,7 +394,9 @@ private:
             }
             // Create iterators for L1 files
             for (const auto& reader : ctx->l1_readers) {
-                ctx->l1_iterators.push_back(reader->NewIterator());
+                ctx->l1_iterators.push_back(
+                    reader->NewIterator(MaxHybridTime(), /*max time to include all versions*/
+                                        SSTableReader::VersionBehavior::AllVersions));  // Get all versions for merging
                 ctx->l1_iterators.back()->SeekToFirst();
             }
         }
@@ -456,36 +462,32 @@ private:
                 break;  // All iterators exhausted
             }
 
-            // Find latest version for current key
-            common::HybridTime latest_version = common::InvalidHybridTime();
-            common::DataChunk latest_value;
+            // Collect all versions for current key
+            std::vector<std::pair<common::HybridTime, common::DataChunk>> versions;
 
             // Check L0 iterators first (they have newer versions)
             for (const auto& iter : iterators) {
                 if (iter->Valid() && iter->key() == current_key) {
-                    if (iter->version() > latest_version) {
-                        latest_version = iter->version();
-                        latest_value = iter->value();
-                    }
+                    versions.emplace_back(iter->version(), iter->value());
                 }
             }
 
-            // Check L1 iterators only if we haven't found a version in L0
-            if (latest_version == common::InvalidHybridTime()) {
-                for (const auto& iter : l1_iterators) {
-                    if (iter->Valid() && iter->key() == current_key) {
-                        if (iter->version() > latest_version) {
-                            latest_version = iter->version();
-                            latest_value = iter->value();
-                        }
-                    }
+            // Check L1 iterators
+            for (const auto& iter : l1_iterators) {
+                if (iter->Valid() && iter->key() == current_key) {
+                    versions.emplace_back(iter->version(), iter->value());
                 }
             }
 
-            // Write to target file
-            auto add_result = writer.Add(current_key, latest_value, latest_version);
-            if (!add_result.ok()) {
-                return common::Result<bool>::failure(add_result.error());
+            // Sort versions by timestamp (newest first)
+            std::sort(versions.begin(), versions.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+
+            // Write all versions to target file
+            for (const auto& [version, value] : versions) {
+                auto add_result = writer.Add(current_key, value, version);
+                if (!add_result.ok()) {
+                    return common::Result<bool>::failure(add_result.error());
+                }
             }
 
             // Advance iterators past current key
@@ -704,8 +706,8 @@ SSTableManager::SSTableManager(std::shared_ptr<common::IAppendOnlyFileSystem> fs
 
 SSTableManager::~SSTableManager() = default;
 
-common::Result<common::DataChunk> SSTableManager::Get(const std::string& key) {
-    return impl_->Get(key);
+common::Result<common::DataChunk> SSTableManager::Get(const std::string& key, common::HybridTime version) {
+    return impl_->Get(key, version);
 }
 
 common::Result<FileInfo> SSTableManager::CreateSSTableFromMemTable(const MemTable& memtable) {

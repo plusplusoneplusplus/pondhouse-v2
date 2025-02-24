@@ -185,7 +185,7 @@ public:
     }
 
     common::Result<common::DataChunk> Get(const std::string& key,
-                                          common::HybridTime version = common::MinHybridTime()) {
+                                          common::HybridTime version = common::MaxHybridTime()) {
         if (file_handle_ == common::INVALID_HANDLE) {
             return common::Result<common::DataChunk>::failure(common::ErrorCode::InvalidOperation, "Reader not opened");
         }
@@ -222,7 +222,6 @@ public:
 
         // Track the best matching version found so far
         common::DataChunk best_value;
-        bool found_any = false;
 
         // Iterate through data block entries
         while (pos + DataBlockEntry::kHeaderSize <= block_data.Size() - BlockFooter::kFooterSize) {
@@ -247,18 +246,10 @@ public:
 
             if (current_key.user_key() == key) {
                 // Found matching key
-                if (current_key.version() == version) {
+                if (current_key.version() <= version) {
                     // If no specific version requested or exact version match, return immediately
                     const uint8_t* value_ptr = block_data.Data() + pos + DataBlockEntry::kHeaderSize + entry.key_length;
                     return common::Result<common::DataChunk>::success(common::DataChunk(value_ptr, entry.value_length));
-                } else {
-                    // If no specific version requested, track the newest version seen
-                    if (!found_any || current_key.version() > version) {
-                        const uint8_t* value_ptr =
-                            block_data.Data() + pos + DataBlockEntry::kHeaderSize + entry.key_length;
-                        best_value = common::DataChunk(value_ptr, entry.value_length);
-                        found_any = true;
-                    }
                 }
             } else if (current_key.user_key() > key) {
                 // Gone past the key we're looking for
@@ -266,10 +257,6 @@ public:
             }
 
             pos += DataBlockEntry::kHeaderSize + entry.key_length + entry.value_length;
-        }
-
-        if (found_any) {
-            return common::Result<common::DataChunk>::success(best_value);
         }
 
         // Key not found
@@ -420,7 +407,7 @@ common::Result<bool> SSTableReader::Open() {
 }
 
 common::Result<common::DataChunk> SSTableReader::Get(const std::string& key,
-                                                     common::HybridTime version /*= common::MinHybridTime()*/) {
+                                                     common::HybridTime version /*= common::MaxHybridTime()*/) {
     return impl_->Get(key, version);
 }
 
@@ -466,8 +453,25 @@ size_t SSTableReader::GetBytesRead() const {
 
 class SSTableReader::Iterator::Impl {
 public:
-    Impl(SSTableReader* reader, common::HybridTime read_time, bool seek_to_first = true)
-        : reader_(reader), read_time_(read_time), valid_(false), current_block_idx_(0), block_pos_(0) {
+    // Define VersionInfo struct as a member of Impl
+    struct VersionInfo {
+        size_t block_idx;
+        size_t block_pos;
+        common::DataChunk value;
+        common::HybridTime version;
+    };
+
+    Impl(SSTableReader* reader,
+         common::HybridTime read_time,
+         VersionBehavior version_behavior,
+         bool seek_to_first = true)
+        : reader_(reader),
+          read_time_(read_time),
+          version_behavior_(version_behavior),
+          valid_(false),
+          current_block_idx_(0),
+          block_pos_(0),
+          current_version_idx_(0) {
         if (seek_to_first) {
             SeekToFirst();
         }
@@ -521,7 +525,18 @@ public:
                 AdvanceToNextValidEntry();
                 return;
             }
-            block_pos_ += DataBlockEntry::kHeaderSize + current_entry_.key_length + current_entry_.value_length;
+            AdvanceToNextBlockPosition();
+        }
+
+        // If we didn't find the key in current block, try next block
+        if (current_block_idx_ + 1 < reader_->impl_->index_entries_.size()) {
+            current_block_idx_++;
+            block_pos_ = 0;
+            if (LoadBlock(current_block_idx_) && ParseCurrentEntry()) {
+                valid_ = true;
+                AdvanceToNextValidEntry();
+                return;
+            }
         }
         valid_ = false;
     }
@@ -531,10 +546,17 @@ public:
             return false;
         }
 
+        if (version_behavior_ == VersionBehavior::AllVersions && current_version_idx_ < visible_versions_.size() - 1) {
+            // If we're iterating all versions and have more versions of current key
+            current_version_idx_++;
+            RestoreVersion(current_version_idx_);
+            return true;
+        }
+
         // Save current key to detect key changes
         const std::string current_key = current_internal_key_.user_key();
 
-        // Skip all remaining versions of the current key since we already have the best version
+        // Skip all remaining versions of the current key since we've processed them
         while (true) {
             AdvanceToNextBlockPosition();
 
@@ -564,8 +586,10 @@ public:
             }
         }
 
-        // Now we're at a new key, find its best valid version
+        // Now we're at a new key, find its valid version(s)
         valid_ = true;
+        current_version_idx_ = 0;
+        visible_versions_.clear();
         AdvanceToNextValidEntry();
         return valid_;
     }
@@ -659,51 +683,85 @@ private:
         return true;
     }
 
-    void AdvanceToNextValidEntry() {
-        common::HybridTime best_version = common::InvalidHybridTime();
-        size_t best_version_pos = 0;
-        common::DataChunk best_value;
-        bool found_valid_entry = false;
+    void RestoreVersion(size_t version_idx) {
+        const auto& version_info = visible_versions_[version_idx];
+        if (current_block_idx_ != version_info.block_idx) {
+            current_block_idx_ = version_info.block_idx;
+            LoadBlock(current_block_idx_);
+        }
+        block_pos_ = version_info.block_pos;
+        current_entry_value_ = version_info.value;
+        ParseCurrentEntry();
+    }
 
-        while (valid_) {
-            // Visibility check
+    void AdvanceToNextValidEntry() {
+        const std::string current_key = current_internal_key_.user_key();
+        bool found_valid_version = false;
+        visible_versions_.clear();
+
+        // Keep track of our starting position in case we need to revert
+        const size_t start_block_idx = current_block_idx_;
+        const size_t start_block_pos = block_pos_;
+
+        while (true) {
+            // Check if current version is visible
             if (current_internal_key_.version() <= read_time_) {
-                // Take first visible version we find
-                best_version_pos = block_pos_;
-                best_value = current_entry_value_;
-                found_valid_entry = true;
-                break;
+                found_valid_version = true;
+                visible_versions_.push_back(
+                    VersionInfo{current_block_idx_, block_pos_, current_entry_value_, current_internal_key_.version()});
             }
 
-            // Save current key
-            const std::string next_key = current_internal_key_.user_key();
-
-            // Advance to next entry
+            // Try to advance to next entry
             AdvanceToNextBlockPosition();
+            if (!ParseCurrentEntry() || current_internal_key_.user_key() != current_key) {
+                // We've either hit the end of the block or found a different key
+                if (found_valid_version) {
+                    // Sort versions by timestamp (newest first)
+                    std::sort(visible_versions_.begin(), visible_versions_.end(), [](const auto& a, const auto& b) {
+                        return a.version > b.version;
+                    });
 
-            if (!ParseCurrentEntry() || current_internal_key_.user_key() != next_key) {
-                if (found_valid_entry) {
-                    block_pos_ = best_version_pos;
-                    current_entry_value_ = std::move(best_value);
+                    // If we only want latest version, clear all but the first
+                    if (version_behavior_ == VersionBehavior::LatestOnly && !visible_versions_.empty()) {
+                        visible_versions_.resize(1);
+                    }
+
+                    // Restore to the first version position
+                    current_version_idx_ = 0;
+                    RestoreVersion(0);
                     valid_ = true;
                     return;
                 }
-                found_valid_entry = false;
+
+                // If we hit end of block, try next block
+                if (!ParseCurrentEntry() && current_block_idx_ + 1 < reader_->impl_->index_entries_.size()) {
+                    current_block_idx_++;
+                    block_pos_ = 0;
+                    if (!LoadBlock(current_block_idx_) || !ParseCurrentEntry()
+                        || current_internal_key_.user_key() != current_key) {
+                        break;  // Either failed to load block or found different key
+                    }
+                    continue;  // Continue checking versions in next block
+                }
+                break;  // No more versions to check
             }
         }
 
-        if (found_valid_entry) {
-            block_pos_ = best_version_pos;
-            current_entry_value_ = std::move(best_value);
-            valid_ = true;
-            return;
+        // If we get here without finding a valid version, restore to start position and mark as invalid
+        if (!found_valid_version) {
+            if (current_block_idx_ != start_block_idx) {
+                current_block_idx_ = start_block_idx;
+                LoadBlock(current_block_idx_);
+            }
+            block_pos_ = start_block_pos;
+            ParseCurrentEntry();
+            valid_ = false;
         }
-
-        valid_ = false;
     }
 
     SSTableReader* reader_;
     common::HybridTime read_time_;
+    VersionBehavior version_behavior_;
     bool valid_;
     size_t current_block_idx_;
     common::DataChunk current_block_;
@@ -711,12 +769,17 @@ private:
     DataBlockEntry current_entry_;
     InternalKey current_internal_key_;
     common::DataChunk current_entry_value_;
+    std::vector<VersionInfo> visible_versions_;
+    size_t current_version_idx_;
 };
 
 // Iterator implementation
-SSTableReader::Iterator::Iterator(SSTableReader* reader, common::HybridTime read_time, bool seek_to_first)
+SSTableReader::Iterator::Iterator(SSTableReader* reader,
+                                  common::HybridTime read_time,
+                                  VersionBehavior version_behavior,
+                                  bool seek_to_first)
     : common::SnapshotIterator<std::string, common::DataChunk>(read_time),
-      impl_(std::make_unique<Impl>(reader, read_time, seek_to_first)) {}
+      impl_(std::make_unique<Impl>(reader, read_time, version_behavior, seek_to_first)) {}
 
 SSTableReader::Iterator::~Iterator() = default;
 
@@ -759,17 +822,17 @@ void SSTableReader::Iterator::Seek(const std::string& target) {
     impl_->Seek(target);
 }
 
-std::unique_ptr<SSTableReader::Iterator> SSTableReader::NewIterator(common::HybridTime read_time) {
-    return std::make_unique<Iterator>(this, read_time);
+std::unique_ptr<SSTableReader::Iterator> SSTableReader::NewIterator(common::HybridTime read_time,
+                                                                    VersionBehavior version_behavior) {
+    return std::make_unique<Iterator>(this, read_time, version_behavior, true);
 }
 
-SSTableReader::Iterator SSTableReader::begin(common::HybridTime read_time) {
-    auto iter = Iterator(this, read_time);
-    return iter;
+SSTableReader::Iterator SSTableReader::begin(common::HybridTime read_time, VersionBehavior version_behavior) {
+    return Iterator(this, read_time, version_behavior, true);
 }
 
 SSTableReader::Iterator SSTableReader::end() {
-    return Iterator(this, common::MaxHybridTime(), false);  // Don't seek, create invalid iterator
+    return Iterator(this, common::MaxHybridTime(), VersionBehavior::LatestOnly, false);
 }
 
 }  // namespace pond::kv

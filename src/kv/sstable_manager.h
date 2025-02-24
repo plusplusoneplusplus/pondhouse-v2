@@ -93,9 +93,11 @@ public:
      * Get a value by key from the SSTables.
      * Searches through levels in order.
      * @param key The key to look up
+     * @param version The version to use for the read
      * @return Result<DataChunk> containing the value if found
      */
-    [[nodiscard]] common::Result<common::DataChunk> Get(const std::string& key);
+    [[nodiscard]] common::Result<common::DataChunk> Get(const std::string& key,
+                                                        common::HybridTime version = common::MaxHybridTime());
 
     /**
      * Create a new SSTable from a MemTable.

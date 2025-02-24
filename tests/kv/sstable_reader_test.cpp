@@ -31,7 +31,7 @@ protected:
         }
 
         for (const auto& [key, value] : entries) {
-            VERIFY_RESULT(writer.Add(key, stringToChunk(value)));
+            VERIFY_RESULT(writer.Add(key, stringToChunk(value), GetNextHybridTime()));
         }
         VERIFY_RESULT(writer.Finish());
     }
@@ -1075,6 +1075,148 @@ TEST_F(SSTableReaderTest, BytesReadTrackingLargeValues) {
 
     EXPECT_GT(random_bytes, sequential_bytes)
         << "Random access should read more bytes than sequential access due to block reads";
+}
+
+//
+// Test Setup:
+//      Create an SSTable without a bloom filter
+//      Test iterator behavior at minimum possible read time
+// Test Result:
+//      Verify iterator returns no entries at minimum time
+//
+TEST_F(SSTableReaderTest, MinReadTimeBoundary) {
+    // Create test data without bloom filter
+    std::vector<std::pair<std::string, std::string>> entries = {
+        {"key1", "value1"},
+        {"key2", "value2"},
+        {"key3", "value3"},
+    };
+    createTestSSTable("test.sst", entries, false);
+
+    // Test with minimum possible read time
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+    auto iter = reader.NewIterator(MinHybridTime());
+    iter->SeekToFirst();
+
+    // Verify no entries are visible at minimum time
+    ASSERT_FALSE(iter->Valid()) << "Should find no entries at min read time";
+
+    // Test boundary conditions
+    iter->Next();
+    ASSERT_FALSE(iter->Valid()) << "Next() should remain invalid";
+
+    // Verify seeking to specific keys also fails
+    iter->Seek("key1");
+    ASSERT_FALSE(iter->Valid()) << "Seek(key1) should not find anything";
+
+    iter->Seek("key2");
+    ASSERT_FALSE(iter->Valid()) << "Seek(key2) should not find anything";
+
+    // Verify iterator doesn't get stuck in infinite loop
+    int safety_counter = 0;
+    for (iter->SeekToFirst(); iter->Valid() && safety_counter < 1000; iter->Next()) {
+        safety_counter++;
+    }
+    ASSERT_LT(safety_counter, 1000) << "Iterator entered possible infinite loop";
+    ASSERT_FALSE(iter->Valid()) << "Iterator should remain invalid after loop";
+}
+
+//
+// Test Setup:
+//      Create an SSTable with multiple versions of keys
+//      Test iteration with AllVersions behavior
+// Test Result:
+//      Verify all versions are returned in descending order
+//      Confirm proper version visibility and ordering
+//
+TEST_F(SSTableReaderTest, AllVersionsIterator) {
+    // Create test data with multiple versions of keys
+    SSTableWriter writer(fs_, "test.sst");
+
+    HybridTime t1(100);
+    HybridTime t2(200);
+    HybridTime t3(300);
+
+    // Add entries with different versions
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v3"), t3));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t2));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1));
+    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v1"), t1));
+    VERIFY_RESULT(writer.Finish());
+
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+
+    // Test reading with AllVersions behavior
+    auto iter = reader.NewIterator(MaxHybridTime(), SSTableReader::VersionBehavior::AllVersions);
+
+    // Check key1's versions (should see all three versions)
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key1");
+    EXPECT_EQ(iter->value().ToString(), "value1_v3");
+    EXPECT_EQ(iter->version(), t3);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key1");
+    EXPECT_EQ(iter->value().ToString(), "value1_v2");
+    EXPECT_EQ(iter->version(), t2);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key1");
+    EXPECT_EQ(iter->value().ToString(), "value1_v1");
+    EXPECT_EQ(iter->version(), t1);
+
+    // Check key2's versions (should see both versions)
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key2");
+    EXPECT_EQ(iter->value().ToString(), "value2_v2");
+    EXPECT_EQ(iter->version(), t2);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key2");
+    EXPECT_EQ(iter->value().ToString(), "value2_v1");
+    EXPECT_EQ(iter->version(), t1);
+
+    // Check key3's version (only one version)
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key3");
+    EXPECT_EQ(iter->value().ToString(), "value3_v1");
+    EXPECT_EQ(iter->version(), t1);
+
+    iter->Next();
+    EXPECT_FALSE(iter->Valid());
+
+    // Test seeking behavior with AllVersions
+    iter->Seek("key2");
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key2");
+    EXPECT_EQ(iter->value().ToString(), "value2_v2");
+    EXPECT_EQ(iter->version(), t2);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key2");
+    EXPECT_EQ(iter->value().ToString(), "value2_v1");
+    EXPECT_EQ(iter->version(), t1);
+
+    // Test seeking to a key with only one version
+    iter->Seek("key3");
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key3");
+    EXPECT_EQ(iter->value().ToString(), "value3_v1");
+    EXPECT_EQ(iter->version(), t1);
+
+    // Test seeking to a non-existent key
+    iter->Seek("key4");
+    EXPECT_FALSE(iter->Valid());
 }
 
 }  // namespace
