@@ -784,13 +784,13 @@ SSTableReader::Iterator::Iterator(SSTableReader* reader,
                                   common::HybridTime read_time,
                                   VersionBehavior version_behavior,
                                   bool seek_to_first)
-    : common::SnapshotIterator<std::string, common::DataChunk>(read_time),
+    : common::SnapshotIterator<std::string, common::DataChunk>(read_time, common::IteratorMode::Default),
       impl_(std::make_unique<Impl>(reader, read_time, version_behavior, seek_to_first)) {}
 
 SSTableReader::Iterator::~Iterator() = default;
 
 SSTableReader::Iterator::Iterator(const Iterator& other)
-    : common::SnapshotIterator<std::string, common::DataChunk>(other.read_time_),
+    : common::SnapshotIterator<std::string, common::DataChunk>(other.read_time_, common::IteratorMode::Default),
       impl_(std::make_unique<Impl>(*other.impl_)) {}
 
 SSTableReader::Iterator& SSTableReader::Iterator::operator=(const Iterator& other) {

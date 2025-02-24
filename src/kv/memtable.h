@@ -3,6 +3,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 #include "common/data_chunk.h"
 #include "common/result.h"
@@ -33,10 +34,16 @@ public:
     ~MemTable() = default;
 
     // Core operations
-    common::Result<void> Put(const Key& key, const RawValue& value, uint64_t txn_id);
+    common::Result<void> Put(const Key& key,
+                             const RawValue& value,
+                             uint64_t txn_id,
+                             std::optional<common::HybridTime> version = std::nullopt);
+
     common::Result<RawValue> Get(const Key& key, common::HybridTime read_time) const;
     common::Result<RawValue> GetForTxn(const Key& key, uint64_t txn_id) const;
-    common::Result<void> Delete(const Key& key, uint64_t txn_id);
+    common::Result<void> Delete(const Key& key,
+                                uint64_t txn_id,
+                                std::optional<common::HybridTime> version = std::nullopt);
 
     // Size management
     size_t ApproximateMemoryUsage() const;
@@ -46,10 +53,13 @@ public:
     // Iterator interface
     class Iterator : public common::Iterator<Key, Value> {
     public:
-        explicit Iterator(std::unique_ptr<common::Iterator<Key, Value>> iter, std::mutex& mutex)
-            : iter_(std::move(iter)), mutex_(mutex) {
+        explicit Iterator(std::unique_ptr<common::Iterator<Key, Value>> iter,
+                          std::mutex& mutex,
+                          common::IteratorMode mode)
+            : common::Iterator<Key, Value>(mode), iter_(std::move(iter)), mutex_(mutex) {
             AdvanceToValidRecord();
         }
+
         ~Iterator() override = default;
 
         void Seek(const Key& target) override {
@@ -81,7 +91,7 @@ public:
 
         bool IsTombstone() const override {
             std::lock_guard<std::mutex> lock(mutex_);
-            return iter_->IsTombstone();
+            return iter_->value()->IsDeleted();
         }
 
     private:
@@ -90,7 +100,7 @@ public:
             while (iter_->Valid()) {
                 const auto& version_chain = iter_->value();
                 // Check if the latest version is a deletion marker
-                if (!version_chain->IsDeleted()) {
+                if (!version_chain->IsDeleted() || mode_ == common::IteratorMode::IncludeTombstones) {
                     break;
                 }
                 iter_->Next();
@@ -101,7 +111,8 @@ public:
         std::mutex& mutex_;
     };
 
-    std::unique_ptr<common::Iterator<Key, Value>> NewIterator() const;
+    std::unique_ptr<common::Iterator<Key, Value>> NewIterator(
+        common::IteratorMode mode = common::IteratorMode::Default) const;
 
     const MemTableMetadata& GetMetadata() const { return metadata_; }
     MemTableMetadata& GetMetadata() { return metadata_; }
