@@ -194,6 +194,12 @@ public:
         [[nodiscard]] common::HybridTime version() const override;
 
         /**
+         * Check if the current entry is a tombstone.
+         * @return true if the entry is a tombstone, false otherwise
+         */
+        [[nodiscard]] bool IsTombstone() const override;
+
+        /**
          * Advance to the next entry.
          * Must only be called when Valid() returns true.
          * @return true if successful, false if we've reached the end

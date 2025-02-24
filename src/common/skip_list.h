@@ -165,6 +165,8 @@ public:
         }
 
         void Seek(const K& target) override { node_ = list_->findGreaterOrEqual(target, nullptr); }
+
+        bool IsTombstone() const override { return false; }
     };
 
     Iterator<K, V>* NewIterator() const { return new SkipListIterator(this); }

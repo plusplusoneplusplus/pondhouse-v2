@@ -1219,4 +1219,152 @@ TEST_F(SSTableReaderTest, AllVersionsIterator) {
     EXPECT_FALSE(iter->Valid());
 }
 
+//
+// Test Setup:
+//      Create an SSTable with multiple versions of keys including tombstones
+//      Verify that tombstones properly hide older versions
+// Test Result:
+//      Tombstones should prevent access to older versions of keys
+//      Reads at different timestamps should respect tombstones
+//
+TEST_F(SSTableReaderTest, TombstoneHandling) {
+    // Create test data with tombstones and multiple versions
+    SSTableWriter writer(fs_, "test.sst");
+
+    // Define timestamps (but add entries in reverse chronological order)
+    HybridTime t1(100);  // Oldest
+    HybridTime t2(200);
+    HybridTime t3(300);  // Newest
+
+    // Scenario 1: Write, then delete (add newest first)
+    VERIFY_RESULT(writer.Add("key1", stringToChunk(""), t2, true));            // Delete
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1, false));  // Initial write
+
+    // Scenario 2: Write, delete, then write again (add newest first)
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v3"), t3, false));  // New write
+    VERIFY_RESULT(writer.Add("key2", stringToChunk(""), t2, true));            // Delete
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1, false));  // Initial write
+
+    // Scenario 3: Multiple writes then delete (add newest first)
+    VERIFY_RESULT(writer.Add("key3", stringToChunk(""), t3, true));            // Delete
+    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v2"), t2, false));  // Update
+    VERIFY_RESULT(writer.Add("key3", stringToChunk("value3_v1"), t1, false));  // Initial write
+
+    VERIFY_RESULT(writer.Finish());
+
+    // Open reader
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+
+    // Test Scenario 1: Write then delete
+    {
+        // At t1: Should see the initial value
+        auto result = reader.Get("key1", t1);
+        ASSERT_TRUE(result.ok());
+        EXPECT_EQ(result.value().ToString(), "value1_v1");
+
+        // At t2 and after: Should see nothing due to tombstone
+        result = reader.Get("key1", t2);
+        ASSERT_FALSE(result.ok());
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+
+        result = reader.Get("key1", t3);
+        ASSERT_FALSE(result.ok());
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+    }
+
+    // Test Scenario 2: Write, delete, write again
+    {
+        // At t1: Should see initial value
+        auto result = reader.Get("key2", t1);
+        ASSERT_TRUE(result.ok());
+        EXPECT_EQ(result.value().ToString(), "value2_v1");
+
+        // At t2: Should see nothing due to tombstone
+        result = reader.Get("key2", t2);
+        ASSERT_FALSE(result.ok());
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+
+        // At t3: Should see new value
+        result = reader.Get("key2", t3);
+        ASSERT_TRUE(result.ok());
+        EXPECT_EQ(result.value().ToString(), "value2_v3");
+    }
+
+    // Test Scenario 3: Multiple writes then delete
+    {
+        // At t1: Should see first version
+        auto result = reader.Get("key3", t1);
+        ASSERT_TRUE(result.ok());
+        EXPECT_EQ(result.value().ToString(), "value3_v1");
+
+        // At t2: Should see second version
+        result = reader.Get("key3", t2);
+        ASSERT_TRUE(result.ok());
+        EXPECT_EQ(result.value().ToString(), "value3_v2");
+
+        // At t3: Should see nothing due to tombstone
+        result = reader.Get("key3", t3);
+        ASSERT_FALSE(result.ok());
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+    }
+
+    // Test iteration with AllVersions behavior
+    auto iter = reader.NewIterator(t3, SSTableReader::VersionBehavior::AllVersions);
+
+    // Check key1 versions
+    iter->Seek("key1");
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key1");
+    EXPECT_TRUE(iter->IsTombstone());  // Should see tombstone first
+    EXPECT_EQ(iter->version(), t2);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key1");
+    EXPECT_FALSE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t1);
+
+    // Move to key2
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key2");
+    EXPECT_FALSE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t3);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key2");
+    EXPECT_TRUE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t2);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key2");
+    EXPECT_FALSE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t1);
+
+    // Move to key3
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key3");
+    EXPECT_TRUE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t3);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key3");
+    EXPECT_FALSE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t2);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key3");
+    EXPECT_FALSE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t1);
+
+    iter->Next();
+    ASSERT_FALSE(iter->Valid());
+}
+
 }  // namespace

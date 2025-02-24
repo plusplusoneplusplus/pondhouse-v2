@@ -614,6 +614,8 @@ public:
         return current_internal_key_.version();
     }
 
+    bool IsTombstone() const { return current_entry_.IsTombstone(); }
+
 private:
     bool LoadBlock(size_t block_idx) {
         const auto& index_entry = reader_->impl_->index_entries_[block_idx];
@@ -824,6 +826,10 @@ void SSTableReader::Iterator::SeekToFirst() {
 
 void SSTableReader::Iterator::Seek(const std::string& target) {
     impl_->Seek(target);
+}
+
+bool SSTableReader::Iterator::IsTombstone() const {
+    return impl_->IsTombstone();
 }
 
 std::unique_ptr<SSTableReader::Iterator> SSTableReader::NewIterator(common::HybridTime read_time,

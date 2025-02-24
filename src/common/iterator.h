@@ -51,6 +51,13 @@ public:
      */
     virtual const V& value() const = 0;
 
+    /**
+     * Returns true if the current entry is a tombstone.
+     * Must only be called when Valid() returns true.
+     * @return true if the entry is a tombstone, false otherwise
+     */
+    virtual bool IsTombstone() const = 0;
+
 protected:
     Iterator() = default;
 

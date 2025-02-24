@@ -79,6 +79,11 @@ public:
             return iter_->value();
         }
 
+        bool IsTombstone() const override {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return iter_->IsTombstone();
+        }
+
     private:
         // Advances the iterator until it finds a non-deleted record or reaches the end
         void AdvanceToValidRecord() {
