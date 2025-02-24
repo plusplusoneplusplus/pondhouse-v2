@@ -107,7 +107,7 @@ public:
      * @param version_behavior Controls whether to return all versions or just the latest
      * @return A new iterator instance
      */
-    [[nodiscard]] std::unique_ptr<Iterator> NewIterator(common::HybridTime read_time = common::MaxHybridTime(),
+    [[nodiscard]] std::shared_ptr<Iterator> NewIterator(common::HybridTime read_time = common::MaxHybridTime(),
                                                         common::IteratorMode mode = common::IteratorMode::Default);
 
     /**

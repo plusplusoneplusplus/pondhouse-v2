@@ -26,7 +26,7 @@ public:
     // Helper functions for merging SSTables
     struct MergeContext {
         std::vector<std::shared_ptr<SSTableReader>> readers;
-        std::vector<std::unique_ptr<SSTableReader::Iterator>> iterators;
+        std::vector<std::shared_ptr<SSTableReader::Iterator>> iterators;
         std::vector<FileInfo> source_files;
         std::string smallest_key;
         std::string largest_key;
@@ -35,7 +35,7 @@ public:
 
         // New fields for overlapping L1 files
         std::vector<std::shared_ptr<SSTableReader>> l1_readers;
-        std::vector<std::unique_ptr<SSTableReader::Iterator>> l1_iterators;
+        std::vector<std::shared_ptr<SSTableReader::Iterator>> l1_iterators;
         std::vector<FileInfo> l1_source_files;
 
         // Delete copy constructor and assignment
@@ -71,7 +71,12 @@ public:
         LoadExistingSSTables();
     }
 
+    common::Result<std::shared_ptr<SSTableReader>> OpenSSTableReader(const std::string& file_name) {
+        return std::make_shared<SSTableReader>(fs_, file_name);
+    }
+
     common::Result<common::DataChunk> Get(const std::string& key, common::HybridTime version) {
+        using ReturnType = common::Result<common::DataChunk>;
         std::shared_lock<std::shared_mutex> lock(mutex_);
 
         if (sstables_.empty()) {
@@ -89,11 +94,12 @@ public:
 
             // Physical read required
             stats_.physical_reads++;
-            auto reader = std::make_shared<SSTableReader>(fs_, GetTablePath(0, *it));
+            auto reader_result = OpenSSTableReader(GetTablePath(0, *it));
+            RETURN_IF_ERROR_T(ReturnType, reader_result);
+
+            auto reader = std::move(reader_result).value();
             auto open_result = reader->Open();
-            if (!open_result.ok()) {
-                continue;
-            }
+            RETURN_IF_ERROR_T(ReturnType, open_result);
 
             auto result = reader->Get(key, version);
             if (result.ok()) {
@@ -116,11 +122,12 @@ public:
 
                 // Physical read required
                 stats_.physical_reads++;
-                auto reader = std::make_shared<SSTableReader>(fs_, GetTablePath(level, file_number));
+                auto reader_result = OpenSSTableReader(GetTablePath(level, file_number));
+                RETURN_IF_ERROR_T(ReturnType, reader_result);
+
+                auto reader = std::move(reader_result).value();
                 auto open_result = reader->Open();
-                if (!open_result.ok()) {
-                    continue;
-                }
+                RETURN_IF_ERROR_T(ReturnType, open_result);
 
                 auto result = reader->Get(key, version);
                 if (result.ok()) {
@@ -314,6 +321,46 @@ public:
     const CompactionMetrics& GetCompactionMetrics() const { return metrics_; }
     void ResetCompactionMetrics() { metrics_.Reset(); }
 
+    common::Result<std::shared_ptr<Iterator>> NewSnapshotIterator(common::HybridTime read_time,
+                                                                  common::IteratorMode mode) {
+        using ReturnType = common::Result<std::shared_ptr<Iterator>>;
+
+        // Get all SSTable readers from L0, in reverse order
+        std::vector<std::shared_ptr<SSTableReader>> l0_readers;
+        for (auto it = sstables_[0].rbegin(); it != sstables_[0].rend(); ++it) {
+            auto reader_result = OpenSSTableReader(GetTablePath(0, *it));
+            RETURN_IF_ERROR_T(ReturnType, reader_result);
+
+            auto reader = std::move(reader_result).value();
+            auto open_result = reader->Open();
+            RETURN_IF_ERROR_T(ReturnType, open_result);
+
+            l0_readers.push_back(std::move(reader));
+        }
+
+        // Get all SSTable readers from other levels
+        std::vector<std::vector<std::shared_ptr<SSTableReader>>> level_readers;
+        for (size_t level = 1; level < sstables_.size(); level++) {
+            std::vector<std::shared_ptr<SSTableReader>> readers;
+            for (const auto& file_number : sstables_[level]) {
+                auto reader_result = OpenSSTableReader(GetTablePath(level, file_number));
+                RETURN_IF_ERROR_T(ReturnType, reader_result);
+
+                auto reader = std::move(reader_result).value();
+                auto open_result = reader->Open();
+                RETURN_IF_ERROR_T(ReturnType, open_result);
+
+                readers.push_back(std::move(reader));
+            }
+            if (!readers.empty()) {
+                level_readers.push_back(std::move(readers));
+            }
+        }
+
+        return ReturnType::success(std::make_shared<SSTableSnapshotIterator>(
+            std::move(l0_readers), std::move(level_readers), read_time, mode));
+    }
+
 private:
     // Initialize merge context with readers and iterators
     [[nodiscard]] common::Result<std::unique_ptr<MergeContext>> InitializeMergeContext(
@@ -436,8 +483,8 @@ private:
     // Merge multiple SSTable iterators into a single SSTable
     [[nodiscard]] common::Result<bool> MergeIterators(
         SSTableWriter& writer,
-        std::vector<std::unique_ptr<SSTableReader::Iterator>>& iterators,
-        std::vector<std::unique_ptr<SSTableReader::Iterator>>& l1_iterators) {
+        std::vector<std::shared_ptr<SSTableReader::Iterator>>& iterators,
+        std::vector<std::shared_ptr<SSTableReader::Iterator>>& l1_iterators) {
         while (true) {
             // Find smallest key among all iterators
             std::string current_key;
@@ -749,6 +796,68 @@ const CompactionMetrics& SSTableManager::GetCompactionMetrics() const {
 
 void SSTableManager::ResetCompactionMetrics() {
     impl_->ResetCompactionMetrics();
+}
+
+SSTableSnapshotIterator::SSTableSnapshotIterator(std::vector<std::shared_ptr<SSTableReader>> l0_readers,
+                                                 std::vector<std::vector<std::shared_ptr<SSTableReader>>> level_readers,
+                                                 common::HybridTime read_time,
+                                                 common::IteratorMode mode)
+    : SnapshotIterator(read_time, mode), l0_readers_(std::move(l0_readers)), level_readers_(std::move(level_readers)) {
+    InitializeIterators();
+}
+
+void SSTableSnapshotIterator::InitializeIterators() {
+    // Initialize L0 iterators
+    for (const auto& reader : l0_readers_) {
+        auto iter = reader->NewIterator(read_time_, mode_);
+        l0_iters_.push_back(iter);
+    }
+
+    // Initialize level iterators
+    level_iters_.resize(level_readers_.size());
+    for (size_t level = 0; level < level_readers_.size(); level++) {
+        for (const auto& reader : level_readers_[level]) {
+            auto iter = reader->NewIterator(read_time_, mode_);
+            level_iters_[level].push_back(iter);
+        }
+    }
+
+    // Create UnionIterator
+    union_iter_ = std::make_unique<common::UnionIterator<std::string, common::DataChunk>>(
+        l0_iters_, level_iters_, read_time_, mode_);
+}
+
+void SSTableSnapshotIterator::Seek(const std::string& target) {
+    union_iter_->Seek(target);
+}
+
+void SSTableSnapshotIterator::Next() {
+    union_iter_->Next();
+}
+
+bool SSTableSnapshotIterator::Valid() const {
+    return union_iter_->Valid();
+}
+
+const std::string& SSTableSnapshotIterator::key() const {
+    return union_iter_->key();
+}
+
+const common::DataChunk& SSTableSnapshotIterator::value() const {
+    return union_iter_->value();
+}
+
+bool SSTableSnapshotIterator::IsTombstone() const {
+    return union_iter_->IsTombstone();
+}
+
+common::HybridTime SSTableSnapshotIterator::version() const {
+    return union_iter_->version();
+}
+
+common::Result<std::shared_ptr<SSTableManager::Iterator>> SSTableManager::NewSnapshotIterator(
+    common::HybridTime read_time, common::IteratorMode mode) {
+    return impl_->NewSnapshotIterator(read_time, mode);
 }
 
 }  // namespace pond::kv

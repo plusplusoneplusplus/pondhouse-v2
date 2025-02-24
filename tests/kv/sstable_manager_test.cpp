@@ -1315,4 +1315,240 @@ TEST_F(SSTableManagerTest, MergeWithTombstones) {
     }
 }
 
+//
+// Test Setup:
+//      Create multiple SSTables across different levels
+//      Test snapshot iterator's ability to merge and iterate over all data
+// Test Result:
+//      Verify correct key ordering and version visibility
+//      Confirm proper handling of overlapping keys and tombstones
+//
+TEST_F(SSTableManagerTest, SnapshotIteratorBasic) {
+    // Create L0 files with overlapping keys and versions
+    // Time moves forward: t100 -> t110 -> t120 -> t130
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Put("key1", DataChunk::FromString("value1_v1"), 0, HybridTime(100)));
+        VERIFY_RESULT(memtable->Put("key2", DataChunk::FromString("value2_v1"), 0, HybridTime(110)));
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Put("key1", DataChunk::FromString("value1_v2"), 0, HybridTime(120)));
+        VERIFY_RESULT(memtable->Put("key3", DataChunk::FromString("value3_v1"), 0, HybridTime(130)));
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    // Create L1 files (merge some data to L1)
+    // Time continues: t140 -> t150
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Put("key4", DataChunk::FromString("value4"), 0, HybridTime(140)));
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+        VERIFY_RESULT(manager_->MergeL0ToL1());
+    }
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Put("key5", DataChunk::FromString("value5"), 0, HybridTime(150)));
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+        VERIFY_RESULT(manager_->MergeL0ToL1());
+    }
+
+    // Create snapshot iterator at t200 (should see all versions)
+    auto iter_result = manager_->NewSnapshotIterator(HybridTime(200));
+    VERIFY_RESULT(iter_result);
+    auto& iter = *iter_result.value();
+
+    // Verify iteration order and values
+    iter.Seek("");
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key1");
+    EXPECT_EQ(iter.value().ToString(), "value1_v2");  // Should get newer version
+    EXPECT_EQ(iter.version(), HybridTime(120));
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key2");
+    EXPECT_EQ(iter.value().ToString(), "value2_v1");
+    EXPECT_EQ(iter.version(), HybridTime(110));
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key3");
+    EXPECT_EQ(iter.value().ToString(), "value3_v1");
+    EXPECT_EQ(iter.version(), HybridTime(130));
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key4");
+    EXPECT_EQ(iter.value().ToString(), "value4");
+    EXPECT_EQ(iter.version(), HybridTime(140));
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key5");
+    EXPECT_EQ(iter.value().ToString(), "value5");
+    EXPECT_EQ(iter.version(), HybridTime(150));
+
+    iter.Next();
+    ASSERT_FALSE(iter.Valid());
+}
+
+//
+// Test Setup:
+//      Test snapshot iterator with tombstones and different modes
+// Test Result:
+//      Verify correct handling of tombstones in different modes
+//      Confirm proper version visibility with tombstones
+//
+TEST_F(SSTableManagerTest, SnapshotIteratorTombstones) {
+    // Create L0 files with tombstones
+    // Time moves forward: t100 -> t110 -> t120
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Put("key1", DataChunk::FromString("value1_v1"), 0, HybridTime(100)));
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Delete("key1", 0, HybridTime(110)));  // Tombstone
+        VERIFY_RESULT(memtable->Put("key2", DataChunk::FromString("value2_v1"), 0, HybridTime(120)));
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    // Create L1 file with tombstone
+    // Time continues: t130
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Delete("key3", 0, HybridTime(130)));  // Tombstone
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+        VERIFY_RESULT(manager_->MergeL0ToL1());
+    }
+
+    // Test with default mode at t200 (should skip tombstones)
+    {
+        auto iter_result = manager_->NewSnapshotIterator(HybridTime(200));
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");  // Should skip key1 (tombstone)
+        EXPECT_EQ(iter.value().ToString(), "value2_v1");
+        EXPECT_EQ(iter.version(), HybridTime(120));
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());  // Should skip key3 (tombstone)
+    }
+
+    // Test with IncludeTombstones mode at t200
+    {
+        auto iter_result = manager_->NewSnapshotIterator(HybridTime(200), IteratorMode::IncludeTombstones);
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_TRUE(iter.IsTombstone());
+        EXPECT_EQ(iter.version(), HybridTime(110));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_FALSE(iter.IsTombstone());
+        EXPECT_EQ(iter.version(), HybridTime(120));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key3");
+        EXPECT_TRUE(iter.IsTombstone());
+        EXPECT_EQ(iter.version(), HybridTime(130));
+    }
+}
+
+//
+// Test Setup:
+//      Test snapshot iterator with version visibility at different read times
+// Test Result:
+//      Verify correct version visibility at different timestamps
+//      Confirm proper handling of version ordering
+//
+TEST_F(SSTableManagerTest, SnapshotIteratorVersionVisibility) {
+    // Create data with multiple versions
+    // Time moves forward: t100 -> t110 -> t120 -> t130 -> t140 -> t150
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Put("key1", DataChunk::FromString("value1_v1"), 0, HybridTime(100)));
+        VERIFY_RESULT(memtable->Put("key2", DataChunk::FromString("value2_v1"), 0, HybridTime(110)));
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Put("key1", DataChunk::FromString("value1_v2"), 0, HybridTime(120)));
+        VERIFY_RESULT(memtable->Delete("key2", 0, HybridTime(130)));  // Tombstone
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Put("key1", DataChunk::FromString("value1_v3"), 0, HybridTime(140)));
+        VERIFY_RESULT(memtable->Put("key2", DataChunk::FromString("value2_v2"), 0, HybridTime(150)));
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    // Test at t115 (should see v1 versions)
+    {
+        auto iter_result = manager_->NewSnapshotIterator(HybridTime(115));
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v1");
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.value().ToString(), "value2_v1");
+        EXPECT_EQ(iter.version(), HybridTime(110));
+    }
+
+    // Test at t135 (should see v2 version of key1, but key2 should be deleted)
+    {
+        auto iter_result = manager_->NewSnapshotIterator(HybridTime(135));
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v2");
+        EXPECT_EQ(iter.version(), HybridTime(120));
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());  // key2 should be hidden by tombstone
+    }
+
+    // Test at t200 (should see latest versions)
+    {
+        auto iter_result = manager_->NewSnapshotIterator(HybridTime(200));
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v3");
+        EXPECT_EQ(iter.version(), HybridTime(140));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.value().ToString(), "value2_v2");
+        EXPECT_EQ(iter.version(), HybridTime(150));
+    }
+}
+
 }  // namespace

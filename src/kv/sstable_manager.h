@@ -10,8 +10,10 @@
 
 #include "common/append_only_fs.h"
 #include "common/data_chunk.h"
+#include "common/iterator.h"
 #include "common/lru_cache.h"
 #include "common/result.h"
+#include "common/time.h"
 #include "kv/compaction_metrics.h"
 #include "kv/memtable.h"
 #include "kv/sstable_cache.h"
@@ -32,6 +34,8 @@ namespace pond::kv {
  */
 class SSTableManager {
 public:
+    using Iterator = common::SnapshotIterator<std::string, common::DataChunk>;
+
     // Configuration for the manager
     struct Config {
         size_t block_cache_size = 100 * 1024 * 1024;  // 100MB default
@@ -145,6 +149,10 @@ public:
     const CompactionMetrics& GetCompactionMetrics() const;
     void ResetCompactionMetrics();
 
+    // Create a snapshot iterator that merges all SSTables
+    [[nodiscard]] common::Result<std::shared_ptr<Iterator>> NewSnapshotIterator(
+        common::HybridTime read_time, common::IteratorMode mode = common::IteratorMode::Default);
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
@@ -238,6 +246,32 @@ public:
 private:
     mutable std::shared_mutex mutex_;
     std::unordered_map<size_t, std::unordered_map<size_t, SSTableMetadata>> metadata_;
+};
+
+// SSTableSnapshotIterator combines multiple SSTable iterators using UnionIterator
+class SSTableSnapshotIterator : public common::SnapshotIterator<std::string, common::DataChunk> {
+public:
+    SSTableSnapshotIterator(std::vector<std::shared_ptr<SSTableReader>> l0_readers,
+                            std::vector<std::vector<std::shared_ptr<SSTableReader>>> level_readers,
+                            common::HybridTime read_time,
+                            common::IteratorMode mode);
+
+    void Seek(const std::string& target) override;
+    void Next() override;
+    bool Valid() const override;
+    const std::string& key() const override;
+    const common::DataChunk& value() const override;
+    bool IsTombstone() const override;
+    common::HybridTime version() const override;
+
+private:
+    void InitializeIterators();
+
+    std::vector<std::shared_ptr<SSTableReader>> l0_readers_;
+    std::vector<std::vector<std::shared_ptr<SSTableReader>>> level_readers_;
+    std::vector<std::shared_ptr<common::SnapshotIterator<std::string, common::DataChunk>>> l0_iters_;
+    std::vector<std::vector<std::shared_ptr<common::SnapshotIterator<std::string, common::DataChunk>>>> level_iters_;
+    std::unique_ptr<common::UnionIterator<std::string, common::DataChunk>> union_iter_;
 };
 
 }  // namespace pond::kv

@@ -831,9 +831,9 @@ bool SSTableReader::Iterator::IsTombstone() const {
     return impl_->IsTombstone();
 }
 
-std::unique_ptr<SSTableReader::Iterator> SSTableReader::NewIterator(common::HybridTime read_time,
+std::shared_ptr<SSTableReader::Iterator> SSTableReader::NewIterator(common::HybridTime read_time,
                                                                     common::IteratorMode mode) {
-    return std::make_unique<Iterator>(this, read_time, mode, true);
+    return std::make_shared<Iterator>(this, read_time, mode, true);
 }
 
 SSTableReader::Iterator SSTableReader::begin(common::HybridTime read_time, common::IteratorMode mode) {
