@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package pond.proto;
+
+// Service definition for the Pond database
+service PondService {
+  // Get a value by key
+  rpc Get(GetRequest) returns (GetResponse) {}
+  
+  // Put a key-value pair
+  rpc Put(PutRequest) returns (PutResponse) {}
+  
+  // Delete a key
+  rpc Delete(DeleteRequest) returns (DeleteResponse) {}
+  
+  // Scan a range of keys
+  rpc Scan(ScanRequest) returns (stream ScanResponse) {}
+}
+
+// Request message for Get operation
+message GetRequest {
+  bytes key = 1;
+}
+
+// Response message for Get operation
+message GetResponse {
+  bool found = 1;
+  bytes value = 2;
+  string error = 3;
+}
+
+// Request message for Put operation
+message PutRequest {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+// Response message for Put operation
+message PutResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// Request message for Delete operation
+message DeleteRequest {
+  bytes key = 1;
+}
+
+// Response message for Delete operation
+message DeleteResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// Request message for Scan operation
+message ScanRequest {
+  bytes start_key = 1;
+  bytes end_key = 2;
+  int32 limit = 3;
+}
+
+// Response message for Scan operation
+message ScanResponse {
+  bytes key = 1;
+  bytes value = 2;
+  bool has_more = 3;
+  string error = 4;
+} 
