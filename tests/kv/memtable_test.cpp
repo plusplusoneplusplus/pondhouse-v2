@@ -501,4 +501,125 @@ TEST_F(MemTableTest, IteratorWithIncludeTombstones) {
     EXPECT_TRUE(it->IsTombstone());
 }
 
+TEST_F(MemTableTest, SnapshotIteratorBasic) {
+    auto txn1 = NextTxnId();
+    auto txn2 = NextTxnId();
+
+    // Create initial versions at t100
+    auto t100 = common::HybridTime(100);
+    VERIFY_RESULT(table->Put("key1", CreateTestValue("value1_v1"), txn1, t100));
+    VERIFY_RESULT(table->Put("key2", CreateTestValue("value2_v1"), txn1, t100));
+    VERIFY_RESULT(table->Put("key3", CreateTestValue("value3_v1"), txn1, t100));
+
+    // Create second versions at t110
+    auto t110 = common::HybridTime(110);
+    VERIFY_RESULT(table->Put("key1", CreateTestValue("value1_v2"), txn2, t110));
+    VERIFY_RESULT(table->Put("key2", CreateTestValue("value2_v2"), txn2, t110));
+
+    // Test snapshot at t105 (should see v1 versions)
+    {
+        auto it = table->NewSnapshotIterator(common::HybridTime(105));
+
+        it->Seek("");
+        ASSERT_TRUE(it->Valid());
+        EXPECT_EQ(it->key(), "key1");
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(it->value().Data()), it->value().Size()), "value1_v1");
+        EXPECT_EQ(it->version(), t100);
+
+        it->Next();
+        ASSERT_TRUE(it->Valid());
+        EXPECT_EQ(it->key(), "key2");
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(it->value().Data()), it->value().Size()), "value2_v1");
+        EXPECT_EQ(it->version(), t100);
+
+        it->Next();
+        ASSERT_TRUE(it->Valid());
+        EXPECT_EQ(it->key(), "key3");
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(it->value().Data()), it->value().Size()), "value3_v1");
+        EXPECT_EQ(it->version(), t100);
+    }
+
+    // Test snapshot at t115 (should see v2 versions where available)
+    {
+        auto it = table->NewSnapshotIterator(common::HybridTime(115));
+
+        it->Seek("");
+        ASSERT_TRUE(it->Valid());
+        EXPECT_EQ(it->key(), "key1");
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(it->value().Data()), it->value().Size()), "value1_v2");
+        EXPECT_EQ(it->version(), t110);
+
+        it->Next();
+        ASSERT_TRUE(it->Valid());
+        EXPECT_EQ(it->key(), "key2");
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(it->value().Data()), it->value().Size()), "value2_v2");
+        EXPECT_EQ(it->version(), t110);
+
+        it->Next();
+        ASSERT_TRUE(it->Valid());
+        EXPECT_EQ(it->key(), "key3");
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(it->value().Data()), it->value().Size()), "value3_v1");
+        EXPECT_EQ(it->version(), t100);
+    }
+}
+
+TEST_F(MemTableTest, SnapshotIteratorWithTombstones) {
+    auto txn1 = NextTxnId();
+    auto txn2 = NextTxnId();
+    auto txn3 = NextTxnId();
+
+    // Create initial versions at t100
+    auto t100 = common::HybridTime(100);
+    VERIFY_RESULT(table->Put("key1", CreateTestValue("value1"), txn1, t100));
+    VERIFY_RESULT(table->Put("key2", CreateTestValue("value2"), txn1, t100));
+    VERIFY_RESULT(table->Put("key3", CreateTestValue("value3"), txn1, t100));
+
+    // Delete key2 at t110
+    auto t110 = common::HybridTime(110);
+    VERIFY_RESULT(table->Delete("key2", txn2, t110));
+
+    // Add new version of key2 at t120
+    auto t120 = common::HybridTime(120);
+    VERIFY_RESULT(table->Put("key2", CreateTestValue("value2_new"), txn3, t120));
+
+    // Test snapshot at t105 (before deletion)
+    {
+        auto it = table->NewSnapshotIterator(common::HybridTime(105));
+
+        it->Seek("key2");
+        ASSERT_TRUE(it->Valid());
+        EXPECT_EQ(it->key(), "key2");
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(it->value().Data()), it->value().Size()), "value2");
+        EXPECT_FALSE(it->IsTombstone());
+    }
+
+    // Test snapshot at t115 (after deletion, before new version)
+    {
+        auto it = table->NewSnapshotIterator(common::HybridTime(115));
+
+        it->Seek("key2");
+        EXPECT_TRUE(it->Valid());  // key2 should be invisible
+        EXPECT_EQ(it->key(), "key3");
+
+        // Test with IncludeTombstones mode
+        auto it_with_tombstones =
+            table->NewSnapshotIterator(common::HybridTime(115), common::IteratorMode::IncludeTombstones);
+        it_with_tombstones->Seek("key2");
+        ASSERT_TRUE(it_with_tombstones->Valid());
+        EXPECT_EQ(it_with_tombstones->key(), "key2");
+        EXPECT_TRUE(it_with_tombstones->IsTombstone());
+    }
+
+    // Test snapshot at t125 (should see new version)
+    {
+        auto it = table->NewSnapshotIterator(common::HybridTime(125));
+
+        it->Seek("key2");
+        ASSERT_TRUE(it->Valid());
+        EXPECT_EQ(it->key(), "key2");
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(it->value().Data()), it->value().Size()), "value2_new");
+        EXPECT_FALSE(it->IsTombstone());
+    }
+}
+
 }  // namespace pond::kv

@@ -20,6 +20,9 @@ namespace pond::kv {
 // Constants
 static constexpr size_t DEFAULT_WAL_SIZE = 64 * 1024 * 1024;  // 64MB
 
+// Forward declaration
+class KvTableIterator;
+
 /**
  * KvTable provides a schema-agnostic key-value store interface.
  * It uses string keys and DataChunk values, providing raw byte storage
@@ -29,6 +32,8 @@ class KvTable {
     friend class KvTableTest;
 
 public:
+    using Iterator = KvTableIterator;
+
     explicit KvTable(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
                      const std::string& table_name,
                      size_t max_wal_size = DEFAULT_WAL_SIZE);
@@ -48,6 +53,11 @@ public:
     common::Result<bool> Recover();
     common::Result<void> Flush();
     common::Result<void> RotateWAL();
+
+    // Iterator creation
+    common::Result<std::shared_ptr<Iterator>> NewIterator(
+        common::HybridTime read_time = common::MaxHybridTime(),
+        common::IteratorMode mode = common::IteratorMode::Default) const;
 
 private:
     // Write entry to WAL and return LSN
@@ -71,6 +81,46 @@ private:
     mutable std::mutex mutex_;  // For thread-safe MemTable switching
     size_t max_wal_size_;
     size_t next_wal_sequence_{0};
+};
+
+/**
+ * KvTableIterator combines the current memtable iterator with the SSTableManager's
+ * union iterator to provide a unified view of all data in the KV table.
+ * It follows the same versioning and tombstone rules as the underlying iterators.
+ */
+class KvTableIterator : public common::SnapshotIterator<std::string, common::DataChunk> {
+public:
+    KvTableIterator(std::shared_ptr<MemTable::SnapshotIterator> memtable_iter,
+                    std::shared_ptr<SSTableManager::Iterator> sstable_iter,
+                    common::HybridTime read_time,
+                    common::IteratorMode mode)
+        : SnapshotIterator<std::string, common::DataChunk>(read_time, mode) {
+        // Set up L0 iterators (just the memtable)
+        std::vector<std::shared_ptr<common::SnapshotIterator<std::string, common::DataChunk>>> l0_iters;
+        l0_iters.push_back(memtable_iter);
+
+        // Set up L1+ iterators (the sstable iterator is already a union of all SSTables)
+        std::vector<std::vector<std::shared_ptr<common::SnapshotIterator<std::string, common::DataChunk>>>> level_iters;
+        std::vector<std::shared_ptr<common::SnapshotIterator<std::string, common::DataChunk>>> l1_iters;
+        l1_iters.push_back(sstable_iter);
+        level_iters.push_back(l1_iters);
+
+        // Create the union iterator
+        union_iter_ = std::make_unique<common::UnionIterator<std::string, common::DataChunk>>(
+            l0_iters, level_iters, read_time, mode);
+    }
+
+    // All iterator methods simply delegate to the union iterator
+    void Seek(const std::string& target) override { union_iter_->Seek(target); }
+    void Next() override { union_iter_->Next(); }
+    bool Valid() const override { return union_iter_->Valid(); }
+    const std::string& key() const override { return union_iter_->key(); }
+    const common::DataChunk& value() const override { return union_iter_->value(); }
+    bool IsTombstone() const override { return union_iter_->IsTombstone(); }
+    common::HybridTime version() const override { return union_iter_->version(); }
+
+private:
+    std::unique_ptr<common::UnionIterator<std::string, common::DataChunk>> union_iter_;
 };
 
 }  // namespace pond::kv

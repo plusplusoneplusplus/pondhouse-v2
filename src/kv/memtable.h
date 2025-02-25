@@ -100,7 +100,8 @@ public:
             while (iter_->Valid()) {
                 const auto& version_chain = iter_->value();
                 // Check if the latest version is a deletion marker
-                if (!version_chain->IsDeleted() || mode_ == common::IteratorMode::IncludeTombstones) {
+                if (!version_chain->IsDeleted()
+                    || common::CheckIteratorMode(mode_, common::IteratorMode::IncludeTombstones)) {
                     break;
                 }
                 iter_->Next();
@@ -111,7 +112,91 @@ public:
         std::mutex& mutex_;
     };
 
-    std::unique_ptr<common::Iterator<Key, Value>> NewIterator(
+    // SnapshotIterator interface
+    class SnapshotIterator : public common::SnapshotIterator<Key, RawValue> {
+    public:
+        explicit SnapshotIterator(std::unique_ptr<common::Iterator<Key, Value>> iter,
+                                  std::mutex& mutex,
+                                  common::HybridTime read_time,
+                                  common::IteratorMode mode)
+            : common::SnapshotIterator<Key, RawValue>(read_time, mode), iter_(std::move(iter)), mutex_(mutex) {
+            AdvanceToValidRecord();
+        }
+
+        ~SnapshotIterator() noexcept override = default;
+
+        void Seek(const Key& target) override {
+            std::lock_guard<std::mutex> lock(mutex_);
+            iter_->Seek(target);
+            AdvanceToValidRecord();
+        }
+
+        void Next() override {
+            std::lock_guard<std::mutex> lock(mutex_);
+            iter_->Next();
+            AdvanceToValidRecord();
+        }
+
+        bool Valid() const override {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return iter_->Valid() && current_value_.has_value();
+        }
+
+        const Key& key() const override {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return iter_->key();
+        }
+
+        const RawValue& value() const override {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return current_value_.value();
+        }
+
+        bool IsTombstone() const override {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return current_is_tombstone_;
+        }
+
+        common::HybridTime version() const override {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return current_version_;
+        }
+
+    private:
+        void AdvanceToValidRecord() {
+            while (iter_->Valid()) {
+                std::shared_ptr<const DataChunkVersionedValue> current = iter_->value();
+
+                while (current && current->version() > read_time_) {
+                    current = current->prev_version();
+                }
+
+                if (current) {
+                    current_version_ = current->version();
+                    current_is_tombstone_ = current->IsDeleted();
+
+                    if (!current_is_tombstone_
+                        || common::CheckIteratorMode(mode_, common::IteratorMode::IncludeTombstones)) {
+                        current_value_ = current->value();
+                        return;
+                    }
+                }
+                iter_->Next();
+            }
+            current_value_.reset();
+        }
+
+        std::shared_ptr<common::Iterator<Key, Value>> iter_;
+        std::mutex& mutex_;
+        std::optional<RawValue> current_value_;
+        common::HybridTime current_version_{common::MinHybridTime()};
+        bool current_is_tombstone_{false};
+    };
+
+    std::shared_ptr<MemTable::Iterator> NewIterator(common::IteratorMode mode = common::IteratorMode::Default) const;
+
+    std::shared_ptr<MemTable::SnapshotIterator> NewSnapshotIterator(
+        common::HybridTime read_time = common::MaxHybridTime(),
         common::IteratorMode mode = common::IteratorMode::Default) const;
 
     const MemTableMetadata& GetMetadata() const { return metadata_; }

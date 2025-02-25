@@ -33,7 +33,7 @@ public:
     common::HybridTime version() const { return version_; }
     uint64_t txn_id() const { return txn_id_; }
     bool IsDeleted() const { return is_deleted_; }
-    const std::shared_ptr<const VersionedValue<T>>& prev_version() const { return prev_version_; }
+    std::shared_ptr<const VersionedValue<T>> prev_version() const { return prev_version_; }
 
     // Get the value visible at a specific timestamp
     std::optional<std::reference_wrapper<const T>> GetValueAt(common::HybridTime timestamp) const {

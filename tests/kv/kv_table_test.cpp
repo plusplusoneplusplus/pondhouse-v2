@@ -196,4 +196,259 @@ TEST_F(KvTableTest, ConcurrentOperations) {
     }
 }
 
+TEST_F(KvTableTest, IteratorBasic) {
+    // Insert data into memtable
+    VERIFY_RESULT(table_->Put("key1", CreateTestValue("value1_v2")));  // Newer version
+    VERIFY_RESULT(table_->Put("key2", CreateTestValue("value2")));
+    VERIFY_RESULT(table_->Put("key3", CreateTestValue("value3")));
+
+    // Flush to create SSTable
+    VERIFY_RESULT(table_->Flush());
+
+    // Add more data to memtable (including an update)
+    VERIFY_RESULT(table_->Put("key1", CreateTestValue("value1_v3")));  // Newest version
+    VERIFY_RESULT(table_->Put("key4", CreateTestValue("value4")));
+    VERIFY_RESULT(table_->Put("key5", CreateTestValue("value5")));
+
+    // Create iterator
+    auto iter_result = table_->NewIterator();
+    VERIFY_RESULT(iter_result);
+    auto& iter = *iter_result.value();
+
+    // Verify iteration order and values
+    iter.Seek("");
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key1");
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(iter.value().Data()), iter.value().Size()), "value1_v3");
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key2");
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(iter.value().Data()), iter.value().Size()), "value2");
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key3");
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(iter.value().Data()), iter.value().Size()), "value3");
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key4");
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(iter.value().Data()), iter.value().Size()), "value4");
+
+    iter.Next();
+    ASSERT_TRUE(iter.Valid());
+    EXPECT_EQ(iter.key(), "key5");
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(iter.value().Data()), iter.value().Size()), "value5");
+
+    iter.Next();
+    ASSERT_FALSE(iter.Valid());
+}
+
+TEST_F(KvTableTest, IteratorWithTombstones) {
+    // Insert initial data
+    VERIFY_RESULT(table_->Put("key1", CreateTestValue("value1")));
+    VERIFY_RESULT(table_->Put("key2", CreateTestValue("value2")));
+    VERIFY_RESULT(table_->Put("key3", CreateTestValue("value3")));
+
+    // Flush to create SSTable
+    VERIFY_RESULT(table_->Flush());
+
+    // Delete key2 and add new data
+    VERIFY_RESULT(table_->Delete("key2"));  // Create tombstone
+    VERIFY_RESULT(table_->Put("key4", CreateTestValue("value4")));
+
+    // Test default mode (should skip tombstones)
+    {
+        auto iter_result = table_->NewIterator();
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key3");  // key2 should be skipped
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key4");
+    }
+
+    // Test with IncludeTombstones mode
+    {
+        auto iter_result = table_->NewIterator(common::MaxHybridTime(), common::IteratorMode::IncludeTombstones);
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_FALSE(iter.IsTombstone());
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_TRUE(iter.IsTombstone());
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key3");
+        EXPECT_FALSE(iter.IsTombstone());
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key4");
+        EXPECT_FALSE(iter.IsTombstone());
+    }
+}
+
+TEST_F(KvTableTest, IteratorVersionVisibility) {
+    // Insert data with multiple versions
+    VERIFY_RESULT(table_->Put("key1", CreateTestValue("value1_v1")));
+    VERIFY_RESULT(table_->Put("key2", CreateTestValue("value2_v1")));
+
+    common::HybridTime v1_time = common::GetNextHybridTime();
+
+    // Flush to create first SSTable
+    VERIFY_RESULT(table_->Flush());
+
+    // Update values
+    VERIFY_RESULT(table_->Put("key1", CreateTestValue("value1_v2")));
+    VERIFY_RESULT(table_->Delete("key2"));  // Tombstone
+
+    common::HybridTime v2_time = common::GetNextHybridTime();
+
+    // Flush to create second SSTable
+    VERIFY_RESULT(table_->Flush());
+
+    // Add newest versions
+    VERIFY_RESULT(table_->Put("key1", CreateTestValue("value1_v3")));
+    VERIFY_RESULT(table_->Put("key2", CreateTestValue("value2_v2")));
+
+    // Test at different timestamps with different modes
+    {
+        // Test default mode at early timestamp
+        auto iter_result = table_->NewIterator(v1_time);
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v1");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.value().ToString(), "value2_v1");
+    }
+
+    {
+        // Test default mode at middle timestamp
+        auto iter_result = table_->NewIterator(v2_time);
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v2");
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());
+    }
+
+    {
+        // Test IncludeTombstones mode at middle timestamp
+        auto iter_result = table_->NewIterator(v2_time, common::IteratorMode::IncludeTombstones);
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v2");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_TRUE(iter.IsTombstone());  // Should see tombstone
+    }
+
+    {
+        // Test IncludeAllVersions mode at latest timestamp
+        auto iter_result = table_->NewIterator(common::MaxHybridTime(), common::IteratorMode::IncludeAllVersions);
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v3");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v2");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v1");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.value().ToString(), "value2_v2");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.value().ToString(), "value2_v1");
+    }
+
+    {
+        // Test combined IncludeTombstones and IncludeAllVersions mode
+        auto iter_result =
+            table_->NewIterator(common::MaxHybridTime(),
+                                common::IteratorMode::IncludeTombstones | common::IteratorMode::IncludeAllVersions);
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v3");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v2");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value().ToString(), "value1_v1");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.value().ToString(), "value2_v2");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.IsTombstone(), true);
+        EXPECT_EQ(iter.value().ToString(), "");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.value().ToString(), "value2_v1");
+    }
+}
+
 }  // namespace pond::kv

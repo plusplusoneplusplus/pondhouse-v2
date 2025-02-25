@@ -164,10 +164,17 @@ size_t MemTable::CalculateEntrySize(const Key& key, const Value& value) const {
 
 // Iterator implementation
 
-std::unique_ptr<common::Iterator<Key, MemTable::Value>> MemTable::NewIterator(common::IteratorMode mode) const {
+std::shared_ptr<MemTable::Iterator> MemTable::NewIterator(common::IteratorMode mode) const {
     std::unique_ptr<common::Iterator<Key, Value>> iter;
     iter.reset(table_->NewIterator());
-    return std::make_unique<Iterator>(std::move(iter), mutex_, mode);
+    return std::make_shared<MemTable::Iterator>(std::move(iter), mutex_, mode);
+}
+
+std::shared_ptr<MemTable::SnapshotIterator> MemTable::NewSnapshotIterator(common::HybridTime read_time,
+                                                                          common::IteratorMode mode) const {
+    std::unique_ptr<common::Iterator<Key, Value>> iter;
+    iter.reset(table_->NewIterator());
+    return std::make_shared<MemTable::SnapshotIterator>(std::move(iter), mutex_, read_time, mode);
 }
 
 }  // namespace pond::kv

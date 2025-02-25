@@ -300,4 +300,22 @@ common::Result<void> KvTable::TrackMetadataOp(MetadataOpType op_type, const std:
     return common::Result<void>::success();
 }
 
+common::Result<std::shared_ptr<KvTableIterator>> KvTable::NewIterator(common::HybridTime read_time,
+                                                                      common::IteratorMode mode) const {
+    using ReturnType = common::Result<std::shared_ptr<KvTableIterator>>;
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Create memtable iterator.
+    auto memtable_iter =
+        active_memtable_->NewSnapshotIterator(read_time, mode | common::IteratorMode::IncludeTombstones);
+
+    // Get SSTable iterator
+    auto sstable_iter_result =
+        sstable_manager_->NewSnapshotIterator(read_time, mode | common::IteratorMode::IncludeTombstones);
+    RETURN_IF_ERROR_T(ReturnType, sstable_iter_result);
+
+    // Create combined iterator
+    return ReturnType::success(std::make_shared<KvTableIterator>(
+        std::move(memtable_iter), std::move(sstable_iter_result.value()), read_time, mode));
+}
 }  // namespace pond::kv

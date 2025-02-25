@@ -141,8 +141,9 @@ public:
             return;
         }
 
-        // If current key is from L0, advance all L0 iterators at this key
-        if (current_is_l0_) {
+        // Modified handling for L0 iterators based on IncludeAllVersions flag
+        if (current_is_l0_ && !CheckIteratorMode(this->mode_, IteratorMode::IncludeAllVersions)) {
+            // Only advance all L0 iterators when not in IncludeAllVersions mode
             const K& current_key = current_key_;
             for (auto& iter : l0_iters_) {
                 if (iter->Valid() && iter->key() == current_key) {
@@ -150,7 +151,7 @@ public:
                 }
             }
         } else {
-            // For leveled iterators, just advance the current one
+            // Default case - just advance current iterator
             current_iter_->Next();
         }
 

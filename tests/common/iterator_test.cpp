@@ -419,6 +419,93 @@ TEST(UnionIteratorTest, BasicMerging) {
 
 //
 // Test Setup:
+//      Test union iterator with duplicated keys in L0
+// Test Result:
+//      Verify correct handling of duplicated keys in L0
+//      Confirm newest version is returned for duplicated keys
+//
+TEST(UnionIteratorTest, DuplicatedKeysInL0) {
+    using VV = MockSnapshotIterator::VersionedValue;
+
+    // L0 data with duplicated keys
+    std::map<std::string, std::vector<VV>> l0_data1 = {
+        {"key1", {{.value = "value1_new", .version = HybridTime(200), .is_tombstone = false}}},
+        {"key2", {{.value = "value2", .version = HybridTime(100), .is_tombstone = false}}},
+    };
+
+    std::map<std::string, std::vector<VV>> l0_data2 = {
+        {"key1", {{.value = "value1_old", .version = HybridTime(100), .is_tombstone = false}}},
+        {"key3", {{.value = "value3", .version = HybridTime(100), .is_tombstone = false}}},
+    };
+
+    // Create iterators
+    std::vector<std::shared_ptr<SnapshotIterator<std::string, std::string>>> l0_iters;
+    l0_iters.push_back(std::make_shared<MockSnapshotIterator>(l0_data1, HybridTime(300), IteratorMode::Default));
+    l0_iters.push_back(std::make_shared<MockSnapshotIterator>(l0_data2, HybridTime(300), IteratorMode::Default));
+
+    {
+        // Create union iterator
+        UnionIterator<std::string, std::string> iter(l0_iters, {}, HybridTime(300), IteratorMode::Default);
+
+        // Verify iteration order and values
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value(), "value1_new");  // Should get newer version from l0_data1
+        EXPECT_EQ(iter.version(), HybridTime(200));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.value(), "value2");
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key3");
+        EXPECT_EQ(iter.value(), "value3");
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());
+    }
+
+    {
+        // Test with IncludeAllVersions mode
+        UnionIterator<std::string, std::string> iter(l0_iters, {}, HybridTime(300), IteratorMode::IncludeAllVersions);
+
+        // Verify iteration order and values
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value(), "value1_new");  // Should get newer version from l0_data1
+        EXPECT_EQ(iter.version(), HybridTime(200));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_EQ(iter.value(), "value1_old");  // Should get older version from l0_data2
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.value(), "value2");
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key3");
+        EXPECT_EQ(iter.value(), "value3");
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());
+    }
+}
+
+//
+// Test Setup:
 //      Test union iterator with tombstones and different modes
 // Test Result:
 //      Verify correct handling of tombstones in different modes

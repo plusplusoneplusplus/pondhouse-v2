@@ -1401,6 +1401,46 @@ TEST_F(SSTableManagerTest, SnapshotIteratorBasic) {
 //      Verify correct handling of tombstones in different modes
 //      Confirm proper version visibility with tombstones
 //
+TEST_F(SSTableManagerTest, SnapshotIteratorTombstones_L0WithL1) {
+    // Create L0 files with tombstones
+    // Time moves forward: t100 -> t110 -> t120
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Put("key1", DataChunk::FromString("value1_v1"), 0, HybridTime(100)));
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+        VERIFY_RESULT(manager_->MergeL0ToL1());
+    }
+    {
+        auto memtable = std::make_unique<MemTable>();
+        VERIFY_RESULT(memtable->Delete("key1", 0, HybridTime(110)));  // Tombstone
+        VERIFY_RESULT(memtable->Put("key2", DataChunk::FromString("value2_v1"), 0, HybridTime(120)));
+        VERIFY_RESULT(manager_->CreateSSTableFromMemTable(*memtable));
+    }
+
+    // Test with default mode at t200 (should skip tombstones)
+    {
+        auto iter_result = manager_->NewSnapshotIterator(HybridTime(200));
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");  // Should skip key1 (tombstone)
+        EXPECT_EQ(iter.value().ToString(), "value2_v1");
+        EXPECT_EQ(iter.version(), HybridTime(120));
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());  // Should be no more data.
+    }
+}
+
+//
+// Test Setup:
+//      Test snapshot iterator with tombstones and different modes
+// Test Result:
+//      Verify correct handling of tombstones in different modes
+//      Confirm proper version visibility with tombstones
+//
 TEST_F(SSTableManagerTest, SnapshotIteratorTombstones) {
     // Create L0 files with tombstones
     // Time moves forward: t100 -> t110 -> t120
