@@ -494,4 +494,140 @@ TEST(UnionIteratorTest, TombstoneHandling) {
     }
 }
 
+//
+// Test Setup:
+//      Test union iterator with L0 tombstone and L1 key-value for the same key
+// Test Result:
+//      With default mode, the key should be skipped
+//      With IncludeTombstones mode, the key should be returned with IsTombstone=true
+//
+TEST(UnionIteratorTest, L0TombstoneOverridesL1Value) {
+    using VV = MockSnapshotIterator::VersionedValue;
+
+    // L0 data with tombstone
+    std::map<std::string, std::vector<VV>> l0_data = {
+        {"key1", {{.value = "", .version = HybridTime(200), .is_tombstone = true}}},
+        {"key3", {{.value = "value3", .version = HybridTime(200), .is_tombstone = false}}},
+    };
+
+    // L1 data with actual value for the same key
+    std::map<std::string, std::vector<VV>> l1_data = {
+        {"key1", {{.value = "value1_old", .version = HybridTime(100), .is_tombstone = false}}},
+        {"key2", {{.value = "value2", .version = HybridTime(100), .is_tombstone = false}}},
+    };
+
+    // Create iterators
+    std::vector<std::shared_ptr<SnapshotIterator<std::string, std::string>>> l0_iters;
+    l0_iters.push_back(
+        std::make_shared<MockSnapshotIterator>(l0_data, HybridTime(300), IteratorMode::IncludeTombstones));
+
+    std::vector<std::vector<std::shared_ptr<SnapshotIterator<std::string, std::string>>>> level_iters;
+    std::vector<std::shared_ptr<SnapshotIterator<std::string, std::string>>> l1_iters;
+    l1_iters.push_back(
+        std::make_shared<MockSnapshotIterator>(l1_data, HybridTime(300), IteratorMode::IncludeTombstones));
+    level_iters.push_back(l1_iters);
+
+    // Test with default mode (should skip tombstones)
+    {
+        UnionIterator<std::string, std::string> iter(l0_iters, level_iters, HybridTime(300), IteratorMode::Default);
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");  // Should skip key1 (tombstone in L0)
+        EXPECT_EQ(iter.value(), "value2");
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key3");
+        EXPECT_EQ(iter.value(), "value3");
+        EXPECT_EQ(iter.version(), HybridTime(200));
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());
+    }
+
+    // Test with IncludeTombstones mode
+    {
+        UnionIterator<std::string, std::string> iter(
+            l0_iters, level_iters, HybridTime(300), IteratorMode::IncludeTombstones);
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_TRUE(iter.IsTombstone());  // Should see the tombstone from L0
+        EXPECT_EQ(iter.version(), HybridTime(200));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_FALSE(iter.IsTombstone());
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key3");
+        EXPECT_FALSE(iter.IsTombstone());
+        EXPECT_EQ(iter.version(), HybridTime(200));
+    }
+
+    // Test with IncludeAllVersions mode
+    {
+        UnionIterator<std::string, std::string> iter(
+            l0_iters, level_iters, HybridTime(300), IteratorMode::IncludeAllVersions);
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_FALSE(iter.IsTombstone());
+        EXPECT_EQ(iter.value(), "value1_old");
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_EQ(iter.value(), "value2");
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key3");
+        EXPECT_EQ(iter.value(), "value3");
+        EXPECT_EQ(iter.version(), HybridTime(200));
+    }
+
+    // Test With IncludeTombstone & IncludeAllVersions
+    {
+        UnionIterator<std::string, std::string> iter(
+            l0_iters, level_iters, HybridTime(300), IteratorMode::IncludeTombstones | IteratorMode::IncludeAllVersions);
+
+        iter.Seek("");
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_TRUE(iter.IsTombstone());
+        EXPECT_EQ(iter.version(), HybridTime(200));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key1");
+        EXPECT_FALSE(iter.IsTombstone());
+        EXPECT_EQ(iter.value(), "value1_old");
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key2");
+        EXPECT_FALSE(iter.IsTombstone());
+        EXPECT_EQ(iter.value(), "value2");
+        EXPECT_EQ(iter.version(), HybridTime(100));
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "key3");
+        EXPECT_FALSE(iter.IsTombstone());
+        EXPECT_EQ(iter.value(), "value3");
+        EXPECT_EQ(iter.version(), HybridTime(200));
+    }
+}
+
 }  // namespace

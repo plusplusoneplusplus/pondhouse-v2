@@ -809,7 +809,7 @@ SSTableSnapshotIterator::SSTableSnapshotIterator(std::vector<std::shared_ptr<SST
 void SSTableSnapshotIterator::InitializeIterators() {
     // Initialize L0 iterators
     for (const auto& reader : l0_readers_) {
-        auto iter = reader->NewIterator(read_time_, mode_);
+        auto iter = reader->NewIterator(read_time_, mode_ | common::IteratorMode::IncludeTombstones);
         l0_iters_.push_back(iter);
     }
 
@@ -817,7 +817,7 @@ void SSTableSnapshotIterator::InitializeIterators() {
     level_iters_.resize(level_readers_.size());
     for (size_t level = 0; level < level_readers_.size(); level++) {
         for (const auto& reader : level_readers_[level]) {
-            auto iter = reader->NewIterator(read_time_, mode_);
+            auto iter = reader->NewIterator(read_time_, mode_ | common::IteratorMode::IncludeTombstones);
             level_iters_[level].push_back(iter);
         }
     }

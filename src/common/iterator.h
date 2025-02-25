@@ -240,9 +240,32 @@ private:
             current_is_tombstone_ = current_iter_->IsTombstone();
         }
 
+        // Skip duplicate keys if not in IncludeAllVersions mode
+        if (!CheckIteratorMode(this->mode_, IteratorMode::IncludeAllVersions) && current_is_l0_) {
+            const K& current_key = current_key_;
+            while (!heap.empty() && heap.top().iter->key() == current_key) {
+                auto entry = heap.top();
+                heap.pop();
+
+                // Advance the iterator to skip the duplicate key
+                if (entry.level == 0) {
+                    // For L0, advance all iterators with the same key
+                    for (auto& iter : l0_iters_) {
+                        if (iter->Valid() && iter->key() == current_key) {
+                            iter->Next();
+                        }
+                    }
+                } else {
+                    // For other levels, just advance the current iterator
+                    entry.iter->Next();
+                }
+            }
+        }
+
         // Skip if it's a tombstone and we're not including tombstones
         if (current_is_tombstone_ && !CheckIteratorMode(this->mode_, IteratorMode::IncludeTombstones)) {
             Next();
+            return;
         }
     }
 
