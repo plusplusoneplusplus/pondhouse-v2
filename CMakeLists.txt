@@ -4,10 +4,17 @@ project(pondhouse-v2)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 
-# Find required packages
+# Set policy to handle duplicate targets
+cmake_policy(SET CMP0074 NEW)
+
+# Find gRPC first, which will bring in its own Protobuf
+find_package(gRPC CONFIG REQUIRED)
+
+# Find other required packages
 find_package(Arrow REQUIRED)
 find_package(Parquet REQUIRED)
-find_package(Protobuf REQUIRED)
+# Protobuf is already loaded by gRPC, so we don't need to find it again
+# find_package(Protobuf REQUIRED)
 
 # A dependency for the protobuf
 find_package(absl REQUIRED)
@@ -38,40 +45,58 @@ set(PROTO_OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/build)
 
 # Create proto build directory if it doesn't exist
 file(MAKE_DIRECTORY ${PROTO_OUTPUT_DIR})
+file(MAKE_DIRECTORY ${PROTO_OUTPUT_DIR}/proto)
+
+# Make sure we have the protoc executable
+if(NOT DEFINED Protobuf_PROTOC_EXECUTABLE)
+    get_target_property(Protobuf_PROTOC_EXECUTABLE protobuf::protoc LOCATION)
+endif()
 
 # Protobuf files
 set(PROTO_FILES
     src/proto/kv.proto
+    src/proto/pond_service.proto
 )
 
 # Custom command to generate protobuf files
 set(PROTO_SRCS "")
 set(PROTO_HDRS "")
+set(GRPC_SRCS "")
+set(GRPC_HDRS "")
 
 foreach(PROTO_FILE ${PROTO_FILES})
     get_filename_component(PROTO_NAME ${PROTO_FILE} NAME_WE)
     set(PROTO_HEADER "${PROTO_OUTPUT_DIR}/proto/${PROTO_NAME}.pb.h")
     set(PROTO_SRC "${PROTO_OUTPUT_DIR}/proto/${PROTO_NAME}.pb.cc")
+    set(GRPC_HEADER "${PROTO_OUTPUT_DIR}/proto/${PROTO_NAME}.grpc.pb.h")
+    set(GRPC_SRC "${PROTO_OUTPUT_DIR}/proto/${PROTO_NAME}.grpc.pb.cc")
     
     add_custom_command(
         OUTPUT 
             "${PROTO_HEADER}"
             "${PROTO_SRC}"
+            "${GRPC_HEADER}"
+            "${GRPC_SRC}"
         COMMAND ${Protobuf_PROTOC_EXECUTABLE}
-        ARGS --cpp_out=${PROTO_OUTPUT_DIR}
-             --proto_path=${CMAKE_CURRENT_SOURCE_DIR}/src
-             ${CMAKE_CURRENT_SOURCE_DIR}/${PROTO_FILE}
+        ARGS 
+             "--cpp_out=${PROTO_OUTPUT_DIR}"
+             "--grpc_out=${PROTO_OUTPUT_DIR}"
+             "--plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>"
+             "--proto_path=${CMAKE_CURRENT_SOURCE_DIR}/src"
+             "${CMAKE_CURRENT_SOURCE_DIR}/${PROTO_FILE}"
         DEPENDS ${PROTO_FILE}
-        COMMENT "Generating protobuf files for ${PROTO_FILE}"
+        COMMENT "Generating protobuf and gRPC files for ${PROTO_FILE}"
         VERBATIM
     )
     
     list(APPEND PROTO_SRCS "${PROTO_SRC}")
     list(APPEND PROTO_HDRS "${PROTO_HEADER}")
+    list(APPEND GRPC_SRCS "${GRPC_SRC}")
+    list(APPEND GRPC_HDRS "${GRPC_HEADER}")
 endforeach()
 
 # Create a custom target for protobuf generation
-add_custom_target(generate_protos ALL DEPENDS ${PROTO_SRCS} ${PROTO_HDRS})
+add_custom_target(generate_protos ALL DEPENDS ${PROTO_SRCS} ${PROTO_HDRS} ${GRPC_SRCS} ${GRPC_HDRS})
 
 # Include FetchContent for downloading dependencies
 include(FetchContent)
@@ -137,6 +162,7 @@ add_library(pondhouse_common
     src/rsm/rsm.cpp
     src/rsm/snapshot_manager.cpp
     ${PROTO_SRCS}
+    ${GRPC_SRCS}
 )
 
 # Add include directories for common library
@@ -154,6 +180,8 @@ target_link_libraries(pondhouse_common PUBLIC
     ${XXHASH_LIBRARY}
     fmt::fmt
     protobuf::libprotobuf
+    gRPC::grpc++
+    gRPC::grpc++_reflection
     ${ABSL_LIBS}
     ${CMAKE_BINARY_DIR}/libsqlparser.so
 )
@@ -169,6 +197,18 @@ add_executable(${PROJECT_NAME} src/main.cpp)
 
 # Link main executable with common library
 target_link_libraries(${PROJECT_NAME} PRIVATE pondhouse_common)
+
+# Add server executable
+add_executable(pond_server 
+    src/server/server_main.cpp
+    src/server/pond_service_impl.cpp
+)
+
+# Link server executable with common library
+target_link_libraries(pond_server PRIVATE pondhouse_common)
+
+# Add dependency on protobuf generation for server
+add_dependencies(pond_server generate_protos)
 
 # Enable testing
 enable_testing()

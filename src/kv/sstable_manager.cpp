@@ -328,15 +328,25 @@ public:
 
         // Get all SSTable readers from L0, in reverse order
         std::vector<std::shared_ptr<SSTableReader>> l0_readers;
-        for (auto it = sstables_[0].rbegin(); it != sstables_[0].rend(); ++it) {
-            auto reader_result = OpenSSTableReader(GetTablePath(0, *it));
-            RETURN_IF_ERROR_T(ReturnType, reader_result);
+        if (sstables_.empty()) {
+            return ReturnType::success(
+                std::make_shared<SSTableSnapshotIterator>(std::vector<std::shared_ptr<SSTableReader>>(),
+                                                          std::vector<std::vector<std::shared_ptr<SSTableReader>>>(),
+                                                          read_time,
+                                                          mode));
+        }
 
-            auto reader = std::move(reader_result).value();
-            auto open_result = reader->Open();
-            RETURN_IF_ERROR_T(ReturnType, open_result);
+        if (!sstables_[0].empty()) {
+            for (auto it = sstables_[0].rbegin(); it != sstables_[0].rend(); ++it) {
+                auto reader_result = OpenSSTableReader(GetTablePath(0, *it));
+                RETURN_IF_ERROR_T(ReturnType, reader_result);
 
-            l0_readers.push_back(std::move(reader));
+                auto reader = std::move(reader_result).value();
+                auto open_result = reader->Open();
+                RETURN_IF_ERROR_T(ReturnType, open_result);
+
+                l0_readers.push_back(std::move(reader));
+            }
         }
 
         // Get all SSTable readers from other levels
