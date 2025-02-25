@@ -1367,4 +1367,73 @@ TEST_F(SSTableReaderTest, TombstoneHandling) {
     ASSERT_FALSE(iter->Valid());
 }
 
+//
+// Test Setup:
+//      Create an SSTable with multiple versions of keys including tombstones
+//      Test iteration with IncludeTombstones mode
+// Test Result:
+//      Verify correct iteration over all versions including tombstones
+//      Confirm proper version ordering during iteration
+//
+TEST_F(SSTableReaderTest, IteratorIncludeTombstones) {
+    // Create test data with multiple versions and tombstones
+    SSTableWriter writer(fs_, "test.sst");
+
+    HybridTime t1(100);
+    HybridTime t2(200);
+    HybridTime t3(300);
+
+    // Add entries with different versions and tombstones
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v3"), t3, false));
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v2"), t2, true));  // Tombstone
+    VERIFY_RESULT(writer.Add("key1", stringToChunk("value1_v1"), t1, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v2"), t3, false));
+    VERIFY_RESULT(writer.Add("key2", stringToChunk("value2_v1"), t1, true));  // Tombstone
+    VERIFY_RESULT(writer.Finish());
+
+    SSTableReader reader(fs_, "test.sst");
+    VERIFY_RESULT(reader.Open());
+
+    // Test iteration with IncludeTombstones mode
+    auto iter = reader.NewIterator(MaxHybridTime(), IteratorMode::IncludeAllVersions | IteratorMode::IncludeTombstones);
+    iter->SeekToFirst();
+
+    // Verify key1 versions
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key1");
+    EXPECT_EQ(iter->value().ToString(), "value1_v3");
+    EXPECT_FALSE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t3);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key1");
+    EXPECT_TRUE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t2);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key1");
+    EXPECT_EQ(iter->value().ToString(), "value1_v1");
+    EXPECT_FALSE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t1);
+
+    // Verify key2 versions
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key2");
+    EXPECT_EQ(iter->value().ToString(), "value2_v2");
+    EXPECT_FALSE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t3);
+
+    iter->Next();
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key2");
+    EXPECT_TRUE(iter->IsTombstone());
+    EXPECT_EQ(iter->version(), t1);
+
+    iter->Next();
+    EXPECT_FALSE(iter->Valid());
+}
+
 }  // namespace
