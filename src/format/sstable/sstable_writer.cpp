@@ -8,7 +8,7 @@
 
 using namespace pond::common;
 
-namespace pond::kv {
+namespace pond::format {
 
 class SSTableWriter::Impl {
 public:
@@ -275,4 +275,4 @@ size_t SSTableWriter::GetFileSize() const {
     return impl_->GetFileSize();
 }
 
-}  // namespace pond::kv
+}  // namespace pond::format

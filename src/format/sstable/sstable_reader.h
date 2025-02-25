@@ -7,9 +7,9 @@
 #include "common/data_chunk.h"
 #include "common/iterator.h"
 #include "common/result.h"
-#include "kv/sstable_format.h"
+#include "format/sstable/sstable_format.h"
 
-namespace pond::kv {
+namespace pond::format {
 
 /**
  * SSTableReader provides read access to an SSTable file.

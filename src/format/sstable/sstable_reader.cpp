@@ -6,7 +6,7 @@
 #include "common/error.h"
 #include "common/log.h"
 
-namespace pond::kv {
+namespace pond::format {
 
 class SSTableReader::Impl {
 public:
@@ -626,14 +626,14 @@ private:
         current_block_ = block_result.value();
 
         // Verify block footer
-        kv::BlockFooter footer;
-        if (current_block_.Size() < kv::BlockFooter::kFooterSize) {
+        BlockFooter footer;
+        if (current_block_.Size() < BlockFooter::kFooterSize) {
             valid_ = false;
             return false;
         }
 
-        const uint8_t* footer_data = current_block_.Data() + current_block_.Size() - kv::BlockFooter::kFooterSize;
-        if (!footer.Deserialize(footer_data, kv::BlockFooter::kFooterSize)) {
+        const uint8_t* footer_data = current_block_.Data() + current_block_.Size() - BlockFooter::kFooterSize;
+        if (!footer.Deserialize(footer_data, BlockFooter::kFooterSize)) {
             valid_ = false;
             return false;
         }
@@ -646,7 +646,7 @@ private:
 
         // Verify checksum (exclude footer itself)
         const uint32_t computed_crc =
-            common::Crc32(current_block_.Data(), current_block_.Size() - kv::BlockFooter::kFooterSize);
+            common::Crc32(current_block_.Data(), current_block_.Size() - BlockFooter::kFooterSize);
         if (computed_crc != footer.checksum) {
             valid_ = false;
             return false;
@@ -656,7 +656,7 @@ private:
     }
 
     bool ParseCurrentEntry() {
-        const size_t block_data_size = current_block_.Size() - kv::BlockFooter::kFooterSize;
+        const size_t block_data_size = current_block_.Size() - BlockFooter::kFooterSize;
 
         if (block_pos_ + DataBlockEntry::kHeaderSize > block_data_size) {
             return false;
@@ -844,4 +844,4 @@ SSTableReader::Iterator SSTableReader::end() {
     return Iterator(this, common::MaxHybridTime(), common::IteratorMode::Default, false);
 }
 
-}  // namespace pond::kv
+}  // namespace pond::format
