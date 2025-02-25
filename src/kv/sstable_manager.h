@@ -14,14 +14,16 @@
 #include "common/lru_cache.h"
 #include "common/result.h"
 #include "common/time.h"
+#include "format/sstable/sstable_reader.h"
+#include "format/sstable/sstable_writer.h"
 #include "kv/compaction_metrics.h"
 #include "kv/memtable.h"
 #include "kv/sstable_cache.h"
-#include "kv/sstable_reader.h"
-#include "kv/sstable_writer.h"
 #include "kv/table_metadata.h"
 
 namespace pond::kv {
+
+using namespace pond::format;
 
 /**
  * SSTableManager manages the lifecycle and organization of SSTables.

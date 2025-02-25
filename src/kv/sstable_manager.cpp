@@ -11,6 +11,7 @@
 #include "kv/table_metadata.h"
 
 using namespace pond::common;
+using namespace pond::format;
 
 namespace pond::kv {
 

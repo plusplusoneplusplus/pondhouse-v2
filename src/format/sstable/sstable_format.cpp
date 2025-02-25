@@ -5,7 +5,7 @@
 
 #include "common/crc.h"
 
-namespace pond::kv {
+namespace pond::format {
 
 std::vector<uint8_t> FilterBlockFooter::Serialize() const {
     std::vector<uint8_t> result(kFooterSize);
@@ -734,4 +734,4 @@ bool InternalKey::operator==(const InternalKey& other) const {
     return user_key_ == other.user_key_ && version_ == other.version_;
 }
 
-}  // namespace pond::kv
+}  // namespace pond::format

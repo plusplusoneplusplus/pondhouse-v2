@@ -1,15 +1,15 @@
 
-#include "kv/sstable_writer.h"
+#include "format/sstable/sstable_writer.h"
 
 #include <gtest/gtest.h>
 
 #include "common/memory_append_only_fs.h"
-#include "kv/sstable_format.h"
-#include "kv/sstable_reader.h"
+#include "format/sstable/sstable_format.h"
+#include "format/sstable/sstable_reader.h"
 #include "test_helper.h"
 
 using namespace pond::common;
-using namespace pond::kv;
+using namespace pond::format;
 using namespace pond::test;
 
 namespace {

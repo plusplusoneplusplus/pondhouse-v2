@@ -5,6 +5,8 @@
 #include "common/log.h"
 #include "common/time.h"
 
+using namespace pond::format;
+
 namespace pond::kv {
 
 KvTable::KvTable(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& table_name, size_t max_wal_size)

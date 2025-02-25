@@ -6,9 +6,9 @@
 #include "common/append_only_fs.h"
 #include "common/data_chunk.h"
 #include "common/result.h"
-#include "kv/sstable_format.h"
+#include "format/sstable/sstable_format.h"
 
-namespace pond::kv {
+namespace pond::format {
 
 /**
  * SSTableWriter is responsible for writing SSTable files to disk.
@@ -78,4 +78,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace pond::kv
+}  // namespace pond::format

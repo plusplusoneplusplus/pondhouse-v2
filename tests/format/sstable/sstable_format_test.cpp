@@ -1,8 +1,8 @@
-#include "kv/sstable_format.h"
+#include "format/sstable/sstable_format.h"
 
 #include <gtest/gtest.h>
 
-using namespace pond::kv;
+using namespace pond::format;
 using namespace pond::common;
 
 namespace {

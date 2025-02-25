@@ -10,7 +10,7 @@
 #include "common/data_chunk.h"
 #include "common/time.h"
 
-namespace pond::kv {
+namespace pond::format {
 
 // Internal key format used in SSTable
 // Combines user key with version information
@@ -408,4 +408,4 @@ private:
     MetadataProperties props_;
 };
 
-}  // namespace pond::kv
+}  // namespace pond::format

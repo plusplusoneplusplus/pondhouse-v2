@@ -126,14 +126,14 @@ add_library(pondhouse_common
     src/kv/table_metadata.cpp
     src/kv/sstable_manager.cpp
     src/kv/sstable_cache.cpp
-    src/kv/sstable_format.cpp
-    src/kv/sstable_writer.cpp
-    src/kv/sstable_reader.cpp
     src/kv/db.cpp
     src/format/parquet/append_only_input_stream.cpp
     src/format/parquet/append_only_output_stream.cpp
     src/format/parquet/parquet_reader.cpp
     src/format/parquet/parquet_writer.cpp
+    src/format/sstable/sstable_writer.cpp
+    src/format/sstable/sstable_reader.cpp
+    src/format/sstable/sstable_format.cpp
     src/rsm/rsm.cpp
     src/rsm/snapshot_manager.cpp
     ${PROTO_SRCS}
@@ -197,6 +197,10 @@ add_executable(
     tests/rsm/replicated_state_machine_test.cpp
     tests/rsm/snapshot_manager_test.cpp
     tests/format/parquet/parquet_test.cpp
+    tests/format/sstable/sstable_reader_test.cpp
+    tests/format/sstable/sstable_writer_test.cpp
+    tests/format/sstable/sstable_format_test.cpp
+    tests/format/sstable/sstable_filter_test.cpp
     tests/kv/compaction_metrics_test.cpp
     tests/kv/db_test.cpp
     tests/kv/kv_table_test.cpp
@@ -204,11 +208,7 @@ add_executable(
     tests/kv/memtable_test.cpp
     tests/kv/record_test.cpp
     tests/kv/sstable_cache_test.cpp
-    tests/kv/sstable_filter_test.cpp
-    tests/kv/sstable_format_test.cpp
     tests/kv/sstable_manager_test.cpp
-    tests/kv/sstable_reader_test.cpp
-    tests/kv/sstable_writer_test.cpp
     tests/kv/table_metadata_test.cpp
     tests/kv/table_test.cpp
     tests/kv/versioned_value_test.cpp
