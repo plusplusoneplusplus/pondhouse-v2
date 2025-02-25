@@ -22,7 +22,7 @@
   - [x] Version-aware reads and writes
   - [x] Iterator support for versions
   - [x] Version ordering in SSTable
-  - [ ] Level management
+  - [x] Level management
   - [ ] Manifest file format
 - [ ] Add recovery mechanisms
   - [ ] Manifest parsing

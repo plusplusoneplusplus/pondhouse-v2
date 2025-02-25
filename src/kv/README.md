@@ -646,3 +646,97 @@ The implementation includes comprehensive tests covering:
 - Block builder operations
 - Error handling
 - Edge cases
+
+## Iterator Implementation
+
+The storage engine provides a flexible iterator system for traversing key-value pairs across different storage components.
+
+### Iterator Interface
+
+The base `Iterator<K, V>` template class defines the common interface for all iterators:
+
+```cpp
+template <typename K, typename V>
+class Iterator {
+public:
+    virtual void Seek(const K& target) = 0;
+    virtual void Next() = 0;
+    virtual bool Valid() const = 0;
+    virtual const K& key() const = 0;
+    virtual const V& value() const = 0;
+    virtual bool IsTombstone() const = 0;
+};
+```
+
+### Iterator Modes
+
+Iterators support different modes to control visibility of entries:
+
+```cpp
+enum class IteratorMode : uint64_t {
+    Default = 0,
+    IncludeTombstones = 1 << 1,
+    IncludeAllVersions = 1 << 2,
+};
+```
+
+- **Default**: Skip tombstones and only show the latest version of each key
+- **IncludeTombstones**: Include deleted entries (tombstones)
+- **IncludeAllVersions**: Show all versions of each key, not just the latest
+
+### Snapshot Iterators
+
+The `SnapshotIterator<K, V>` extends the base iterator to provide time-based snapshots:
+
+```cpp
+template <typename K, typename V>
+class SnapshotIterator : public Iterator<K, V> {
+public:
+    SnapshotIterator(HybridTime read_time, IteratorMode mode);
+    virtual HybridTime version() const = 0;
+};
+```
+
+### Union Iterator
+
+The `UnionIterator<K, V>` merges multiple iterators from different storage levels:
+
+```cpp
+template <typename K, typename V>
+class UnionIterator : public SnapshotIterator<K, V> {
+public:
+    UnionIterator(std::vector<std::shared_ptr<SnapshotIterator<K, V>>> l0_iters,
+                  std::vector<std::vector<std::shared_ptr<SnapshotIterator<K, V>>>> level_iters,
+                  HybridTime read_time,
+                  IteratorMode mode);
+};
+```
+
+Key features:
+- Merges iterators from L0 and other levels
+- Handles overlapping keys in L0 (newest first)
+- Preserves version ordering
+- Supports all iterator modes
+- Efficient heap-based merging algorithm
+
+#### Version Handling
+
+The UnionIterator implements special logic for handling multiple versions:
+
+1. **Default Mode**: Only returns the newest version of each key
+2. **IncludeAllVersions Mode**: Returns all versions of each key in order
+3. **IncludeTombstones Mode**: Includes deleted entries
+
+When both IncludeAllVersions and IncludeTombstones are enabled, all versions including tombstones are returned.
+
+#### Implementation Details
+
+The UnionIterator uses a priority queue (min-heap) to efficiently merge keys from multiple iterators:
+
+1. All valid iterators are added to a min-heap ordered by key
+2. For the same key, lower level iterators have higher priority
+3. For L0 iterators with the same key, the newest version is selected
+4. When advancing in IncludeAllVersions mode, only the current iterator is advanced
+5. When advancing in Default mode, all L0 iterators at the current key are advanced
+
+This approach ensures correct version visibility and efficient iteration across all storage levels.
