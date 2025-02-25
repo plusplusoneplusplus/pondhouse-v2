@@ -240,49 +240,47 @@ common::Result<void> DB::Flush() {
 }
 
 common::Result<void> DB::Recover() {
-    // using ReturnType = common::Result<void>;
-    // std::lock_guard<std::mutex> lock(mutex_);
+    using ReturnType = common::Result<void>;
+    std::lock_guard<std::mutex> lock(mutex_);
 
-    // // Clear existing tables
-    // tables_.clear();
+    // Clear existing tables
+    tables_.clear();
 
-    // // Recover system table first
-    // auto system_result = system_table_->Recover();
-    // RETURN_IF_ERROR_T(ReturnType, system_result);
+    // Recover system table first
+    auto system_result = system_table_->Recover();
+    RETURN_IF_ERROR_T(ReturnType, system_result);
 
-    // // Get an iterator over the system table
-    // auto iter_result = system_table_->GetIterator();
-    // RETURN_IF_ERROR_T(ReturnType, iter_result);
-    // auto iter = std::move(iter_result).value();
+    // Get an iterator over the system table
+    auto iter_result = system_table_->NewIterator();
+    RETURN_IF_ERROR_T(ReturnType, iter_result);
+    auto iter = std::move(iter_result).value();
 
-    // // Iterate over all tables in the system table
-    // while (iter->Valid()) {
-    //     const std::string& table_name = iter->key();
-    //     if (table_name == SYSTEM_TABLE) {
-    //         iter->Next();
-    //         continue;
-    //     }
+    // Iterate over all tables in the system table
+    while (iter->Valid()) {
+        const std::string& table_name = iter->key();
+        if (table_name == SYSTEM_TABLE) {
+            iter->Next();
+            continue;
+        }
 
-    //     auto schema_result = LoadTableSchema(table_name);
-    //     RETURN_IF_ERROR_T(ReturnType, schema_result);
+        auto schema_result = LoadTableSchema(table_name);
+        RETURN_IF_ERROR_T(ReturnType, schema_result);
 
-    //     try {
-    //         std::string table_path = GetTablePath(table_name);
-    //         auto table = std::make_shared<Table>(schema_result.value(), fs_, table_path);
-    //         auto recover_result = table->Recover();
-    //         RETURN_IF_ERROR_T(ReturnType, recover_result);
+        try {
+            std::string table_path = GetTablePath(table_name);
+            auto table = std::make_shared<Table>(schema_result.value(), fs_, table_path);
+            auto recover_result = table->Recover();
+            RETURN_IF_ERROR_T(ReturnType, recover_result);
 
-    //         tables_[table_name] = table;
-    //     } catch (const std::exception& e) {
-    //         return common::Result<void>::failure(common::ErrorCode::RecoveryFailed, e.what());
-    //     }
+            tables_[table_name] = table;
+        } catch (const std::exception& e) {
+            return common::Result<void>::failure(common::ErrorCode::RecoveryFailed, e.what());
+        }
 
-    //     iter->Next();
-    // }
+        iter->Next();
+    }
 
-    // return common::Result<void>::success();
-
-    return common::Result<void>::failure(common::ErrorCode::NotImplemented, "Recovery not implemented");
+    return common::Result<void>::success();
 }
 
 std::string DB::GetTablePath(const std::string& table_name) const {
