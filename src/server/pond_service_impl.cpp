@@ -172,8 +172,13 @@ grpc::Status PondServiceImpl::Scan(grpc::ServerContext* context,
         scan_response.set_key(iter->key());
 
         // Get the value from the record
-        auto chunk = iter->value();
-        scan_response.set_value(chunk.ToString());
+        auto& record = iter->value();
+        auto value_result = record->Get<std::string>(0);
+        if (value_result.ok()) {
+            scan_response.set_value(value_result.value());
+        } else {
+            scan_response.set_value("");
+        }
 
         scan_response.set_has_more(true);
 
