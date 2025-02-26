@@ -21,7 +21,9 @@ class KVCatalogTest : public ::testing::Test {
 protected:
     void SetUp() override {
         fs_ = std::make_shared<common::MemoryAppendOnlyFileSystem>();
-        db_ = std::make_shared<kv::DB>(fs_, "test_catalog");
+        auto db_result = kv::DB::Create(fs_, "test_catalog");
+        VERIFY_RESULT(db_result);
+        db_ = std::move(db_result.value());
 
         catalog_ = std::make_shared<KVCatalog>(db_);
     }
