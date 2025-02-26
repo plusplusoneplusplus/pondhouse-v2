@@ -171,3 +171,92 @@ DataFile is a collection of data blocks. Each data block has a path, a file size
   "deleted-data-files": []
 }
 ```
+
+# KVCatalog Design
+
+The KVCatalog is an implementation of a metadata catalog system using key-value tables for storage. It provides transactional metadata management with snapshot isolation and schema evolution capabilities.
+
+## Table Structure
+
+## Serialization
+
+The catalog uses JSON format for all data serialization, providing consistency and flexibility across different data types:
+
+1. **Properties**
+   ```json
+   {
+     "key1": "value1",
+     "key2": "value2"
+   }
+   ```
+
+2. **Partition Values**
+   ```json
+   {
+     "year": "2024",
+     "month": "03",
+     "region": "us-west"
+   }
+   ```
+
+3. **Partition Specs**
+   ```json
+   [
+     {
+       "spec_id": 1,
+       "fields": [
+         {
+           "source_id": 1,
+           "field_id": 1000,
+           "name": "year",
+           "transform": "identity"
+         },
+         {
+           "source_id": 2,
+           "field_id": 1001,
+           "name": "month",
+           "transform": "month",
+           "transform_param": 1
+         }
+       ]
+     }
+   ]
+   ```
+
+4. **Snapshots**
+   ```json
+   [
+     {
+       "snapshot_id": 1,
+       "timestamp_ms": 1648176000000,
+       "operation": "append",
+       "manifest_list": "metadata/manifests/snap-1.avro",
+       "summary": {
+         "added-files": "10",
+         "total-records": "1000"
+       }
+     }
+   ]
+   ```
+
+5. **Data Files**
+   ```json
+   [
+     {
+       "file_path": "data/part-00000.parquet",
+       "format": "parquet",
+       "record_count": 1000,
+       "file_size_bytes": 1048576,
+       "partition_values": {
+         "year": "2024",
+         "month": "03"
+       }
+     }
+   ]
+   ```
+
+This consistent use of JSON format across all serialization provides:
+- Better readability and debugging
+- Schema evolution support
+- Standard parsing and error handling
+- Easy integration with other tools and systems
