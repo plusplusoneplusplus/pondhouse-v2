@@ -94,7 +94,6 @@ public:
                                                           static_cast<Nullability>(value["nullability"].GetInt())));
     }
 };
-
 class Schema : public ISerializable {
 public:
     explicit Schema(std::vector<ColumnSchema> columns) : columns_(std::move(columns)) {
@@ -112,6 +111,23 @@ public:
     int GetColumnIndex(const std::string& name) const {
         auto it = column_indices_.find(name);
         return it == column_indices_.end() ? -1 : static_cast<int>(it->second);
+    }
+
+    // Add a field to the schema
+    void AddField(const std::string& name, ColumnType type, Nullability nullability = Nullability::NOT_NULL) {
+        columns_.emplace_back(name, type, nullability);
+        column_indices_[name] = columns_.size() - 1;
+    }
+
+    // Add a field with nullability specified as bool
+    void AddField(const std::string& name, ColumnType type, bool nullable) {
+        AddField(name, type, nullable ? Nullability::NULLABLE : Nullability::NOT_NULL);
+    }
+
+    // Add a field with nullability and default value
+    void AddField(const std::string& name, ColumnType type, bool nullable, const DataChunk& default_value) {
+        // Store default value in the future if needed
+        AddField(name, type, nullable ? Nullability::NULLABLE : Nullability::NOT_NULL);
     }
 
     DataChunk Serialize() const override {
@@ -132,7 +148,8 @@ public:
 
     void Serialize(DataChunk& chunk) const override {
         auto serialized = Serialize();
-        chunk.Append(serialized.Data(), serialized.Size());
+        // Replace Append with assignment since DataChunk doesn't have Append
+        chunk = serialized;
     }
 
     bool Deserialize(const DataChunk& data) override {
@@ -169,5 +186,40 @@ private:
     std::vector<ColumnSchema> columns_;
     std::unordered_map<std::string, size_t> column_indices_;
 };
+
+// Builder class for Schema to simplify schema creation
+class SchemaBuilder {
+public:
+    SchemaBuilder() : schema_(std::make_shared<Schema>()) {}
+
+    // Add a field to the schema
+    SchemaBuilder& AddField(const std::string& name, ColumnType type) {
+        schema_->AddField(name, type);
+        return *this;
+    }
+
+    // Add a field with nullability
+    SchemaBuilder& AddField(const std::string& name, ColumnType type, bool nullable) {
+        schema_->AddField(name, type, nullable);
+        return *this;
+    }
+
+    // Add a field with nullability and default value
+    SchemaBuilder& AddField(const std::string& name, ColumnType type, bool nullable, const DataChunk& default_value) {
+        schema_->AddField(name, type, nullable, default_value);
+        return *this;
+    }
+
+    // Build and return the schema
+    std::shared_ptr<Schema> Build() const { return schema_; }
+
+private:
+    std::shared_ptr<Schema> schema_;
+};
+
+// Static method to create a SchemaBuilder
+inline SchemaBuilder CreateSchemaBuilder() {
+    return SchemaBuilder();
+}
 
 }  // namespace pond::common
