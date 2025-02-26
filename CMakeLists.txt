@@ -135,6 +135,9 @@ add_custom_target(build_sql_parser
 
 # Add common library
 add_library(pondhouse_common
+    src/catalog/kv_catalog.cpp
+    src/catalog/kv_catalog_util.cpp
+    src/catalog/types.cpp
     src/common/append_only_fs.cpp
     src/common/memory_append_only_fs.cpp
     src/common/log.cpp
@@ -219,6 +222,8 @@ add_subdirectory(third_party/googletest)
 # Add test executable
 add_executable(
     unit_tests
+    tests/catalog/kv_catalog_test.cpp
+    tests/catalog/kv_catalog_util_test.cpp
     tests/common/append_only_fs_test.cpp
     tests/common/bloom_filter_test.cpp
     tests/common/bplus_tree_test.cpp
