@@ -28,8 +28,7 @@ import grpc
 from google.protobuf.json_format import MessageToJson
 
 # Add the proto build directory to the Python path
-sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-                             "..", "proto", "build", "proto"))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "proto", "build", "proto"))
 
 # Import the generated gRPC modules
 try:
