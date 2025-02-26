@@ -13,11 +13,71 @@
 namespace pond::kv {
 
 /**
+ * RecordIterator wraps a KvTable::Iterator to provide schema-aware iteration
+ * with Record objects instead of raw DataChunks.
+ */
+class RecordIterator : public common::SnapshotIterator<std::string, std::unique_ptr<Record>> {
+public:
+    RecordIterator(std::shared_ptr<KvTable::Iterator> base_iterator,
+                   std::shared_ptr<common::Schema> schema,
+                   common::HybridTime read_time,
+                   common::IteratorMode mode)
+        : common::SnapshotIterator<std::string, std::unique_ptr<Record>>(read_time, mode),
+          base_iterator_(std::move(base_iterator)),
+          schema_(std::move(schema)),
+          current_record_(nullptr) {
+        UpdateCurrentRecord();
+    }
+
+    void Seek(const std::string& target) override {
+        base_iterator_->Seek(target);
+        UpdateCurrentRecord();
+    }
+
+    void Next() override {
+        base_iterator_->Next();
+        UpdateCurrentRecord();
+    }
+
+    bool Valid() const override { return base_iterator_->Valid(); }
+
+    const std::string& key() const override { return base_iterator_->key(); }
+
+    const std::unique_ptr<Record>& value() const override { return current_record_; }
+
+    bool IsTombstone() const override { return base_iterator_->IsTombstone(); }
+
+    common::HybridTime version() const override { return base_iterator_->version(); }
+
+private:
+    void UpdateCurrentRecord() {
+        if (Valid()) {
+            auto result = Record::Deserialize(base_iterator_->value(), schema_);
+            if (result.ok()) {
+                current_record_ = std::move(result).value();
+            } else {
+                // If deserialization fails, set current_record_ to nullptr
+                current_record_ = nullptr;
+            }
+        } else {
+            current_record_ = nullptr;
+        }
+    }
+
+    std::shared_ptr<KvTable::Iterator> base_iterator_;
+    std::shared_ptr<common::Schema> schema_;
+    std::unique_ptr<Record> current_record_;
+};
+
+/**
  * Table provides a schema-aware interface on top of KvTable.
  * It adds schema validation and type-safe column operations.
  */
 class Table : public KvTable {
 public:
+    // Define RecordIterator as the Iterator type for Table
+    using Iterator = RecordIterator;
+
     explicit Table(std::shared_ptr<common::Schema> schema,
                    std::shared_ptr<common::IAppendOnlyFileSystem> fs,
                    const std::string& table_name,
@@ -32,6 +92,11 @@ public:
 
     // Schema access
     const std::shared_ptr<common::Schema>& schema() const { return schema_; }
+
+    // Iterator creation
+    common::Result<std::shared_ptr<Iterator>> NewIterator(
+        common::HybridTime read_time = common::MaxHybridTime(),
+        common::IteratorMode mode = common::IteratorMode::Default) const;
 
 private:
     // Convert between Record and DataChunk

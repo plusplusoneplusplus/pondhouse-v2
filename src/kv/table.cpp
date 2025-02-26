@@ -87,6 +87,20 @@ common::Result<void> Table::UpdateColumn(const Key& key,
     return Put(key, std::move(record));
 }
 
+common::Result<std::shared_ptr<Table::Iterator>> Table::NewIterator(common::HybridTime read_time,
+                                                                    common::IteratorMode mode) const {
+    // Get the base KvTable iterator
+    auto base_iter_result = KvTable::NewIterator(read_time, mode);
+    if (!base_iter_result.ok()) {
+        return common::Result<std::shared_ptr<Iterator>>::failure(base_iter_result.error());
+    }
+
+    // Create and return a RecordIterator that wraps the base iterator
+    auto record_iter = std::make_shared<RecordIterator>(base_iter_result.value(), schema_, read_time, mode);
+
+    return common::Result<std::shared_ptr<Iterator>>::success(record_iter);
+}
+
 common::Result<common::DataChunk> Table::SerializeRecord(const Record& record) const {
     return common::Result<common::DataChunk>::success(record.Serialize());
 }

@@ -376,4 +376,150 @@ TEST_F(TableTest, RecoveryFromWALAndSSTables) {
     EXPECT_EQ(get_result.value()->Get<common::DataChunk>(2).value(), common::DataChunk::FromString("value"));
 }
 
+//
+// Test Setup:
+//      Insert multiple records and verify iterator can traverse them correctly
+// Test Result:
+//      Iterator should return valid Record objects for each key in order
+//
+TEST_F(TableTest, RecordIterator) {
+    // Insert multiple records
+    std::vector<std::string> keys = {"key1", "key2", "key3", "key4", "key5"};
+    std::vector<int32_t> ids = {1, 2, 3, 4, 5};
+
+    for (size_t i = 0; i < keys.size(); i++) {
+        auto record = CreateTestRecord(ids[i], "test" + std::to_string(i), "value" + std::to_string(i));
+        VERIFY_RESULT(table_->Put(keys[i], std::move(record)));
+    }
+
+    // Create an iterator
+    auto iter_result = table_->NewIterator();
+    VERIFY_RESULT(iter_result);
+    auto iter = iter_result.value();
+
+    // Seek to beginning and iterate through all records
+    iter->Seek("");
+
+    size_t count = 0;
+    std::vector<std::string> found_keys;
+
+    while (iter->Valid()) {
+        // Verify the key and record
+        found_keys.push_back(iter->key());
+        EXPECT_FALSE(iter->IsTombstone());
+
+        const auto& record = iter->value();
+        ASSERT_TRUE(record != nullptr);
+
+        // Find the expected index based on the key
+        auto it = std::find(keys.begin(), keys.end(), iter->key());
+        ASSERT_NE(it, keys.end());
+        size_t idx = std::distance(keys.begin(), it);
+
+        // Verify record contents
+        EXPECT_EQ(record->Get<int32_t>(0).value(), ids[idx]);
+        EXPECT_EQ(record->Get<std::string>(1).value(), "test" + std::to_string(idx));
+        EXPECT_EQ(record->Get<common::DataChunk>(2).value(),
+                  common::DataChunk::FromString("value" + std::to_string(idx)));
+
+        iter->Next();
+        count++;
+    }
+
+    // Verify we found all keys
+    EXPECT_EQ(count, keys.size());
+
+    // Sort the found keys to compare with expected keys
+    std::sort(found_keys.begin(), found_keys.end());
+    std::sort(keys.begin(), keys.end());
+    EXPECT_EQ(found_keys, keys);
+
+    // Test seeking to a specific key
+    iter->Seek("key3");
+    ASSERT_TRUE(iter->Valid());
+    EXPECT_EQ(iter->key(), "key3");
+    EXPECT_EQ(iter->value()->Get<int32_t>(0).value(), 3);
+
+    // Test seeking to a non-existent key
+    iter->Seek("key35");
+    if (iter->Valid()) {
+        // Should be at the next key after "key35" in lexicographical order
+        EXPECT_GT(iter->key(), "key35");
+    }
+
+    // Test iterator after deleting a key
+    VERIFY_RESULT(table_->Delete("key2"));
+
+    auto iter2_result = table_->NewIterator();
+    VERIFY_RESULT(iter2_result);
+    auto iter2 = iter2_result.value();
+
+    iter2->Seek("key2");
+    if (iter2->Valid() && iter2->key() == "key2") {
+        // If we found key2, it should be a tombstone
+        EXPECT_TRUE(iter2->IsTombstone());
+    }
+
+    // Count non-tombstone entries
+    iter2->Seek("");
+    count = 0;
+    while (iter2->Valid()) {
+        if (!iter2->IsTombstone()) {
+            count++;
+        }
+        iter2->Next();
+    }
+
+    EXPECT_EQ(count, keys.size() - 1);  // One key was deleted
+}
+
+//
+// Test Setup:
+//      Create an iterator on an empty table and verify its behavior
+// Test Result:
+//      Iterator should not be valid and should handle operations gracefully
+//
+TEST_F(TableTest, EmptyTableIterator) {
+    // Create an iterator on the empty table
+    auto iter_result = table_->NewIterator();
+    VERIFY_RESULT(iter_result);
+    auto iter = iter_result.value();
+
+    // Seek to beginning
+    iter->Seek("");
+
+    // Iterator should not be valid since table is empty
+    EXPECT_FALSE(iter->Valid());
+
+    // Calling Next() on an invalid iterator should not crash
+    iter->Next();
+    EXPECT_FALSE(iter->Valid());
+
+    // Seeking to a specific key should also result in an invalid iterator
+    iter->Seek("any_key");
+    EXPECT_FALSE(iter->Valid());
+
+    // Add a record and verify iterator now works
+    auto record = CreateTestRecord(1, "test", "value");
+    VERIFY_RESULT(table_->Put("key1", std::move(record)));
+
+    // Create a new iterator
+    auto iter2_result = table_->NewIterator();
+    VERIFY_RESULT(iter2_result);
+    auto iter2 = iter2_result.value();
+
+    // Seek to beginning
+    iter2->Seek("");
+
+    // Iterator should now be valid
+    EXPECT_TRUE(iter2->Valid());
+    EXPECT_EQ(iter2->key(), "key1");
+    EXPECT_FALSE(iter2->IsTombstone());
+    EXPECT_NE(iter2->value(), nullptr);
+
+    // After moving past the only record, iterator should become invalid
+    iter2->Next();
+    EXPECT_FALSE(iter2->Valid());
+}
+
 }  // namespace pond::kv
