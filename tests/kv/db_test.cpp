@@ -16,7 +16,9 @@ class DBTest : public ::testing::Test {
 protected:
     void SetUp() override {
         fs_ = std::make_shared<common::MemoryAppendOnlyFileSystem>();
-        db_ = std::make_unique<DB>(fs_, "test_db");
+        auto db_result = DB::Create(fs_, "test_db");
+        VERIFY_RESULT(db_result);
+        db_ = std::move(db_result.value());
     }
 
     std::shared_ptr<Schema> CreateTestSchema(const std::string& prefix = "") const {
@@ -38,8 +40,25 @@ protected:
     }
 
     std::shared_ptr<common::MemoryAppendOnlyFileSystem> fs_;
-    std::unique_ptr<DB> db_;
+    std::shared_ptr<DB> db_;
 };
+
+TEST_F(DBTest, FailedDBCreation) {
+    // Test with a null filesystem
+    auto null_fs_result = DB::Create(nullptr, "test_db");
+    EXPECT_FALSE(null_fs_result.ok());
+    EXPECT_EQ(null_fs_result.error().code(), ErrorCode::InvalidArgument);
+
+    // Test with an empty database name
+    auto empty_name_result = DB::Create(fs_, "");
+    EXPECT_FALSE(empty_name_result.ok());
+    EXPECT_EQ(empty_name_result.error().code(), ErrorCode::InvalidArgument);
+
+    // Test with an invalid database name
+    auto invalid_name_result = DB::Create(fs_, "invalid_name///");
+    EXPECT_FALSE(invalid_name_result.ok());
+    EXPECT_EQ(invalid_name_result.error().code(), ErrorCode::InvalidArgument);
+}
 
 TEST_F(DBTest, CreateAndGetTable) {
     // Create a table
@@ -156,7 +175,10 @@ TEST_F(DBTest, Recovery) {
     VERIFY_RESULT(db_->Flush());
 
     // Create a new DB instance with the same fs
-    auto new_db = std::make_unique<DB>(fs_, "test_db");
+    auto new_db_result = DB::Create(fs_, "test_db");
+    VERIFY_RESULT(new_db_result);
+    auto new_db = std::move(new_db_result.value());
+
     VERIFY_RESULT(new_db->Recover());
 
     // Verify tables were recovered

@@ -22,7 +22,6 @@ public:
     static constexpr const char* SYSTEM_TABLE = "__system";
     static constexpr const char* TABLES_KEY = "tables";
 
-    explicit DB(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& db_name);
     ~DB() = default;
 
     // Table operations
@@ -35,7 +34,14 @@ public:
     common::Result<void> Flush();
     common::Result<void> Recover();
 
+    static common::Result<std::shared_ptr<DB>> Create(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
+                                                      const std::string& db_name);
+
 private:
+    DB(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& db_name);
+
+    common::Result<void> Initialize();
+
     // System table operations
     common::Result<void> InitSystemTable();
     common::Result<void> SaveTableMetadata(const std::string& table_name,

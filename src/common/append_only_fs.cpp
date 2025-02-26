@@ -7,7 +7,7 @@
 #include <unordered_map>
 
 #include "common/error.h"
-#include "log.h"
+#include "common/log.h"
 #include "memory_append_only_fs.h"
 
 namespace pond::common {

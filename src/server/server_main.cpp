@@ -31,7 +31,13 @@ int main(int argc, char** argv) {
 
     // Create the database
     auto fs = std::make_shared<pond::common::LocalAppendOnlyFileSystem>();
-    auto db = std::make_shared<pond::kv::DB>(fs, db_name);
+    auto db_result = pond::kv::DB::Create(fs, db_name);
+    if (!db_result.ok()) {
+        LOG_ERROR("Failed to create database: %s", db_result.error().message().c_str());
+        return 1;
+    }
+
+    auto db = std::move(db_result.value());
 
     // Create the service implementation
     auto service = std::make_unique<pond::server::PondServiceImpl>(db);

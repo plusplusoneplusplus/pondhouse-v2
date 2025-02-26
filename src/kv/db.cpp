@@ -4,9 +4,30 @@
 
 #include "common/data_chunk.h"
 #include "common/log.h"
+#include "common/validation.h"
 #include "kv/record.h"
 
 namespace pond::kv {
+
+common::Result<std::shared_ptr<DB>> DB::Create(std::shared_ptr<common::IAppendOnlyFileSystem> fs,
+                                               const std::string& db_name) {
+    using ReturnType = common::Result<std::shared_ptr<DB>>;
+
+    if (!fs) {
+        return common::Result<std::shared_ptr<DB>>::failure(common::ErrorCode::InvalidArgument,
+                                                            "Filesystem cannot be null");
+    }
+
+    if (!common::ValidateName(db_name)) {
+        return common::Result<std::shared_ptr<DB>>::failure(common::ErrorCode::InvalidArgument,
+                                                            "Database name is invalid");
+    }
+
+    auto dbPtr = new DB(fs, db_name);
+    auto init_result = dbPtr->Initialize();
+    RETURN_IF_ERROR_T(ReturnType, init_result);
+    return common::Result<std::shared_ptr<DB>>::success(std::shared_ptr<DB>(dbPtr));
+}
 
 std::shared_ptr<common::Schema> DB::CreateSystemTableSchema() {
     std::vector<common::ColumnSchema> columns = {
@@ -17,20 +38,21 @@ std::shared_ptr<common::Schema> DB::CreateSystemTableSchema() {
 }
 
 DB::DB(std::shared_ptr<common::IAppendOnlyFileSystem> fs, const std::string& db_name)
-    : fs_(std::move(fs)), db_name_(db_name) {
+    : fs_(std::move(fs)), db_name_(db_name) {}
+
+common::Result<void> DB::Initialize() {
+    using ReturnType = common::Result<void>;
+
     // Create DB directory if it doesn't exist
     if (!fs_->Exists(db_name_)) {
         auto result = fs_->CreateDirectory(db_name_);
-        if (!result.ok()) {
-            throw std::runtime_error("Failed to create DB directory: " + result.error().message());
-        }
+        RETURN_IF_ERROR_T(ReturnType, result);
     }
 
     // Initialize system table
     auto init_result = InitSystemTable();
-    if (!init_result.ok()) {
-        throw std::runtime_error("Failed to initialize system table: " + init_result.error().message());
-    }
+    RETURN_IF_ERROR_T(ReturnType, init_result);
+    return common::Result<void>::success();
 }
 
 common::Result<void> DB::InitSystemTable() {
@@ -92,8 +114,8 @@ common::Result<std::shared_ptr<common::Schema>> DB::LoadTableSchema(const std::s
 common::Result<void> DB::CreateTable(const std::string& table_name, std::shared_ptr<common::Schema> schema) {
     using ReturnType = common::Result<void>;
 
-    if (table_name.empty()) {
-        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Table name cannot be empty");
+    if (!common::ValidateName(table_name)) {
+        return common::Result<void>::failure(common::ErrorCode::InvalidArgument, "Table name is invalid");
     }
 
     if (!schema) {
@@ -175,9 +197,9 @@ common::Result<void> DB::DropTable(const std::string& table_name) {
 }
 
 common::Result<std::shared_ptr<Table>> DB::GetTable(const std::string& table_name) {
-    if (table_name.empty()) {
+    if (!common::ValidateName(table_name)) {
         return common::Result<std::shared_ptr<Table>>::failure(common::ErrorCode::InvalidArgument,
-                                                               "Table name cannot be empty");
+                                                               "Table name is invalid");
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
