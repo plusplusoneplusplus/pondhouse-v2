@@ -238,7 +238,7 @@ TEST_F(KVCatalogTest, DISABLED_CreateSnapshotAndListFiles) {
 // Test Result:
 //      Should successfully update the schema with new field
 //
-TEST_F(KVCatalogTest, DISABLED_UpdateSchema) {
+TEST_F(KVCatalogTest, UpdateSchema) {
     auto schema = CreateTestSchema();
     auto spec = CreateTestPartitionSpec();
 
@@ -266,7 +266,7 @@ TEST_F(KVCatalogTest, DISABLED_UpdateSchema) {
 // Test Result:
 //      Properties should be updated successfully
 //
-TEST_F(KVCatalogTest, DISABLED_UpdateTableProperties) {
+TEST_F(KVCatalogTest, UpdateTableProperties) {
     auto schema = CreateTestSchema();
     auto spec = CreateTestPartitionSpec();
 

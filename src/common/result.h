@@ -22,7 +22,7 @@
     do {                                                                           \
         auto result_tmp = (expr);                                                  \
         if (result_tmp.hasError()) {                                               \
-            LOG_ERROR("Failed to %s: %s. File: %s, Line: %d",                      \
+            LOG_ERROR("Failed (%s): Result: %s. File: %s, Line: %d",               \
                       #expr,                                                       \
                       result_tmp.error().message().c_str(),                        \
                       __FILE__,                                                    \

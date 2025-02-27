@@ -43,7 +43,11 @@ common::Result<void> KvTable::Put(const std::string& key, const common::DataChun
     auto wal_result = WriteToWAL(entry);
     RETURN_IF_ERROR_T(ReturnType, wal_result);
 
-    LOG_VERBOSE("Wrote to WAL(lsn=%llu), key=%s, valueSize=%zu", entry.lsn(), key.c_str(), value.Size());
+    LOG_VERBOSE("Table %s: Wrote to WAL(lsn=%llu), key=%s, valueSize=%zu",
+                table_name_.c_str(),
+                entry.lsn(),
+                key.c_str(),
+                value.Size());
 
     // Check if memtable needs to be flushed
     if (active_memtable_->ShouldFlush()) {
@@ -64,7 +68,10 @@ common::Result<common::DataChunk> KvTable::Get(const std::string& key, bool acqu
     // Try memtable first
     auto result = active_memtable_->Get(key, common::GetNextHybridTime());
     if (result.ok()) {
-        LOG_VERBOSE("Found in memtable, key=%s, valueSize=%zu", key.c_str(), result.value().Size());
+        LOG_VERBOSE("Table %s: Found in memtable, key=%s, valueSize=%zu",
+                    table_name_.c_str(),
+                    key.c_str(),
+                    result.value().Size());
         return result;
     }
 
@@ -150,7 +157,7 @@ common::Result<bool> KvTable::Recover() {
     }
 
     if (wal_files.empty()) {
-        LOG_STATUS("No active WAL files found.");
+        LOG_STATUS("Table %s: No active WAL files found.", table_name_.c_str());
         return common::Result<bool>::success(true);
     }
 
@@ -228,7 +235,7 @@ common::Result<common::LSN> KvTable::WriteToWAL(KvEntry& entry) {
 
 common::Result<void> KvTable::SwitchMemTable() {
     if (next_wal_sequence_ == 0) {
-        LOG_ERROR("WAL sequence number is 0");
+        LOG_ERROR("Table %s: WAL sequence number is 0", table_name_.c_str());
         return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "WAL sequence number is 0");
     }
 
@@ -249,7 +256,8 @@ common::Result<void> KvTable::SwitchMemTable() {
     auto track_result = metadata_state_machine_->Replicate(entry.Serialize());
     RETURN_IF_ERROR_T(ReturnType, track_result);
 
-    LOG_VERBOSE("Flushed memtable to SSTable, seq number=%llu, table state=%s",
+    LOG_VERBOSE("Table %s: Flushed memtable to SSTable, seq number=%llu, table state=%s",
+                table_name_.c_str(),
                 next_wal_sequence_,
                 metadata_state_machine_->ToString().c_str());
 
@@ -274,7 +282,8 @@ common::Result<void> KvTable::RotateWAL() {
     wal_->set_current_lsn(next_wal_sequence_);
     RETURN_IF_ERROR_T(ReturnType, open_result);
 
-    LOG_VERBOSE("Rotated WAL, seq number=%llu, table state=%s",
+    LOG_VERBOSE("Table %s: Rotated WAL, seq number=%llu, table state=%s",
+                table_name_.c_str(),
                 next_wal_sequence_,
                 metadata_state_machine_->ToString().c_str());
 
