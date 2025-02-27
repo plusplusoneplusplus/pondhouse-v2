@@ -58,6 +58,10 @@ public:
             throw std::out_of_range("Column index out of range");
         }
 
+        if (col_idx >= values_.size()) {
+            throw std::out_of_range("Column index out of data range");
+        }
+
         if constexpr (!std::is_same_v<T, common::DataChunk>) {
             const auto& column = schema_->columns()[col_idx];
             if (!IsTypeCompatible<T>(column.type)) {
@@ -66,7 +70,7 @@ public:
         }
 
         if (IsNull(col_idx)) {
-            return common::Result<T>::failure(common::ErrorCode::InvalidOperation, "Column is null");
+            return common::Result<T>::failure(common::ErrorCode::NullValue, "Column is null");
         }
 
         return UnpackValue<T>(values_[col_idx].value());

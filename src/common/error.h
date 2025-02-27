@@ -17,6 +17,7 @@ enum class ErrorCode {
     DeserializationError = 8,
     EndOfStream = 9,
     Timeout = 10,
+    NullValue = 11,
 
     // File system errors
     FileNotFound = 100,

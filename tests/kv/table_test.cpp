@@ -15,8 +15,9 @@ namespace pond::kv {
 class TableTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        std::vector<ColumnSchema> columns = {
-            {"id", ColumnType::INT32}, {"name", ColumnType::STRING}, {"value", ColumnType::BINARY}};
+        std::vector<ColumnSchema> columns = {{"id", ColumnType::INT32},       // id column
+                                             {"name", ColumnType::STRING},    // name column
+                                             {"value", ColumnType::BINARY}};  // value column
         schema_ = std::make_shared<Schema>(std::move(columns));
 
         fs_ = std::make_shared<common::MemoryAppendOnlyFileSystem>();
@@ -54,6 +55,31 @@ TEST_F(TableTest, BasicOperations) {
     VERIFY_RESULT(table_->Delete("key1"));
     get_result = table_->Get("key1");
     EXPECT_FALSE(get_result.ok());
+}
+
+TEST_F(TableTest, PartialRecordInsert) {
+    // Create a record with only id and name fields set (omitting value field)
+    auto record = std::make_unique<Record>(schema_);
+    record->Set(0, 42);                             // Set id field
+    record->Set(1, std::string("partial_record"));  // Set name field
+    // Deliberately not setting the value field
+
+    // Put the partial record
+    VERIFY_RESULT(table_->Put("partial_key", std::move(record)));
+
+    // Get and verify the record
+    auto get_result = table_->Get("partial_key");
+    VERIFY_RESULT(get_result);
+    auto& retrieved_record = get_result.value();
+
+    // Verify the fields we set
+    EXPECT_EQ(retrieved_record->Get<int32_t>(0).value(), 42);
+    EXPECT_EQ(retrieved_record->Get<std::string>(1).value(), "partial_record");
+
+    // The value field should be null/default since we didn't set it
+    auto value_result = retrieved_record->Get<common::DataChunk>(2);
+    EXPECT_FALSE(value_result.ok());
+    EXPECT_EQ(value_result.error().code(), common::ErrorCode::NullValue);
 }
 
 TEST_F(TableTest, PutIfNotExists) {
