@@ -56,6 +56,41 @@ TEST_F(TableTest, BasicOperations) {
     EXPECT_FALSE(get_result.ok());
 }
 
+TEST_F(TableTest, PutIfNotExists) {
+    // Test PutIfNotExists on a new key
+    auto record1 = CreateTestRecord(1, "test1", "value1");
+    auto result = table_->PutIfNotExists("key1", std::move(record1));
+    VERIFY_RESULT(result);
+    EXPECT_TRUE(result.value());  // Should return true for successful put
+
+    // Verify the record was inserted
+    auto get_result = table_->Get("key1");
+    VERIFY_RESULT(get_result);
+    auto record = std::move(get_result).value();
+    EXPECT_EQ(record->Get<int32_t>(0).value(), 1);
+    EXPECT_EQ(record->Get<std::string>(1).value(), "test1");
+    EXPECT_EQ(record->Get<common::DataChunk>(2).value().ToString(), "value1");
+
+    // Try PutIfNotExists on an existing key
+    auto record2 = CreateTestRecord(2, "test2", "value2");
+    result = table_->PutIfNotExists("key1", std::move(record2));
+    VERIFY_RESULT(result);
+    EXPECT_FALSE(result.value());  // Should return false since key exists
+
+    // Verify the original record is unchanged
+    get_result = table_->Get("key1");
+    VERIFY_RESULT(get_result);
+    record = std::move(get_result).value();
+    EXPECT_EQ(record->Get<int32_t>(0).value(), 1);                              // Still the original value
+    EXPECT_EQ(record->Get<std::string>(1).value(), "test1");                    // Still the original value
+    EXPECT_EQ(record->Get<common::DataChunk>(2).value().ToString(), "value1");  // Still the original value
+
+    // Test with empty key
+    auto record3 = CreateTestRecord(3, "test3", "value3");
+    result = table_->PutIfNotExists("", std::move(record3));
+    VERIFY_ERROR_CODE(result, common::ErrorCode::InvalidArgument);
+}
+
 TEST_F(TableTest, InvalidOperations) {
     // Test empty key
     auto record = CreateTestRecord(1, "test", "value");

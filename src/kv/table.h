@@ -86,6 +86,7 @@ public:
 
     // Schema-aware operations
     common::Result<void> Put(const Key& key, std::unique_ptr<Record> record);
+    common::Result<bool> PutIfNotExists(const Key& key, std::unique_ptr<Record> record);
     common::Result<std::unique_ptr<Record>> Get(const Key& key) const;
     common::Result<void> Delete(const Key& key);
     common::Result<void> UpdateColumn(const Key& key, const std::string& column_name, const common::DataChunk& value);
