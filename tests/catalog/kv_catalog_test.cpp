@@ -125,14 +125,50 @@ protected:
     std::shared_ptr<KVCatalog> catalog_;
 };
 
-TEST_F(KVCatalogTest, CreateAndLoadTable) {
-    //
-    // Test Setup:
-    //      Create a table with a schema and partition spec, then load it
-    // Test Result:
-    //      Should successfully create and then load the table metadata
-    //
+//
+// Test Setup:
+//      Acquire a lock for a table, verify it's acquired, then release it
+// Test Result:
+//      Should successfully acquire and release the lock
+//
+TEST_F(KVCatalogTest, AcquireAndReleaseLock) {
+    // Create a table first
+    auto schema = CreateTestSchema();
+    auto spec = CreateTestPartitionSpec();
+    auto create_result = catalog_->CreateTable("test_table", schema, spec, "/data/test_table");
+    VERIFY_RESULT(create_result);
 
+    // Acquire lock
+    auto acquire_result = catalog_->AcquireLock("test_table");
+    VERIFY_RESULT(acquire_result);
+    EXPECT_TRUE(acquire_result.value());
+
+    // Try to acquire the lock again - should fail or timeout
+    auto second_acquire_result = catalog_->AcquireLock("test_table", 500);  // Short timeout
+    EXPECT_FALSE(second_acquire_result.ok());
+    EXPECT_EQ(second_acquire_result.error().code(), common::ErrorCode::Timeout);
+
+    // Release the lock
+    auto release_result = catalog_->ReleaseLock("test_table");
+    VERIFY_RESULT(release_result);
+    EXPECT_TRUE(release_result.value());
+
+    // Now we should be able to acquire the lock again
+    auto reacquire_result = catalog_->AcquireLock("test_table");
+    VERIFY_RESULT(reacquire_result);
+    EXPECT_TRUE(reacquire_result.value());
+
+    // Clean up by releasing the lock
+    VERIFY_RESULT(catalog_->ReleaseLock("test_table"));
+}
+
+//
+// Test Setup:
+//      Create a table with a schema and partition spec, then load it
+// Test Result:
+//      Should successfully create and then load the table metadata
+//
+TEST_F(KVCatalogTest, CreateAndLoadTable) {
     auto schema = CreateTestSchema();
     auto spec = CreateTestPartitionSpec();
 

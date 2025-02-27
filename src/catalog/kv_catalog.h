@@ -21,6 +21,8 @@ namespace pond::catalog {
  * isolation and schema evolution capabilities.
  */
 class KVCatalog : public Catalog {
+    FRIEND_TEST(KVCatalogTest, AcquireAndReleaseLock);
+
 public:
     static constexpr const char* TABLE_PREFIX = "table/";
     static constexpr const char* META_SUFFIX = "/meta/";
@@ -74,7 +76,7 @@ public:
     // Partition spec evolution
     common::Result<TableMetadata> UpdatePartitionSpec(const std::string& name, const PartitionSpec& new_spec) override;
 
-private:
+protected:
     // Initialize the catalog tables
     common::Result<void> Initialize();
 
