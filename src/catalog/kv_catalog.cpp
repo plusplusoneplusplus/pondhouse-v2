@@ -422,7 +422,7 @@ common::Result<bool> KVCatalog::AcquireLock(const std::string& name, int64_t tim
         return common::Result<bool>::success(true);
     }
 
-    return common::Result<bool>::failure(common::ErrorCode::Failure,
+    return common::Result<bool>::failure(common::ErrorCode::Timeout,
                                          "Timeout waiting for lock on table '" + name + "'");
 }
 
