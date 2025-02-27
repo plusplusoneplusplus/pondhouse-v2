@@ -6,7 +6,8 @@
 namespace pond::catalog {
 
 namespace {
-const std::unordered_map<Operation, std::string> kOperationToString = {{Operation::APPEND, "append"},
+const std::unordered_map<Operation, std::string> kOperationToString = {{Operation::CREATE, "create"},
+                                                                       {Operation::APPEND, "append"},
                                                                        {Operation::REPLACE, "replace"},
                                                                        {Operation::DELETE, "delete"},
                                                                        {Operation::OVERWRITE, "overwrite"}};

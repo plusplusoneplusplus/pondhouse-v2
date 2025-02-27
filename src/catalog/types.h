@@ -12,8 +12,12 @@ using FieldId = int32_t;
 using SchemaId = int32_t;
 using PartitionSpecId = int32_t;
 
+//
+// NOTE: Update cpp file to reflect the new types
+//
+
 // Operation types for snapshots
-enum class Operation { APPEND, REPLACE, DELETE, OVERWRITE };
+enum class Operation { CREATE, APPEND, REPLACE, DELETE, OVERWRITE };
 
 // Partition transforms
 enum class Transform { IDENTITY, YEAR, MONTH, DAY, HOUR, BUCKET, TRUNCATE };

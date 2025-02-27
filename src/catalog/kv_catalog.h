@@ -108,7 +108,7 @@ protected:
     std::shared_ptr<pond::kv::Table> tables_table_;
     std::shared_ptr<pond::kv::Table> snapshots_table_;
     std::shared_ptr<pond::kv::Table> files_table_;
-    std::mutex mutex_;
+    std::recursive_mutex mutex_;
 };
 
 }  // namespace pond::catalog
