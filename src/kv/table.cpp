@@ -28,6 +28,21 @@ common::Result<void> Table::Put(const Key& key, std::unique_ptr<Record> record) 
     return KvTable::Put(key, data_result.value());
 }
 
+common::Result<bool> Table::PutIfNotExists(const Key& key, std::unique_ptr<Record> record) {
+    using ReturnType = common::Result<bool>;
+
+    // Check if the key exists
+    auto result = Get(key);
+    if (result.ok()) {
+        return ReturnType::success(false);
+    }
+
+    // Use base class Put
+    auto put_result = Put(key, std::move(record));
+    RETURN_IF_ERROR_T(ReturnType, put_result);
+    return ReturnType::success(true);
+}
+
 common::Result<std::unique_ptr<Record>> Table::Get(const Key& key) const {
     if (key.empty()) {
         return common::Result<std::unique_ptr<Record>>::failure(common::ErrorCode::InvalidArgument,

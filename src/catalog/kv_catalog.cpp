@@ -409,21 +409,17 @@ common::Result<bool> KVCatalog::AcquireLock(const std::string& name, int64_t tim
         record->Set(0, lock_key);
         record->Set(1, common::DataChunk::FromString("locked"));
 
-        auto put_result = tables_table_->Put(lock_key, std::move(record)
-                                             // TODO: FIXME
-                                             //, /* only_if_absent */ true
-        );
-        if (put_result.ok()) {
-            return common::Result<bool>::success(true);
-        }
+        auto put_result = tables_table_->PutIfNotExists(lock_key, std::move(record));
+        RETURN_IF_ERROR_T(common::Result<bool>, put_result);
 
         // If the error is not that the key already exists, return the error
-        if (put_result.error().code() != common::ErrorCode::FileAlreadyExists) {
-            return common::Result<bool>::failure(put_result.error());
+        if (!put_result.value()) {
+            // Wait and retry
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
         }
 
-        // Wait and retry
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        return common::Result<bool>::success(true);
     }
 
     return common::Result<bool>::failure(common::ErrorCode::Failure,
