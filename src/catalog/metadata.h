@@ -8,6 +8,7 @@
 
 #include "catalog/types.h"
 #include "common/schema.h"
+#include "common/time.h"
 
 namespace pond::catalog {
 
@@ -87,7 +88,7 @@ struct TableMetadata {
     TableId table_uuid;
     std::string location;
     int64_t last_sequence_number;
-    int64_t last_updated_ms;
+    common::Timestamp last_updated_time;
     SnapshotId current_snapshot_id;
     std::vector<Snapshot> snapshots;
     std::vector<PartitionSpec> partition_specs;
@@ -102,7 +103,7 @@ struct TableMetadata {
           table_uuid(std::move(table_uuid_)),
           location(std::move(location_)),
           last_sequence_number(0),
-          last_updated_ms(0),       // Will be set when committing
+          last_updated_time(0),     // Will be set when committing
           current_snapshot_id(-1),  // No snapshot yet
           schema(std::move(schema_)),
           properties(std::move(properties_)) {}

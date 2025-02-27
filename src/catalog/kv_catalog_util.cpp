@@ -16,7 +16,7 @@ static constexpr const char* KEY_TABLE_UUID = "table_uuid";
 static constexpr const char* KEY_FORMAT_VERSION = "format_version";
 static constexpr const char* KEY_LOCATION = "location";
 static constexpr const char* KEY_CURRENT_SNAPSHOT_ID = "current_snapshot_id";
-static constexpr const char* KEY_LAST_UPDATED_MS = "last_updated_ms";
+static constexpr const char* KEY_LAST_UPDATED_TIME = "last_updated_time";
 static constexpr const char* KEY_PROPERTIES = "properties";
 static constexpr const char* KEY_SCHEMA = "schema";
 static constexpr const char* KEY_PARTITION_SPECS = "partition_specs";
@@ -57,7 +57,7 @@ std::string SerializeTableMetadata(const TableMetadata& metadata) {
     doc.AddMember("table_uuid", rapidjson::Value(metadata.table_uuid.c_str(), allocator), allocator);
     doc.AddMember("location", rapidjson::Value(metadata.location.c_str(), allocator), allocator);
     doc.AddMember("last_sequence_number", metadata.last_sequence_number, allocator);
-    doc.AddMember("last_updated_ms", metadata.last_updated_ms, allocator);
+    doc.AddMember("last_updated_time", metadata.last_updated_time, allocator);
     doc.AddMember("current_snapshot_id", metadata.current_snapshot_id, allocator);
 
     // Serialize snapshots
@@ -154,7 +154,7 @@ Result<TableMetadata> DeserializeTableMetadata(const std::string& data) {
 
     // Validate required fields
     if (!doc.HasMember(KEY_TABLE_UUID) || !doc.HasMember(KEY_FORMAT_VERSION) || !doc.HasMember(KEY_LOCATION)
-        || !doc.HasMember(KEY_CURRENT_SNAPSHOT_ID) || !doc.HasMember(KEY_LAST_UPDATED_MS)
+        || !doc.HasMember(KEY_CURRENT_SNAPSHOT_ID) || !doc.HasMember(KEY_LAST_UPDATED_TIME)
         || !doc.HasMember(KEY_PROPERTIES) || !doc.HasMember(KEY_SCHEMA) || !doc.HasMember(KEY_PARTITION_SPECS)) {
         return Result<TableMetadata>::failure(ErrorCode::DeserializationError,
                                               "Missing required fields in table metadata JSON");
@@ -169,7 +169,7 @@ Result<TableMetadata> DeserializeTableMetadata(const std::string& data) {
 
     metadata.format_version = doc[KEY_FORMAT_VERSION].GetInt();
     metadata.current_snapshot_id = doc[KEY_CURRENT_SNAPSHOT_ID].GetInt64();
-    metadata.last_updated_ms = doc[KEY_LAST_UPDATED_MS].GetInt64();
+    metadata.last_updated_time = doc[KEY_LAST_UPDATED_TIME].GetInt64();
 
     // Extract properties
     const auto& properties = doc[KEY_PROPERTIES];

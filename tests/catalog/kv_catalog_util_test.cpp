@@ -127,7 +127,7 @@ protected:
         TableMetadata metadata(UUID::NewUUID().ToString(), "/data/test_table", schema, properties);
         metadata.format_version = 1;
         metadata.current_snapshot_id = 2;
-        metadata.last_updated_ms = 1648262400000;
+        metadata.last_updated_time = 1648262400000;
         metadata.last_sequence_number = 2;
 
         // Add partition specs
@@ -350,7 +350,7 @@ TEST_F(KVCatalogUtilTest, SerializeDeserializeTableMetadata) {
     EXPECT_EQ(deserialized.format_version, metadata.format_version);
     EXPECT_EQ(deserialized.location, metadata.location);
     EXPECT_EQ(deserialized.current_snapshot_id, metadata.current_snapshot_id);
-    EXPECT_EQ(deserialized.last_updated_ms, metadata.last_updated_ms);
+    EXPECT_EQ(deserialized.last_updated_time, metadata.last_updated_time);
 
     // Verify properties
     ASSERT_EQ(deserialized.properties.size(), metadata.properties.size());

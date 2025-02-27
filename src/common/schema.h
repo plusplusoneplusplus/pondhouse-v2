@@ -28,6 +28,10 @@ public:
     ColumnSchema(std::string name_, ColumnType type_, Nullability nullability_ = Nullability::NOT_NULL)
         : name(std::move(name_)), type(type_), nullability(nullability_) {}
 
+    bool operator==(const ColumnSchema& other) const {
+        return name == other.name && type == other.type && nullability == other.nullability;
+    }
+
     DataChunk Serialize() const override {
         rapidjson::StringBuffer buffer;
         rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
@@ -100,6 +104,10 @@ public:
         for (size_t i = 0; i < columns_.size(); i++) {
             column_indices_[columns_[i].name] = i;
         }
+    }
+
+    bool operator==(const Schema& other) const {
+        return column_indices_ == other.column_indices_ && columns_ == other.columns_;
     }
 
     Schema() = default;

@@ -39,8 +39,11 @@ common::Result<void> KvTable::Put(const std::string& key, const common::DataChun
 
     // Create and write WAL entry first
     KvEntry entry(key, value, common::INVALID_LSN, common::now(), EntryType::Put);
+
     auto wal_result = WriteToWAL(entry);
     RETURN_IF_ERROR_T(ReturnType, wal_result);
+
+    LOG_VERBOSE("Wrote to WAL(lsn=%llu), key=%s, valueSize=%zu", entry.lsn(), key.c_str(), value.Size());
 
     // Check if memtable needs to be flushed
     if (active_memtable_->ShouldFlush()) {
@@ -61,6 +64,7 @@ common::Result<common::DataChunk> KvTable::Get(const std::string& key, bool acqu
     // Try memtable first
     auto result = active_memtable_->Get(key, common::GetNextHybridTime());
     if (result.ok()) {
+        LOG_VERBOSE("Found in memtable, key=%s, valueSize=%zu", key.c_str(), result.value().Size());
         return result;
     }
 
@@ -224,6 +228,7 @@ common::Result<common::LSN> KvTable::WriteToWAL(KvEntry& entry) {
 
 common::Result<void> KvTable::SwitchMemTable() {
     if (next_wal_sequence_ == 0) {
+        LOG_ERROR("WAL sequence number is 0");
         return common::Result<void>::failure(common::ErrorCode::InvalidOperation, "WAL sequence number is 0");
     }
 

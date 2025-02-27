@@ -61,6 +61,7 @@ common::Result<void> DB::InitSystemTable() {
 
     try {
         system_table_ = std::make_shared<Table>(schema, fs_, system_path);
+        LOG_STATUS("Initialized system table at %s", system_path.c_str());
         return common::Result<void>::success();
     } catch (const std::exception& e) {
         return common::Result<void>::failure(common::ErrorCode::CreateTableFailed, e.what());
