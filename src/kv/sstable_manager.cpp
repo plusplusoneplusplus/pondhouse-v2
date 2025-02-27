@@ -81,7 +81,7 @@ public:
         std::shared_lock<std::shared_mutex> lock(mutex_);
 
         if (sstables_.empty()) {
-            return common::Result<common::DataChunk>::failure(common::ErrorCode::NotFound, "No SSTables found");
+            return common::Result<common::DataChunk>::failure(common::ErrorCode::NotFound, "No SSTables exist");
         }
 
         // Search L0 tables first (newest to oldest)
@@ -104,6 +104,7 @@ public:
 
             auto result = reader->Get(key, version);
             if (result.ok()) {
+                LOG_VERBOSE("Found in L0, key=%s, valueSize=%zu", key.c_str(), result.value().Size());
                 return result;
             }
             if (result.error().code() != common::ErrorCode::NotFound) {
@@ -132,6 +133,7 @@ public:
 
                 auto result = reader->Get(key, version);
                 if (result.ok()) {
+                    LOG_VERBOSE("Found in L%zu, key=%s, valueSize=%zu", level, key.c_str(), result.value().Size());
                     return result;
                 }
                 if (result.error().code() != common::ErrorCode::NotFound) {

@@ -100,7 +100,7 @@ protected:
     std::string GetTableFilesKey(const std::string& name, SnapshotId snapshot_id);
 
     // Utilities
-    int64_t GetCurrentTimeMillis();
+    common::Timestamp GetCurrentTime();
     TableId GenerateUuid();
 
     // Member variables

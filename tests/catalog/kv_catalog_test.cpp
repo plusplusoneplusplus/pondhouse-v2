@@ -192,6 +192,9 @@ TEST_F(KVCatalogTest, CreateAndLoadTable) {
     EXPECT_EQ(loaded_metadata.table_uuid, metadata.table_uuid);
     EXPECT_EQ(loaded_metadata.location, "/data/users");
     EXPECT_EQ(loaded_metadata.properties.size(), 2);
+
+    // Verify schema
+    EXPECT_EQ(*loaded_metadata.schema, *schema);
 }
 
 //

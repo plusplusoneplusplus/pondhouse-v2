@@ -25,7 +25,7 @@ constexpr const char* TABLE_UUID_FIELD = "table_uuid";                    // STR
 constexpr const char* FORMAT_VERSION_FIELD = "format_version";            // INT32
 constexpr const char* LOCATION_FIELD = "location";                        // STRING
 constexpr const char* CURRENT_SNAPSHOT_ID_FIELD = "current_snapshot_id";  // INT64
-constexpr const char* LAST_UPDATED_MS_FIELD = "last_updated_ms";          // INT64
+constexpr const char* LAST_UPDATED_TIME_FIELD = "last_updated_time";      // INT64
 constexpr const char* PROPERTIES_FIELD = "properties";                    // BINARY (serialized map)
 constexpr const char* SCHEMA_FIELD = "schema";                            // BINARY (serialized schema)
 constexpr const char* PARTITION_SPECS_FIELD = "partition_specs";          // BINARY (serialized specs)
@@ -52,8 +52,8 @@ std::shared_ptr<common::Schema> CreateTablesTableSchema() {
                              .AddField(FORMAT_VERSION_FIELD, ColumnType::INT32)
                              .AddField(LOCATION_FIELD, ColumnType::STRING)
                              .AddField(CURRENT_SNAPSHOT_ID_FIELD, ColumnType::INT64)
-                             .AddField(LAST_UPDATED_MS_FIELD, ColumnType::INT64)
-                             .AddField(PROPERTIES_FIELD, ColumnType::BINARY)
+                             .AddField(LAST_UPDATED_TIME_FIELD, ColumnType::INT64)
+                             .AddField(PROPERTIES_FIELD, ColumnType::STRING)
                              .AddField(SCHEMA_FIELD, ColumnType::BINARY)
                              .AddField(PARTITION_SPECS_FIELD, ColumnType::BINARY)
                              .Build();
@@ -188,35 +188,25 @@ common::Result<TableMetadata> KVCatalog::CreateTable(const std::string& name,
 
     // Create initial table metadata
     TableMetadata metadata(table_uuid, location, schema, properties);
-    metadata.last_updated_ms = GetCurrentTimeMillis();
+    metadata.last_updated_time = GetCurrentTime();
     metadata.partition_specs.push_back(spec);
 
     // Create a record for the tables table
     auto record = std::make_unique<kv::Record>(tables_table_->schema());
-    record->Set(0, name);                          // TABLE_NAME_FIELD
-    record->Set(1, table_uuid);                    // TABLE_UUID_FIELD
-    record->Set(2, metadata.format_version);       // FORMAT_VERSION_FIELD
-    record->Set(3, location);                      // LOCATION_FIELD
-    record->Set(4, metadata.current_snapshot_id);  // CURRENT_SNAPSHOT_ID_FIELD
-    record->Set(5, metadata.last_updated_ms);      // LAST_UPDATED_MS_FIELD
+    record->Set(0, name);                                  // TABLE_NAME_FIELD
+    record->Set(1, table_uuid);                            // TABLE_UUID_FIELD
+    record->Set(2, metadata.format_version);               // FORMAT_VERSION_FIELD
+    record->Set(3, location);                              // LOCATION_FIELD
+    record->Set(4, metadata.current_snapshot_id);          // CURRENT_SNAPSHOT_ID_FIELD
+    record->Set(5, metadata.last_updated_time);            // LAST_UPDATED_TIME_FIELD
+    record->Set(6, SerializePartitionValues(properties));  // PROPERTIES_FIELD
 
-    // Serialize properties to binary
-    rapidjson::Document doc;
-    doc.SetObject();
-    auto& allocator = doc.GetAllocator();
-    for (const auto& [key, value] : properties) {
-        doc.AddMember(rapidjson::Value(key.c_str(), allocator), rapidjson::Value(value.c_str(), allocator), allocator);
-    }
-    rapidjson::StringBuffer buffer;
-    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-    doc.Accept(writer);
-    record->Set(6, common::DataChunk::FromString(buffer.GetString()));  // PROPERTIES_FIELD
-
-    // Serialize schema to binary (placeholder for now)
-    record->Set(7, common::DataChunk::FromString("schema_placeholder"));  // SCHEMA_FIELD
+    // Serialize schema to binary
+    record->Set(7, schema->Serialize());  // SCHEMA_FIELD
 
     // Serialize partition specs to binary
     rapidjson::Document specs_doc;
+    auto& allocator = specs_doc.GetAllocator();
     specs_doc.SetArray();
     for (const auto& spec : metadata.partition_specs) {
         rapidjson::Value spec_json(rapidjson::kObjectType);
@@ -265,35 +255,39 @@ common::Result<TableMetadata> KVCatalog::LoadTable(const std::string& name) {
 
     auto& record = get_result.value();
 
-    // Create a dummy schema for now (will be replaced with deserialized schema)
-    auto schema = std::make_shared<common::Schema>();
+    // Deserialize schema
+    auto schema_result = record->Get<common::DataChunk>(7);  // SCHEMA_FIELD
+    if (!schema_result.ok()) {
+        return common::Result<TableMetadata>::failure(schema_result.error());
+    }
+
+    std::shared_ptr<common::Schema> schema = std::make_shared<common::Schema>();
+    bool deserialize_success = schema->Deserialize(schema_result.value());
+    if (!deserialize_success) {
+        return common::Result<TableMetadata>::failure(common::ErrorCode::DeserializationError,
+                                                      "Failed to deserialize schema");
+    }
 
     // Get properties
-    auto properties_result = record->Get<common::DataChunk>(6);  // PROPERTIES_FIELD
+    auto properties_result = record->Get<std::string>(6);  // PROPERTIES_FIELD
     if (!properties_result.ok()) {
         return common::Result<TableMetadata>::failure(properties_result.error());
     }
 
-    std::unordered_map<std::string, std::string> properties;
-    rapidjson::Document doc;
-    doc.Parse(properties_result.value().ToString().c_str());
-    if (!doc.HasParseError() && doc.IsObject()) {
-        for (auto it = doc.MemberBegin(); it != doc.MemberEnd(); ++it) {
-            if (it->name.IsString() && it->value.IsString()) {
-                properties[it->name.GetString()] = it->value.GetString();
-            }
-        }
+    auto properties = DeserializePartitionValues(properties_result.value());
+    if (!properties.ok()) {
+        return common::Result<TableMetadata>::failure(properties.error());
     }
 
     // Create metadata object
     TableMetadata metadata(record->Get<std::string>(1).value(),  // TABLE_UUID_FIELD
                            record->Get<std::string>(3).value(),  // LOCATION_FIELD
                            schema,
-                           properties);
+                           properties.value());
 
-    metadata.format_version = record->Get<int32_t>(2).value();       // FORMAT_VERSION_FIELD
-    metadata.current_snapshot_id = record->Get<int64_t>(4).value();  // CURRENT_SNAPSHOT_ID_FIELD
-    metadata.last_updated_ms = record->Get<int64_t>(5).value();      // LAST_UPDATED_MS_FIELD
+    metadata.format_version = record->Get<int32_t>(2).value();               // FORMAT_VERSION_FIELD
+    metadata.current_snapshot_id = record->Get<int64_t>(4).value();          // CURRENT_SNAPSHOT_ID_FIELD
+    metadata.last_updated_time = record->Get<common::Timestamp>(5).value();  // LAST_UPDATED_TIME_FIELD
 
     // Deserialize partition specs
     auto specs_result = record->Get<common::DataChunk>(8);  // PARTITION_SPECS_FIELD
@@ -320,6 +314,7 @@ common::Result<bool> KVCatalog::CommitTransaction(const std::string& name,
     // Acquire lock for the table
     auto lock_result = AcquireLock(name);
     if (!lock_result.ok() || !lock_result.value()) {
+        LOG_ERROR("Failed to acquire lock for table '%s': %s", name.c_str(), lock_result.error().message().c_str());
         return common::Result<bool>::failure(common::ErrorCode::Failure,
                                              "Failed to acquire lock for table '" + name + "'");
     }
@@ -327,12 +322,16 @@ common::Result<bool> KVCatalog::CommitTransaction(const std::string& name,
     // Verify the base state matches the current state (optimistic concurrency)
     auto current_id_result = GetCurrentSnapshotId(name);
     if (!current_id_result.ok()) {
+        LOG_ERROR("Failed to get current snapshot ID for table '%s': %s",
+                  name.c_str(),
+                  current_id_result.error().message().c_str());
         ReleaseLock(name);
         return common::Result<bool>::failure(current_id_result.error());
     }
 
     if (current_id_result.value() != base.current_snapshot_id) {
         ReleaseLock(name);
+        LOG_ERROR("Concurrent modification detected. Table was modified since the transaction began.");
         return common::Result<bool>::failure(
             common::ErrorCode::InvalidOperation,
             "Concurrent modification detected. Table was modified since the transaction began.");
@@ -342,6 +341,8 @@ common::Result<bool> KVCatalog::CommitTransaction(const std::string& name,
     auto save_result = SaveTableMetadata(updated);
     if (!save_result.ok()) {
         ReleaseLock(name);
+        LOG_ERROR(
+            "Failed to save table metadata for table '%s': %s", name.c_str(), save_result.error().message().c_str());
         return common::Result<bool>::failure(save_result.error());
     }
 
@@ -350,12 +351,15 @@ common::Result<bool> KVCatalog::CommitTransaction(const std::string& name,
     auto put_result = PutRecord(current_key, std::to_string(updated.current_snapshot_id));
     if (!put_result.ok()) {
         ReleaseLock(name);
+        LOG_ERROR(
+            "Failed to update current pointer for table '%s': %s", name.c_str(), put_result.error().message().c_str());
         return common::Result<bool>::failure(put_result.error());
     }
 
     // Release the lock
     auto release_result = ReleaseLock(name);
     if (!release_result.ok() || !release_result.value()) {
+        LOG_ERROR("Failed to release lock for table '%s': %s", name.c_str(), release_result.error().message().c_str());
         return common::Result<bool>::failure(common::ErrorCode::Failure,
                                              "Failed to release lock for table '" + name + "'");
     }
@@ -384,11 +388,10 @@ common::Result<TableMetadata> KVCatalog::GetTableMetadata(const std::string& nam
 
 // Get current snapshot ID
 common::Result<SnapshotId> KVCatalog::GetCurrentSnapshotId(const std::string& name) {
+    using ReturnType = common::Result<SnapshotId>;
     auto current_key = GetTableCurrentKey(name);
     auto get_result = GetRecordValue(current_key);
-    if (!get_result.ok()) {
-        return common::Result<SnapshotId>::failure(get_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, get_result);
 
     try {
         return common::Result<SnapshotId>::success(std::stoll(get_result.value()));
@@ -401,9 +404,9 @@ common::Result<SnapshotId> KVCatalog::GetCurrentSnapshotId(const std::string& na
 // Lock management
 common::Result<bool> KVCatalog::AcquireLock(const std::string& name, int64_t timeout_ms) {
     auto lock_key = GetTableLockKey(name);
-    auto start_time = GetCurrentTimeMillis();
+    auto start_time = GetCurrentTime();
 
-    while (GetCurrentTimeMillis() - start_time < timeout_ms) {
+    while (GetCurrentTime() - start_time < timeout_ms) {
         // Try to create the lock record
         auto record = std::make_unique<kv::Record>(tables_table_->schema());
         record->Set(0, lock_key);
@@ -454,8 +457,8 @@ std::string KVCatalog::GetTableFilesKey(const std::string& name, SnapshotId snap
 }
 
 // Utilities
-int64_t KVCatalog::GetCurrentTimeMillis() {
-    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+Timestamp KVCatalog::GetCurrentTime() {
+    return now();
 }
 
 TableId KVCatalog::GenerateUuid() {
@@ -498,9 +501,9 @@ common::Result<TableMetadata> KVCatalog::CreateSnapshot(const std::string& name,
     if (metadata.current_snapshot_id >= 0) {
         snapshot_record->Set(2, metadata.current_snapshot_id);  // PARENT_SNAPSHOT_ID_FIELD
     }
-    snapshot_record->Set(3, GetCurrentTimeMillis());  // TIMESTAMP_MS_FIELD
-    snapshot_record->Set(4, OperationToString(op));   // OPERATION_FIELD
-    snapshot_record->Set(5, manifest_list);           // MANIFEST_LIST_FIELD
+    snapshot_record->Set(3, GetCurrentTime());       // TIMESTAMP_MS_FIELD
+    snapshot_record->Set(4, OperationToString(op));  // OPERATION_FIELD
+    snapshot_record->Set(5, manifest_list);          // MANIFEST_LIST_FIELD
 
     // Serialize summary to binary
     rapidjson::Document summary_doc;
@@ -555,7 +558,7 @@ common::Result<TableMetadata> KVCatalog::CreateSnapshot(const std::string& name,
 
     // Update the table metadata with the new snapshot
     metadata.current_snapshot_id = new_snapshot_id;
-    metadata.last_updated_ms = GetCurrentTimeMillis();
+    metadata.last_updated_time = GetCurrentTime();
     metadata.last_sequence_number++;
 
     // Update the table record
@@ -565,7 +568,7 @@ common::Result<TableMetadata> KVCatalog::CreateSnapshot(const std::string& name,
     table_record->Set(2, metadata.format_version);       // FORMAT_VERSION_FIELD
     table_record->Set(3, metadata.location);             // LOCATION_FIELD
     table_record->Set(4, metadata.current_snapshot_id);  // CURRENT_SNAPSHOT_ID_FIELD
-    table_record->Set(5, metadata.last_updated_ms);      // LAST_UPDATED_MS_FIELD
+    table_record->Set(5, metadata.last_updated_time);    // LAST_UPDATED_TIME_FIELD
 
     // Re-serialize properties and other fields (reuse from LoadTable)
     auto get_result = tables_table_->Get(name);
@@ -618,9 +621,12 @@ common::Result<std::vector<DataFile>> KVCatalog::ListDataFiles(const std::string
 // Update the schema for a table
 common::Result<TableMetadata> KVCatalog::UpdateSchema(const std::string& name,
                                                       std::shared_ptr<common::Schema> new_schema) {
+    using ReturnType = common::Result<TableMetadata>;
     // Load the current table metadata
     auto current_result = LoadTable(name);
     if (!current_result.ok()) {
+        LOG_ERROR(
+            "Failed to load table metadata for table '%s': %s", name.c_str(), current_result.error().message().c_str());
         return current_result;
     }
 
@@ -629,13 +635,11 @@ common::Result<TableMetadata> KVCatalog::UpdateSchema(const std::string& name,
 
     // Update the schema
     updated.schema = new_schema;
-    updated.last_updated_ms = GetCurrentTimeMillis();
+    updated.last_updated_time = GetCurrentTime();
 
     // Commit the transaction
     auto commit_result = CommitTransaction(name, current, updated);
-    if (!commit_result.ok()) {
-        return common::Result<TableMetadata>::failure(commit_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, commit_result);
 
     return common::Result<TableMetadata>::success(updated);
 }
@@ -653,7 +657,7 @@ common::Result<TableMetadata> KVCatalog::UpdatePartitionSpec(const std::string& 
 
     // Add the new partition spec (we keep history of all partition specs)
     updated.partition_specs.push_back(new_spec);
-    updated.last_updated_ms = GetCurrentTimeMillis();
+    updated.last_updated_time = GetCurrentTime();
 
     // Commit the transaction
     auto commit_result = CommitTransaction(name, current, updated);
@@ -811,11 +815,10 @@ common::Result<bool> KVCatalog::RenameTable(const std::string& name, const std::
 // Update table properties
 common::Result<TableMetadata> KVCatalog::UpdateTableProperties(
     const std::string& name, const std::unordered_map<std::string, std::string>& updates) {
+    using ReturnType = common::Result<TableMetadata>;
     // Load the current table metadata
     auto current_result = LoadTable(name);
-    if (!current_result.ok()) {
-        return current_result;
-    }
+    RETURN_IF_ERROR_T(ReturnType, current_result);
 
     TableMetadata current = current_result.value();
     TableMetadata updated = current;
@@ -825,13 +828,11 @@ common::Result<TableMetadata> KVCatalog::UpdateTableProperties(
         updated.properties[key] = value;
     }
 
-    updated.last_updated_ms = GetCurrentTimeMillis();
+    updated.last_updated_time = GetCurrentTime();
 
     // Commit the transaction
     auto commit_result = CommitTransaction(name, current, updated);
-    if (!commit_result.ok()) {
-        return common::Result<TableMetadata>::failure(commit_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, commit_result);
 
     return common::Result<TableMetadata>::success(updated);
 }
