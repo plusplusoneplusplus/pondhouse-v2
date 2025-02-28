@@ -44,6 +44,10 @@ public:
     common::Result<common::DataChunk> Get(const std::string& key, bool acquire_lock = true) const;
     common::Result<void> Delete(const std::string& key, bool acquire_lock = true);
 
+    // Prefix scan operation
+    common::Result<std::shared_ptr<Iterator>> ScanPrefix(
+        const std::string& prefix, common::IteratorMode mode = common::IteratorMode::Default) const;
+
     // Batch operations
     common::Result<void> BatchPut(const std::vector<std::pair<std::string, common::DataChunk>>& entries);
     common::Result<std::vector<common::Result<common::DataChunk>>> BatchGet(const std::vector<std::string>& keys) const;
@@ -55,9 +59,9 @@ public:
     common::Result<void> RotateWAL();
 
     // Iterator creation
-    common::Result<std::shared_ptr<Iterator>> NewIterator(
-        common::HybridTime read_time = common::MaxHybridTime(),
-        common::IteratorMode mode = common::IteratorMode::Default) const;
+    common::Result<std::shared_ptr<Iterator>> NewIterator(common::HybridTime read_time = common::MaxHybridTime(),
+                                                          common::IteratorMode mode = common::IteratorMode::Default,
+                                                          const std::string& prefix = "") const;
 
 private:
     // Write entry to WAL and return LSN
@@ -93,7 +97,8 @@ public:
     KvTableIterator(std::shared_ptr<MemTable::SnapshotIterator> memtable_iter,
                     std::shared_ptr<SSTableManager::Iterator> sstable_iter,
                     common::HybridTime read_time,
-                    common::IteratorMode mode)
+                    common::IteratorMode mode,
+                    const std::string& prefix = "")
         : SnapshotIterator<std::string, common::DataChunk>(read_time, mode) {
         // Set up L0 iterators (just the memtable)
         std::vector<std::shared_ptr<common::SnapshotIterator<std::string, common::DataChunk>>> l0_iters;
@@ -105,9 +110,9 @@ public:
         l1_iters.push_back(sstable_iter);
         level_iters.push_back(l1_iters);
 
-        // Create the union iterator
+        // Create the union iterator with prefix support
         union_iter_ = std::make_unique<common::UnionIterator<std::string, common::DataChunk>>(
-            l0_iters, level_iters, read_time, mode);
+            l0_iters, level_iters, read_time, mode, prefix);
     }
 
     // All iterator methods simply delegate to the union iterator

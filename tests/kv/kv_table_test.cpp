@@ -43,6 +43,269 @@ TEST_F(KvTableTest, BasicOperations) {
     EXPECT_FALSE(get_result.ok());
 }
 
+TEST_F(KvTableTest, PrefixScan) {
+    // Insert test data with different prefixes
+    VERIFY_RESULT(table_->Put("user:1", CreateTestValue("alice")));
+    VERIFY_RESULT(table_->Put("user:2", CreateTestValue("bob")));
+    VERIFY_RESULT(table_->Put("user:3", CreateTestValue("charlie")));
+    VERIFY_RESULT(table_->Put("post:1", CreateTestValue("post1")));
+    VERIFY_RESULT(table_->Put("post:2", CreateTestValue("post2")));
+
+    // Test scanning with "user:" prefix
+    {
+        auto iter_result = table_->ScanPrefix("user:");
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        // First entry
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:1");
+        EXPECT_EQ(iter.value().ToString(), "alice");
+
+        // Second entry
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:2");
+        EXPECT_EQ(iter.value().ToString(), "bob");
+
+        // Third entry
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:3");
+        EXPECT_EQ(iter.value().ToString(), "charlie");
+
+        // Should be at end
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());
+    }
+
+    // Test scanning with "post:" prefix
+    {
+        auto iter_result = table_->ScanPrefix("post:");
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        // First entry
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "post:1");
+        EXPECT_EQ(iter.value().ToString(), "post1");
+
+        // Second entry
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "post:2");
+        EXPECT_EQ(iter.value().ToString(), "post2");
+
+        // Should be at end
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());
+    }
+
+    // Test scanning with non-existent prefix
+    {
+        auto iter_result = table_->ScanPrefix("nonexistent:");
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+        ASSERT_FALSE(iter.Valid());
+    }
+
+    // Test scanning with empty prefix (should return all entries)
+    {
+        auto iter_result = table_->ScanPrefix("");
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        size_t count = 0;
+        while (iter.Valid()) {
+            count++;
+            iter.Next();
+        }
+        EXPECT_EQ(count, 5);
+    }
+
+    // Test scanning after some entries are deleted
+    VERIFY_RESULT(table_->Delete("user:2"));
+    {
+        auto iter_result = table_->ScanPrefix("user:");
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        // First entry
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:1");
+        EXPECT_EQ(iter.value().ToString(), "alice");
+
+        // Second entry (user:2 should be skipped due to deletion)
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:3");
+        EXPECT_EQ(iter.value().ToString(), "charlie");
+
+        // Should be at end
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());
+    }
+}
+
+TEST_F(KvTableTest, PrefixScanWithModes) {
+    // Insert test data with multiple versions and tombstones
+    VERIFY_RESULT(table_->Put("user:1", CreateTestValue("alice_v1")));
+    VERIFY_RESULT(table_->Put("user:2", CreateTestValue("bob_v1")));
+    VERIFY_RESULT(table_->Put("user:3", CreateTestValue("charlie_v1")));
+
+    // Flush to create first SSTable
+    VERIFY_RESULT(table_->Flush());
+
+    // Update and delete some entries
+    VERIFY_RESULT(table_->Put("user:1", CreateTestValue("alice_v2")));
+    VERIFY_RESULT(table_->Delete("user:2"));  // Create tombstone
+    VERIFY_RESULT(table_->Put("user:3", CreateTestValue("charlie_v2")));
+
+    // Flush to create second SSTable
+    VERIFY_RESULT(table_->Flush());
+
+    // Add newest versions
+    VERIFY_RESULT(table_->Put("user:1", CreateTestValue("alice_v3")));
+    VERIFY_RESULT(table_->Put("user:2", CreateTestValue("bob_v2")));  // Resurrect user:2
+    VERIFY_RESULT(table_->Put("user:3", CreateTestValue("charlie_v3")));
+
+    // Test default mode (should only show latest versions, skip tombstones)
+    {
+        auto iter_result = table_->ScanPrefix("user:");
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        // Should see all three users with their latest versions
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:1");
+        EXPECT_EQ(iter.value().ToString(), "alice_v3");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:2");
+        EXPECT_EQ(iter.value().ToString(), "bob_v2");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:3");
+        EXPECT_EQ(iter.value().ToString(), "charlie_v3");
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());
+    }
+
+    // Test with IncludeAllVersions mode
+    {
+        auto iter_result = table_->ScanPrefix("user:", common::IteratorMode::IncludeAllVersions);
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        // Should see all versions of user:1
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:1");
+        EXPECT_EQ(iter.value().ToString(), "alice_v3");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:1");
+        EXPECT_EQ(iter.value().ToString(), "alice_v2");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:1");
+        EXPECT_EQ(iter.value().ToString(), "alice_v1");
+
+        // Then all versions of user:2
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:2");
+        EXPECT_EQ(iter.value().ToString(), "bob_v2");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:2");
+        EXPECT_EQ(iter.value().ToString(), "bob_v1");
+
+        // Then all versions of user:3
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:3");
+        EXPECT_EQ(iter.value().ToString(), "charlie_v3");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:3");
+        EXPECT_EQ(iter.value().ToString(), "charlie_v2");
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:3");
+        EXPECT_EQ(iter.value().ToString(), "charlie_v1");
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());
+    }
+
+    // Test with IncludeTombstones and IncludeAllVersions mode
+    {
+        auto mode = common::IteratorMode::IncludeTombstones | common::IteratorMode::IncludeAllVersions;
+        auto iter_result = table_->ScanPrefix("user:", mode);
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        // Skip to user:2's versions to check tombstone
+        while (iter.Valid() && iter.key() == "user:1") {
+            iter.Next();
+        }
+
+        // Should see all versions of user:2, including tombstone
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:2");
+        EXPECT_EQ(iter.value().ToString(), "bob_v2");
+        EXPECT_FALSE(iter.IsTombstone());
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:2");
+        EXPECT_TRUE(iter.IsTombstone());
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:2");
+        EXPECT_EQ(iter.value().ToString(), "bob_v1");
+        EXPECT_FALSE(iter.IsTombstone());
+    }
+
+    // Delete an entry and test IncludeTombstones mode
+    VERIFY_RESULT(table_->Delete("user:1"));
+    {
+        auto iter_result = table_->ScanPrefix("user:", common::IteratorMode::IncludeTombstones);
+        VERIFY_RESULT(iter_result);
+        auto& iter = *iter_result.value();
+
+        // Should see the tombstone for user:1
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:1");
+        EXPECT_TRUE(iter.IsTombstone());
+
+        // Should see the latest versions of other users
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:2");
+        EXPECT_EQ(iter.value().ToString(), "bob_v2");
+        EXPECT_FALSE(iter.IsTombstone());
+
+        iter.Next();
+        ASSERT_TRUE(iter.Valid());
+        EXPECT_EQ(iter.key(), "user:3");
+        EXPECT_EQ(iter.value().ToString(), "charlie_v3");
+        EXPECT_FALSE(iter.IsTombstone());
+
+        iter.Next();
+        ASSERT_FALSE(iter.Valid());
+    }
+}
+
 TEST_F(KvTableTest, DeleteOperations) {
     // Insert and then delete
     auto value = CreateTestValue("value1");
@@ -219,27 +482,27 @@ TEST_F(KvTableTest, IteratorBasic) {
     iter.Seek("");
     ASSERT_TRUE(iter.Valid());
     EXPECT_EQ(iter.key(), "key1");
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(iter.value().Data()), iter.value().Size()), "value1_v3");
+    EXPECT_EQ(iter.value().ToString(), "value1_v3");
 
     iter.Next();
     ASSERT_TRUE(iter.Valid());
     EXPECT_EQ(iter.key(), "key2");
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(iter.value().Data()), iter.value().Size()), "value2");
+    EXPECT_EQ(iter.value().ToString(), "value2");
 
     iter.Next();
     ASSERT_TRUE(iter.Valid());
     EXPECT_EQ(iter.key(), "key3");
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(iter.value().Data()), iter.value().Size()), "value3");
+    EXPECT_EQ(iter.value().ToString(), "value3");
 
     iter.Next();
     ASSERT_TRUE(iter.Valid());
     EXPECT_EQ(iter.key(), "key4");
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(iter.value().Data()), iter.value().Size()), "value4");
+    EXPECT_EQ(iter.value().ToString(), "value4");
 
     iter.Next();
     ASSERT_TRUE(iter.Valid());
     EXPECT_EQ(iter.key(), "key5");
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(iter.value().Data()), iter.value().Size()), "value5");
+    EXPECT_EQ(iter.value().ToString(), "value5");
 
     iter.Next();
     ASSERT_FALSE(iter.Valid());

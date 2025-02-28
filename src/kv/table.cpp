@@ -116,6 +116,21 @@ common::Result<std::shared_ptr<Table::Iterator>> Table::NewIterator(common::Hybr
     return common::Result<std::shared_ptr<Iterator>>::success(record_iter);
 }
 
+common::Result<std::shared_ptr<Table::Iterator>> Table::ScanPrefix(const std::string& prefix,
+                                                                   common::IteratorMode mode) const {
+    // Get the base KvTable iterator for prefix scan
+    auto base_iter_result = KvTable::ScanPrefix(prefix, mode);
+    if (!base_iter_result.ok()) {
+        return common::Result<std::shared_ptr<Iterator>>::failure(base_iter_result.error());
+    }
+
+    // Create and return a RecordIterator that wraps the base iterator
+    auto record_iter =
+        std::make_shared<RecordIterator>(base_iter_result.value(), schema_, common::MaxHybridTime(), mode);
+
+    return common::Result<std::shared_ptr<Iterator>>::success(record_iter);
+}
+
 common::Result<common::DataChunk> Table::SerializeRecord(const Record& record) const {
     return common::Result<common::DataChunk>::success(record.Serialize());
 }

@@ -15,6 +15,7 @@ enum class IteratorMode : uint64_t {
     Default = 0,
     IncludeTombstones = 1 << 1,
     IncludeAllVersions = 1 << 2,
+    PrefixScan = 1 << 3,  // New mode for prefix scanning
 };
 
 inline IteratorMode operator|(IteratorMode a, IteratorMode b) {
@@ -27,6 +28,12 @@ inline IteratorMode operator&(IteratorMode a, IteratorMode b) {
 
 inline bool CheckIteratorMode(IteratorMode mode, IteratorMode flag) {
     return (mode & flag) == flag;
+}
+
+// Helper function to check if a key matches a prefix
+template <typename K>
+inline bool KeyMatchesPrefix(const K& key, const K& prefix) {
+    return key.compare(0, prefix.length(), prefix) == 0;
 }
 
 /**
@@ -116,10 +123,12 @@ public:
     UnionIterator(std::vector<std::shared_ptr<SnapshotIterator<K, V>>> l0_iters,
                   std::vector<std::vector<std::shared_ptr<SnapshotIterator<K, V>>>> level_iters,
                   HybridTime read_time,
-                  IteratorMode mode)
+                  IteratorMode mode,
+                  const K& prefix = K())  // Add prefix parameter
         : SnapshotIterator<K, V>(read_time, mode),
           l0_iters_(std::move(l0_iters)),
-          level_iters_(std::move(level_iters)) {
+          level_iters_(std::move(level_iters)),
+          prefix_(prefix) {
         RefreshHeap();
     }
 
@@ -188,6 +197,11 @@ private:
         // Add valid L0 iterators to heap
         for (auto& iter : l0_iters_) {
             if (iter->Valid()) {
+                // Skip if we're in prefix scan mode and the key doesn't match the prefix
+                if (CheckIteratorMode(this->mode_, IteratorMode::PrefixScan)
+                    && !KeyMatchesPrefix(iter->key(), prefix_)) {
+                    continue;
+                }
                 heap.push(HeapEntry{iter, 0});
             }
         }
@@ -196,6 +210,11 @@ private:
         for (size_t level = 0; level < level_iters_.size(); ++level) {
             for (auto& iter : level_iters_[level]) {
                 if (iter->Valid()) {
+                    // Skip if we're in prefix scan mode and the key doesn't match the prefix
+                    if (CheckIteratorMode(this->mode_, IteratorMode::PrefixScan)
+                        && !KeyMatchesPrefix(iter->key(), prefix_)) {
+                        continue;
+                    }
                     heap.push(HeapEntry{iter, level + 1});
                 }
             }
@@ -268,6 +287,12 @@ private:
             Next();
             return;
         }
+
+        // If we're in prefix scan mode and the current key doesn't match the prefix,
+        // invalidate the iterator
+        if (CheckIteratorMode(this->mode_, IteratorMode::PrefixScan) && !KeyMatchesPrefix(current_key_, prefix_)) {
+            current_iter_ = nullptr;
+        }
     }
 
     std::vector<std::shared_ptr<SnapshotIterator<K, V>>> l0_iters_;
@@ -278,6 +303,7 @@ private:
     HybridTime current_version_;
     bool current_is_tombstone_;
     bool current_is_l0_;
+    K prefix_;  // Store the prefix for prefix scanning
 };
 
 }  // namespace pond::common

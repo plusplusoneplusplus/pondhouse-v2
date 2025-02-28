@@ -95,6 +95,12 @@ common::Result<void> KvTable::Delete(const std::string& key, bool acquire_lock) 
     return active_memtable_->Delete(key, 0 /* txn_id */);
 }
 
+common::Result<std::shared_ptr<KvTable::Iterator>> KvTable::ScanPrefix(const std::string& prefix,
+                                                                       common::IteratorMode mode) const {
+    // Create an iterator with PrefixScan mode
+    return NewIterator(common::MaxHybridTime(), mode | common::IteratorMode::PrefixScan, prefix);
+}
+
 common::Result<void> KvTable::BatchPut(const std::vector<std::pair<std::string, common::DataChunk>>& entries) {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -317,7 +323,8 @@ common::Result<void> KvTable::TrackMetadataOp(MetadataOpType op_type, const std:
 }
 
 common::Result<std::shared_ptr<KvTableIterator>> KvTable::NewIterator(common::HybridTime read_time,
-                                                                      common::IteratorMode mode) const {
+                                                                      common::IteratorMode mode,
+                                                                      const std::string& prefix) const {
     using ReturnType = common::Result<std::shared_ptr<KvTableIterator>>;
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -330,8 +337,15 @@ common::Result<std::shared_ptr<KvTableIterator>> KvTable::NewIterator(common::Hy
         sstable_manager_->NewSnapshotIterator(read_time, mode | common::IteratorMode::IncludeTombstones);
     RETURN_IF_ERROR_T(ReturnType, sstable_iter_result);
 
-    // Create combined iterator
-    return ReturnType::success(std::make_shared<KvTableIterator>(
-        std::move(memtable_iter), std::move(sstable_iter_result.value()), read_time, mode));
+    // Create combined iterator with prefix if in PrefixScan mode
+    auto iter = std::make_shared<KvTableIterator>(
+        std::move(memtable_iter), std::move(sstable_iter_result.value()), read_time, mode, prefix);
+
+    // If we're doing a prefix scan, seek to the prefix
+    if (CheckIteratorMode(mode, common::IteratorMode::PrefixScan)) {
+        iter->Seek(prefix);
+    }
+
+    return ReturnType::success(std::move(iter));
 }
 }  // namespace pond::kv
