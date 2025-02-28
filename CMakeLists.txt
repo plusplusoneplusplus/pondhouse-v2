@@ -233,6 +233,7 @@ add_executable(
     tests/common/iterator_test.cpp
     tests/common/lru_cache_test.cpp
     tests/common/result_test.cpp
+    tests/common/scope_exit_test.cpp
     tests/common/stream_test.cpp
     tests/common/time_test.cpp
     tests/common/uuid_test.cpp

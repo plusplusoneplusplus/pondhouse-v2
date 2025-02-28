@@ -19,6 +19,9 @@ namespace pond::catalog {
  * KVCatalog is an implementation of the Catalog interface that uses a key-value database
  * for persistent storage. It provides an Iceberg-like transactional catalog with snapshot
  * isolation and schema evolution capabilities.
+ *
+ * Known bugs:
+ * - Snapshot creation is not atomic, need underlying table support for atomic commit across different tables.
  */
 class KVCatalog : public Catalog {
     FRIEND_TEST(KVCatalogTest, AcquireAndReleaseLock);
@@ -86,7 +89,6 @@ protected:
 
     // Table metadata operations
     common::Result<void> SaveTableMetadata(const TableMetadata& metadata);
-    common::Result<TableMetadata> GetTableMetadata(const std::string& name, SnapshotId snapshot_id);
     common::Result<SnapshotId> GetCurrentSnapshotId(const std::string& name);
 
     // Lock management
@@ -103,11 +105,26 @@ protected:
     common::Timestamp GetCurrentTime();
     TableId GenerateUuid();
 
+    // Table metadata operations
+    common::Result<void> PutTableMetadata(const std::string& name, const TableMetadata& metadata);
+    common::Result<TableMetadata> GetTableMetadata(const std::string& name, SnapshotId snapshot_id);
+
+    common::Result<void> AddFilesToSnapshot(const std::string& name,
+                                            SnapshotId snapshot_id,
+                                            const std::vector<DataFile>& files);
+
     // Member variables
     std::shared_ptr<pond::kv::DB> db_;
+
+    // Stores TableMetadata
     std::shared_ptr<pond::kv::Table> tables_table_;
+
+    // Stores Snapshots
     std::shared_ptr<pond::kv::Table> snapshots_table_;
+
+    // Stores Files
     std::shared_ptr<pond::kv::Table> files_table_;
+
     std::recursive_mutex mutex_;
 };
 
