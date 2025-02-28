@@ -33,9 +33,11 @@ const std::unordered_map<std::string, Transform> kStringToTransform = {{"identit
                                                                        {"bucket", Transform::BUCKET},
                                                                        {"truncate", Transform::TRUNCATE}};
 
-const std::unordered_map<FileFormat, std::string> kFileFormatToString = {{FileFormat::PARQUET, "parquet"}};
+const std::unordered_map<FileFormat, std::string> kFileFormatToString = {{FileFormat::UNKNOWN, "unknown"},
+                                                                         {FileFormat::PARQUET, "parquet"}};
 
-const std::unordered_map<std::string, FileFormat> kStringToFileFormat = {{"parquet", FileFormat::PARQUET}};
+const std::unordered_map<std::string, FileFormat> kStringToFileFormat = {{"unknown", FileFormat::UNKNOWN},
+                                                                         {"parquet", FileFormat::PARQUET}};
 }  // namespace
 
 std::string OperationToString(Operation op) {

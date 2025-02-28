@@ -57,6 +57,8 @@ struct DataFile {
           partition_values(std::move(partition_values_)),
           record_count(record_count_),
           file_size_bytes(file_size_bytes_) {}
+
+    DataFile() : file_path(""), format(FileFormat::UNKNOWN), record_count(0), file_size_bytes(0) {}
 };
 
 struct Snapshot {

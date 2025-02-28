@@ -23,7 +23,7 @@ enum class Operation { CREATE, APPEND, REPLACE, DELETE, OVERWRITE };
 enum class Transform { IDENTITY, YEAR, MONTH, DAY, HOUR, BUCKET, TRUNCATE };
 
 // File format types
-enum class FileFormat { PARQUET };
+enum class FileFormat { UNKNOWN, PARQUET };
 
 // Convert enums to string for serialization
 std::string OperationToString(Operation op);
