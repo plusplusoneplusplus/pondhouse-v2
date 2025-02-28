@@ -99,6 +99,10 @@ public:
         common::HybridTime read_time = common::MaxHybridTime(),
         common::IteratorMode mode = common::IteratorMode::Default) const;
 
+    // Prefix scan operation
+    common::Result<std::shared_ptr<Iterator>> ScanPrefix(
+        const std::string& prefix, common::IteratorMode mode = common::IteratorMode::Default) const;
+
 private:
     // Convert between Record and DataChunk
     common::Result<common::DataChunk> SerializeRecord(const Record& record) const;
