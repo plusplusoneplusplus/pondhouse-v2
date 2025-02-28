@@ -106,7 +106,9 @@ protected:
     TableId GenerateUuid();
 
     // Table metadata operations
-    common::Result<void> PutTableMetadata(const std::string& name, const TableMetadata& metadata);
+    common::Result<void> PutTableMetadata(bool create_if_not_exists,
+                                          const std::string& name,
+                                          const TableMetadata& metadata);
     common::Result<TableMetadata> GetTableMetadata(const std::string& name, SnapshotId snapshot_id);
 
     common::Result<void> AddFilesToSnapshot(const std::string& name,

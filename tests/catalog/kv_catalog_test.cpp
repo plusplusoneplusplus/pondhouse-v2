@@ -422,7 +422,7 @@ TEST_F(KVCatalogTest, JsonSerialization) {
 // Test Result:
 //      Partition values should be properly serialized in JSON format
 //
-TEST_F(KVCatalogTest, DISABLED_JsonPartitionValues) {
+TEST_F(KVCatalogTest, JsonPartitionValues) {
     auto schema = CreateTestSchema();
     auto spec = CreateTestPartitionSpec();
 

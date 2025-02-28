@@ -169,7 +169,9 @@ common::Result<std::string> KVCatalog::GetRecordValue(const std::string& key) {
     return common::Result<std::string>::success(value_result.value().ToString());
 }
 
-common::Result<void> KVCatalog::PutTableMetadata(const std::string& name, const TableMetadata& metadata) {
+common::Result<void> KVCatalog::PutTableMetadata(bool create_if_not_exists,
+                                                 const std::string& name,
+                                                 const TableMetadata& metadata) {
     // Create a record for the tables table
     auto record = std::make_unique<kv::Record>(tables_table_->schema());
     record->Set(0, name);                                               // TABLE_NAME_FIELD
@@ -182,7 +184,20 @@ common::Result<void> KVCatalog::PutTableMetadata(const std::string& name, const 
     record->Set(7, metadata.schema->Serialize());                       // SCHEMA_FIELD
     record->Set(8, SerializePartitionSpecs(metadata.partition_specs));  // PARTITION_SPECS_FIELD
 
-    return tables_table_->Put(name, std::move(record));
+    if (create_if_not_exists) {
+        auto put_result = tables_table_->PutIfNotExists(name, std::move(record));
+        RETURN_IF_ERROR_T(common::Result<void>, put_result);
+
+        if (!put_result.value()) {
+            return common::Result<void>::failure(common::ErrorCode::FileAlreadyExists,
+                                                 "Table '" + name + "' already exists");
+        }
+    } else {
+        auto put_result = tables_table_->Put(name, std::move(record));
+        RETURN_IF_ERROR_T(common::Result<void>, put_result);
+    }
+
+    return common::Result<void>::success();
 }
 
 // Create a new table
@@ -191,14 +206,9 @@ common::Result<TableMetadata> KVCatalog::CreateTable(const std::string& name,
                                                      const PartitionSpec& spec,
                                                      const std::string& location,
                                                      const std::unordered_map<std::string, std::string>& properties) {
-    auto lock = std::unique_lock(mutex_);
+    using ReturnType = common::Result<TableMetadata>;
 
-    // Check if table already exists
-    auto get_result = tables_table_->Get(name);
-    if (get_result.ok()) {
-        return common::Result<TableMetadata>::failure(common::ErrorCode::FileAlreadyExists,
-                                                      "Table '" + name + "' already exists");
-    }
+    auto lock = std::unique_lock(mutex_);
 
     // Generate a UUID for the table
     TableId table_uuid = GenerateUuid();
@@ -216,10 +226,8 @@ common::Result<TableMetadata> KVCatalog::CreateTable(const std::string& name,
         initial_metadata.schema = schema;
         initial_metadata.partition_specs = {spec};
 
-        auto put_result = PutTableMetadata(name, initial_metadata);
-        if (!put_result.ok()) {
-            return common::Result<TableMetadata>::failure(put_result.error());
-        }
+        auto put_result = PutTableMetadata(true /* create_if_not_exists */, name, initial_metadata);
+        RETURN_IF_ERROR_T(ReturnType, put_result);
     }
 
     // Create an initial empty snapshot for the table using the existing CreateSnapshot function
@@ -247,7 +255,15 @@ common::Result<TableMetadata> KVCatalog::CreateTable(const std::string& name,
         LOG_ERROR("Failed to update current pointer for table '%s': %s",
                   name.c_str(),
                   current_put_result.error().message().c_str());
-        // Continue anyway since the table record has the correct snapshot ID
+
+        // Delete the table record
+        auto delete_result = tables_table_->Delete(name);
+        if (!delete_result.ok()) {
+            LOG_ERROR("Failed to clean up table record after current pointer update failure: %s",
+                      delete_result.error().message().c_str());
+        }
+
+        return common::Result<TableMetadata>::failure(current_put_result.error());
     }
 
     return common::Result<TableMetadata>::success(updated_metadata);
@@ -567,7 +583,7 @@ common::Result<TableMetadata> KVCatalog::CreateSnapshot(const std::string& name,
     metadata.last_updated_time = GetCurrentTime();
     metadata.last_sequence_number++;
 
-    auto table_put_result = PutTableMetadata(name, metadata);
+    auto table_put_result = PutTableMetadata(false /* create_if_not_exists */, name, metadata);
     RETURN_IF_ERROR_T(ReturnType, table_put_result);
 
     return common::Result<TableMetadata>::success(metadata);
@@ -596,10 +612,32 @@ common::Result<std::vector<DataFile>> KVCatalog::ListDataFiles(const std::string
             "Snapshot ID " + std::to_string(target_snapshot_id) + " not found for table '" + name + "'");
     }
 
-    // List all files for this snapshot
-    // TODO: Implement scan with prefix in Table interface
-    // For now, we'll return an empty vector
+    // List all files for this snapshot using prefix scan
+    std::string files_prefix = name + "/" + std::to_string(target_snapshot_id) + "/";
+    auto iter_result = files_table_->ScanPrefix(files_prefix);
+    if (!iter_result.ok()) {
+        return common::Result<std::vector<DataFile>>::failure(iter_result.error());
+    }
+
     std::vector<DataFile> files;
+    auto iter = iter_result.value();
+    for (iter->Seek(files_prefix); iter->Valid(); iter->Next()) {
+        const auto& record = iter->value();
+
+        DataFile file;
+        file.file_path = record->Get<std::string>(2).value();                     // FILE_PATH_FIELD
+        file.format = FileFormatFromString(record->Get<std::string>(3).value());  // FILE_FORMAT_FIELD
+        file.record_count = record->Get<int64_t>(4).value();                      // RECORD_COUNT_FIELD
+        file.file_size_bytes = record->Get<int64_t>(5).value();                   // FILE_SIZE_FIELD
+
+        // Get partition values
+        auto partition_values_result = record->Get<common::DataChunk>(6);  // PARTITION_VALUES_FIELD
+        if (partition_values_result.ok()) {
+            file.partition_values = DeserializePartitionValues(partition_values_result.value().ToString()).value();
+        }
+
+        files.push_back(std::move(file));
+    }
 
     return common::Result<std::vector<DataFile>>::success(files);
 }
