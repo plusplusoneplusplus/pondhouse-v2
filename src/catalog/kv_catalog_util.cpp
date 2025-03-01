@@ -624,4 +624,60 @@ Result<std::vector<DataFile>> DeserializeDataFileList(const std::string& data) {
     return Result<std::vector<DataFile>>::success(std::move(files));
 }
 
+std::shared_ptr<common::Schema> GetTablesTableSchema() {
+    static auto schema = common::CreateSchemaBuilder()
+                             .AddField(TABLE_NAME_FIELD, common::ColumnType::STRING)
+                             .AddField(TABLE_UUID_FIELD, common::ColumnType::STRING)
+                             .AddField(FORMAT_VERSION_FIELD, common::ColumnType::INT32)
+                             .AddField(LOCATION_FIELD, common::ColumnType::STRING)
+                             .AddField(CURRENT_SNAPSHOT_ID_FIELD, common::ColumnType::INT64)
+                             .AddField(LAST_UPDATED_TIME_FIELD, common::ColumnType::INT64)
+                             .AddField(PROPERTIES_FIELD, common::ColumnType::STRING)
+                             .AddField(SCHEMA_FIELD, common::ColumnType::BINARY)
+                             .AddField(PARTITION_SPECS_FIELD, common::ColumnType::STRING)
+                             .Build();
+    return schema;
+}
+
+std::shared_ptr<common::Schema> GetSnapshotsTableSchema() {
+    static auto schema = common::CreateSchemaBuilder()
+                             .AddField(TABLE_NAME_FIELD, common::ColumnType::STRING)
+                             .AddField(SNAPSHOT_ID_FIELD, common::ColumnType::INT64)
+                             .AddField(PARENT_SNAPSHOT_ID_FIELD, common::ColumnType::INT64)
+                             .AddField(TIMESTAMP_MS_FIELD, common::ColumnType::INT64)
+                             .AddField(OPERATION_FIELD, common::ColumnType::STRING)
+                             .AddField(MANIFEST_LIST_FIELD, common::ColumnType::STRING)
+                             .AddField(SUMMARY_FIELD, common::ColumnType::BINARY)
+                             .Build();
+    return schema;
+}
+
+std::shared_ptr<common::Schema> GetFilesTableSchema() {
+    static auto schema = common::CreateSchemaBuilder()
+                             .AddField(TABLE_NAME_FIELD, common::ColumnType::STRING)
+                             .AddField(SNAPSHOT_ID_FIELD, common::ColumnType::INT64)
+                             .AddField(FILE_PATH_FIELD, common::ColumnType::STRING)
+                             .AddField(FILE_FORMAT_FIELD, common::ColumnType::STRING)
+                             .AddField(RECORD_COUNT_FIELD, common::ColumnType::INT64)
+                             .AddField(FILE_SIZE_FIELD, common::ColumnType::INT64)
+                             .AddField(PARTITION_VALUES_FIELD, common::ColumnType::BINARY)
+                             .Build();
+    return schema;
+}
+
+std::unique_ptr<kv::Record> CreateTableMetadataRecord(const std::string& name, const TableMetadata& metadata) {
+    auto record = std::make_unique<kv::Record>(GetTablesTableSchema());
+    record->Set(0, name);                                               // TABLE_NAME_FIELD
+    record->Set(1, metadata.table_uuid);                                // TABLE_UUID_FIELD
+    record->Set(2, metadata.format_version);                            // FORMAT_VERSION_FIELD
+    record->Set(3, metadata.location);                                  // LOCATION_FIELD
+    record->Set(4, metadata.current_snapshot_id);                       // CURRENT_SNAPSHOT_ID_FIELD
+    record->Set(5, metadata.last_updated_time);                         // LAST_UPDATED_TIME_FIELD
+    record->Set(6, SerializePartitionValues(metadata.properties));      // PROPERTIES_FIELD
+    record->Set(7, metadata.schema->Serialize());                       // SCHEMA_FIELD
+    record->Set(8, SerializePartitionSpecs(metadata.partition_specs));  // PARTITION_SPECS_FIELD
+
+    return record;
+}
+
 }  // namespace pond::catalog

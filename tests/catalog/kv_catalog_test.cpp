@@ -183,6 +183,8 @@ TEST_F(KVCatalogTest, CreateAndLoadTable) {
     EXPECT_EQ(metadata.properties.at("owner"), "data_team");
     EXPECT_EQ(metadata.partition_specs.size(), 1);
     EXPECT_EQ(metadata.partition_specs[0].fields.size(), 1);
+    EXPECT_EQ(metadata.snapshots.size(), 1);  // initial snapshot
+    EXPECT_EQ(metadata.current_snapshot_id, 0);
 
     // Load the table
     auto load_result = catalog_->LoadTable("users");
@@ -203,7 +205,7 @@ TEST_F(KVCatalogTest, CreateAndLoadTable) {
 // Test Result:
 //      Should successfully create a snapshot and retrieve the files
 //
-TEST_F(KVCatalogTest, DISABLED_CreateSnapshotAndListFiles) {
+TEST_F(KVCatalogTest, CreateSnapshotAndListFiles) {
     auto schema = CreateTestSchema();
     auto spec = CreateTestPartitionSpec();
 
@@ -230,6 +232,45 @@ TEST_F(KVCatalogTest, DISABLED_CreateSnapshotAndListFiles) {
     EXPECT_EQ(listed_files[0].record_count, 1000);
     EXPECT_EQ(listed_files[1].file_path, "/data/users/data/year=2023/part-00001.parquet");
     EXPECT_EQ(listed_files[1].record_count, 1500);
+}
+
+//
+// Test Setup:
+//      Attempt to create snapshots with invalid operations and non-existent tables
+// Test Result:
+//      Should return appropriate error codes for invalid cases
+//
+TEST_F(KVCatalogTest, CreateSnapshotErrorHandling) {
+    auto schema = CreateTestSchema();
+    auto spec = CreateTestPartitionSpec();
+    auto files = CreateTestDataFiles();
+
+    // Try creating snapshot for non-existent table
+    auto missing_table_result = catalog_->CreateSnapshot("missing_table", files);
+    EXPECT_FALSE(missing_table_result.ok());
+    EXPECT_EQ(missing_table_result.error().code(), common::ErrorCode::TableNotFoundInCatalog);
+
+    // Create a valid table for remaining tests
+    auto create_result = catalog_->CreateTable("users", schema, spec, "/data/users");
+    VERIFY_RESULT(create_result);
+
+    // Try unsupported operations
+    auto delete_op_result = catalog_->CreateSnapshot("users", files, {}, Operation::DELETE);
+    EXPECT_FALSE(delete_op_result.ok());
+    EXPECT_EQ(delete_op_result.error().code(), common::ErrorCode::NotImplemented);
+
+    auto replace_op_result = catalog_->CreateSnapshot("users", files, {}, Operation::REPLACE);
+    EXPECT_FALSE(replace_op_result.ok());
+    EXPECT_EQ(replace_op_result.error().code(), common::ErrorCode::NotImplemented);
+
+    auto overwrite_op_result = catalog_->CreateSnapshot("users", files, {}, Operation::OVERWRITE);
+    EXPECT_FALSE(overwrite_op_result.ok());
+    EXPECT_EQ(overwrite_op_result.error().code(), common::ErrorCode::NotImplemented);
+
+    // Try invalid operation enum value
+    auto invalid_op_result = catalog_->CreateSnapshot("users", files, {}, static_cast<Operation>(999));
+    EXPECT_FALSE(invalid_op_result.ok());
+    EXPECT_EQ(invalid_op_result.error().code(), common::ErrorCode::InvalidOperation);
 }
 
 //
@@ -291,7 +332,7 @@ TEST_F(KVCatalogTest, UpdateTableProperties) {
 // Test Result:
 //      Should retrieve the correct files from the specified snapshot
 //
-TEST_F(KVCatalogTest, DISABLED_TimeTravel) {
+TEST_F(KVCatalogTest, TimeTravel) {
     auto schema = CreateTestSchema();
     auto spec = CreateTestPartitionSpec();
 
@@ -325,7 +366,7 @@ TEST_F(KVCatalogTest, DISABLED_TimeTravel) {
 // Test Result:
 //      Table should be successfully dropped and no longer accessible
 //
-TEST_F(KVCatalogTest, DISABLED_DropTable) {
+TEST_F(KVCatalogTest, DropTable) {
     auto schema = CreateTestSchema();
     auto spec = CreateTestPartitionSpec();
 
@@ -340,7 +381,7 @@ TEST_F(KVCatalogTest, DISABLED_DropTable) {
     // Try to load the dropped table
     auto load_result = catalog_->LoadTable("users");
     EXPECT_FALSE(load_result.ok());
-    EXPECT_EQ(load_result.error().code(), common::ErrorCode::FileNotFound);
+    EXPECT_EQ(load_result.error().code(), common::ErrorCode::TableNotFoundInCatalog);
 }
 
 //
@@ -353,12 +394,12 @@ TEST_F(KVCatalogTest, NonExistentTable) {
     // Try to load a non-existent table
     auto load_result = catalog_->LoadTable("non_existent");
     EXPECT_FALSE(load_result.ok());
-    EXPECT_EQ(load_result.error().code(), common::ErrorCode::FileNotFound);
+    EXPECT_EQ(load_result.error().code(), common::ErrorCode::TableNotFoundInCatalog);
 
     // Try to drop a non-existent table
     auto drop_result = catalog_->DropTable("non_existent");
     EXPECT_FALSE(drop_result.ok());
-    EXPECT_EQ(drop_result.error().code(), common::ErrorCode::FileNotFound);
+    EXPECT_EQ(drop_result.error().code(), common::ErrorCode::TableNotFoundInCatalog);
 }
 
 //
@@ -447,6 +488,74 @@ TEST_F(KVCatalogTest, JsonPartitionValues) {
         ASSERT_EQ(file.partition_values.size(), 1);
         EXPECT_EQ(file.partition_values.at("year"), "2024");
     }
+}
+
+//
+// Test Setup:
+//      Create a table and verify snapshot ID tracking
+// Test Result:
+//      Snapshot IDs should be tracked correctly in table metadata
+//
+TEST_F(KVCatalogTest, SnapshotIdTracking) {
+    auto schema = CreateTestSchema();
+    auto spec = CreateTestPartitionSpec();
+
+    // Create a table
+    auto create_result = catalog_->CreateTable("users", schema, spec, "/data/users");
+    VERIFY_RESULT(create_result);
+
+    // Verify initial snapshot ID
+    auto load_result = catalog_->LoadTable("users");
+    VERIFY_RESULT(load_result);
+    EXPECT_EQ(load_result.value().current_snapshot_id, 0);  // Initial snapshot ID
+
+    // Create a new snapshot
+    auto files = CreateTestDataFiles();
+    auto snapshot_result = catalog_->CreateSnapshot("users", files);
+    VERIFY_RESULT(snapshot_result);
+
+    // Verify snapshot ID is updated
+    load_result = catalog_->LoadTable("users");
+    VERIFY_RESULT(load_result);
+    EXPECT_EQ(load_result.value().current_snapshot_id, 1);  // New snapshot ID
+}
+
+//
+// Test Setup:
+//      Create a table, rename it, and verify metadata is moved
+// Test Result:
+//      Table metadata should be moved to new name
+//
+TEST_F(KVCatalogTest, RenameTableMetadata) {
+    auto schema = CreateTestSchema();
+    auto spec = CreateTestPartitionSpec();
+
+    // Create a table
+    auto create_result = catalog_->CreateTable("old_name", schema, spec, "/data/users");
+    VERIFY_RESULT(create_result);
+
+    // Create a snapshot to have non-zero snapshot ID
+    auto files = CreateTestDataFiles();
+    auto snapshot_result = catalog_->CreateSnapshot("old_name", files);
+    VERIFY_RESULT(snapshot_result);
+
+    // Get the current snapshot ID
+    auto load_result = catalog_->LoadTable("old_name");
+    VERIFY_RESULT(load_result);
+    auto current_id = load_result.value().current_snapshot_id;
+
+    // Rename the table
+    auto rename_result = catalog_->RenameTable("old_name", "new_name");
+    VERIFY_RESULT(rename_result);
+
+    // Verify old table doesn't exist
+    load_result = catalog_->LoadTable("old_name");
+    EXPECT_FALSE(load_result.ok());
+
+    // Verify new table has correct metadata
+    load_result = catalog_->LoadTable("new_name");
+    VERIFY_RESULT(load_result);
+    EXPECT_EQ(load_result.value().current_snapshot_id, current_id);
 }
 
 }  // namespace pond::catalog

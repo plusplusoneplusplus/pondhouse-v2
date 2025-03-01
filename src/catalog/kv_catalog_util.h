@@ -2,14 +2,17 @@
 
 #include "catalog/catalog.h"
 #include "catalog/metadata.h"
+#include "common/column_type.h"
 #include "common/error.h"
 #include "common/result.h"
+#include "kv/record.h"
 
 namespace pond::catalog {
 
 //
 // JSON conversion helpers
 //
+
 /**
  * Serializes a properties map to a JSON string.
  *
@@ -123,5 +126,50 @@ std::string SerializeDataFiles(const std::vector<DataFile>& files);
  * @return A Result containing either the deserialized data files or an error
  */
 common::Result<std::vector<DataFile>> DeserializeDataFiles(const std::string& data);
+
+//
+// kv/Record helpers
+//
+
+// Tables metadata schema
+constexpr const char* TABLE_NAME_FIELD = "table_name";                    // STRING (primary key)
+constexpr const char* TABLE_UUID_FIELD = "table_uuid";                    // STRING
+constexpr const char* FORMAT_VERSION_FIELD = "format_version";            // INT32
+constexpr const char* LOCATION_FIELD = "location";                        // STRING
+constexpr const char* CURRENT_SNAPSHOT_ID_FIELD = "current_snapshot_id";  // INT64
+constexpr const char* LAST_UPDATED_TIME_FIELD = "last_updated_time";      // INT64
+constexpr const char* PROPERTIES_FIELD = "properties";                    // BINARY (serialized map)
+constexpr const char* SCHEMA_FIELD = "schema";                            // BINARY (serialized schema)
+constexpr const char* PARTITION_SPECS_FIELD = "partition_specs";          // BINARY (serialized specs)
+
+// Snapshots metadata schema
+constexpr const char* SNAPSHOT_ID_FIELD = "snapshot_id";                // INT64
+constexpr const char* PARENT_SNAPSHOT_ID_FIELD = "parent_snapshot_id";  // INT64
+constexpr const char* TIMESTAMP_MS_FIELD = "timestamp_ms";              // INT64
+constexpr const char* OPERATION_FIELD = "operation";                    // STRING
+constexpr const char* MANIFEST_LIST_FIELD = "manifest_list";            // STRING
+constexpr const char* SUMMARY_FIELD = "summary";                        // BINARY (serialized map)
+
+// Files metadata schema
+constexpr const char* FILE_PATH_FIELD = "file_path";                // STRING
+constexpr const char* FILE_FORMAT_FIELD = "format";                 // STRING
+constexpr const char* RECORD_COUNT_FIELD = "record_count";          // INT64
+constexpr const char* FILE_SIZE_FIELD = "file_size_bytes";          // INT64
+constexpr const char* PARTITION_VALUES_FIELD = "partition_values";  // BINARY (serialized map)
+
+std::shared_ptr<common::Schema> GetTablesTableSchema();
+
+std::shared_ptr<common::Schema> GetSnapshotsTableSchema();
+
+std::shared_ptr<common::Schema> GetFilesTableSchema();
+
+/**
+ * Creates a record for a table metadata.
+ *
+ * @param name The name of the table
+ * @param metadata The table metadata
+ * @return A Result containing either the created record or an error
+ */
+std::unique_ptr<kv::Record> CreateTableMetadataRecord(const std::string& name, const TableMetadata& metadata);
 
 }  // namespace pond::catalog

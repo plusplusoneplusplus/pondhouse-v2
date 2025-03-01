@@ -25,6 +25,9 @@ namespace pond::catalog {
  */
 class KVCatalog : public Catalog {
     FRIEND_TEST(KVCatalogTest, AcquireAndReleaseLock);
+    FRIEND_TEST(KVCatalogTest, CurrentTableOperations);
+    FRIEND_TEST(KVCatalogTest, CurrentTableRename);
+    FRIEND_TEST(KVCatalogTest, CurrentTableDrop);
 
 public:
     static constexpr const char* TABLE_PREFIX = "table/";
@@ -88,8 +91,7 @@ protected:
     common::Result<std::string> GetRecordValue(const std::string& key);
 
     // Table metadata operations
-    common::Result<void> SaveTableMetadata(const TableMetadata& metadata);
-    common::Result<SnapshotId> GetCurrentSnapshotId(const std::string& name);
+    common::Result<TableMetadata> GetTableMetadata(const std::string& name, SnapshotId snapshot_id);
 
     // Lock management
     common::Result<bool> AcquireLock(const std::string& name, int64_t timeout_ms = 5000);
@@ -97,7 +99,6 @@ protected:
 
     // Key construction
     std::string GetTableMetadataKey(const std::string& name, SnapshotId snapshot_id);
-    std::string GetTableCurrentKey(const std::string& name);
     std::string GetTableLockKey(const std::string& name);
     std::string GetTableFilesKey(const std::string& name, SnapshotId snapshot_id);
 
@@ -109,7 +110,6 @@ protected:
     common::Result<void> PutTableMetadata(bool create_if_not_exists,
                                           const std::string& name,
                                           const TableMetadata& metadata);
-    common::Result<TableMetadata> GetTableMetadata(const std::string& name, SnapshotId snapshot_id);
 
     common::Result<void> AddFilesToSnapshot(const std::string& name,
                                             SnapshotId snapshot_id,
