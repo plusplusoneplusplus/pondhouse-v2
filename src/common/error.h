@@ -103,6 +103,9 @@ enum class ErrorCode {
 
     // Predicate engine errors
     PredicateEngineInvalidExpression = 700,
+
+    // Catalog errors
+    TableNotFoundInCatalog = 800,
 };
 
 class Error {

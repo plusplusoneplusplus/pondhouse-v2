@@ -178,6 +178,59 @@ The KVCatalog is an implementation of a metadata catalog system using key-value 
 
 ## Table Structure
 
+The catalog uses three key-value tables for metadata storage:
+
+1. **__tables**: Stores table metadata and current state
+   ```
+   Key: table_name
+   Value: Record containing:
+     - table_name: String (primary key)
+     - table_uuid: String (unique identifier)
+     - format_version: Int32 (schema version)
+     - location: String (data location)
+     - current_snapshot_id: Int64 (latest snapshot ID)
+     - last_updated_time: Int64 (timestamp)
+     - properties: Binary (serialized map)
+     - schema: Binary (serialized schema)
+     - partition_specs: Binary (serialized specs)
+   ```
+
+2. **__snapshots**: Stores snapshot history
+   ```
+   Key: "{table_name}/{snapshot_id}"
+   Value: Record containing:
+     - table_name: String
+     - snapshot_id: Int64
+     - parent_snapshot_id: Int64
+     - timestamp_ms: Int64
+     - operation: String (e.g., "CREATE", "APPEND")
+     - manifest_list: String (path)
+     - summary: Binary (serialized map)
+   ```
+
+3. **__files**: Stores data file metadata
+   ```
+   Key: "{table_name}/{snapshot_id}/{file_path}"
+   Value: Record containing:
+     - table_name: String
+     - snapshot_id: Int64
+     - file_path: String
+     - file_format: String
+     - record_count: Int64
+     - file_size_bytes: Int64
+     - partition_values: Binary (serialized map)
+   ```
+
+### Design Notes
+
+1. **Single Source of Truth**: The current snapshot ID is stored directly in the table metadata record in `__tables`, eliminating the need for a separate current pointer table. This simplifies the design and reduces potential inconsistencies.
+
+2. **Atomic Operations**: Table operations (create, update, rename) are protected by locks and use optimistic concurrency control by verifying the current snapshot ID hasn't changed during the transaction.
+
+3. **Time Travel**: Historical versions can be accessed using snapshot IDs, which are stored in the `__snapshots` table. Each snapshot maintains a link to its parent, creating a chain of table states.
+
+4. **Metadata Evolution**: Schema and partition specs are versioned within the table metadata, allowing for schema evolution while maintaining backward compatibility.
+
 ## Serialization
 
 The catalog uses JSON format for all data serialization, providing consistency and flexibility across different data types:
@@ -260,3 +313,4 @@ This consistent use of JSON format across all serialization provides:
 - Schema evolution support
 - Standard parsing and error handling
 - Easy integration with other tools and systems
+
