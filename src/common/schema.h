@@ -97,6 +97,13 @@ public:
                                                           static_cast<ColumnType>(value["type"].GetInt()),
                                                           static_cast<Nullability>(value["nullability"].GetInt())));
     }
+
+    std::string ToString() const {
+        std::stringstream ss;
+        ss << "ColumnSchema(" << name << ", " << ColumnTypeToString(type) << ", "
+           << (nullability == Nullability::NULLABLE ? "NULLABLE" : "NOT NULL") << ")";
+        return ss.str();
+    }
 };
 class Schema : public ISerializable {
 public:
@@ -112,9 +119,14 @@ public:
 
     Schema() = default;
 
+    // TODO: remove these methods and replace with FieldCount, Fields, Empty
     const std::vector<ColumnSchema>& columns() const { return columns_; }
     size_t num_columns() const { return columns_.size(); }
     bool empty() const { return columns_.empty(); }
+
+    size_t FieldCount() const { return columns_.size(); }
+    const std::vector<ColumnSchema>& Fields() const { return columns_; }
+    bool Empty() const { return columns_.empty(); }
 
     int GetColumnIndex(const std::string& name) const {
         auto it = column_indices_.find(name);
@@ -136,6 +148,16 @@ public:
     void AddField(const std::string& name, ColumnType type, bool nullable, const DataChunk& default_value) {
         // Store default value in the future if needed
         AddField(name, type, nullable ? Nullability::NULLABLE : Nullability::NOT_NULL);
+    }
+
+    bool HasField(const std::string& name) const { return column_indices_.find(name) != column_indices_.end(); }
+
+    const ColumnSchema& GetColumn(const std::string& name) const {
+        auto it = column_indices_.find(name);
+        if (it == column_indices_.end()) {
+            throw std::runtime_error("Column not found: " + name);
+        }
+        return columns_[it->second];
     }
 
     DataChunk Serialize() const override {
@@ -188,6 +210,16 @@ public:
             column_indices_[columns_[i].name] = i;
         }
         return true;
+    }
+
+    std::string ToString() const {
+        std::stringstream ss;
+        ss << "Schema(";
+        for (const auto& column : columns_) {
+            ss << column.ToString() << ", ";
+        }
+        ss << ")";
+        return ss.str();
     }
 
 private:
