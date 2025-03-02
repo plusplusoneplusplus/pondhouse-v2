@@ -428,7 +428,13 @@ TEST_F(SSTableManagerTest, MetadataStateTracking) {
     // Create initial SSTable
     {
         auto memtable = CreateTestMemTable(0, 100);
-        ASSERT_TRUE(manager_->CreateSSTableFromMemTable(*memtable).ok());
+        auto result = manager_->CreateSSTableFromMemTable(*memtable);
+        VERIFY_RESULT(result);
+
+        auto file_info = result.value();
+        EXPECT_EQ(file_info.level, 0);
+        EXPECT_TRUE(file_info.name.starts_with("L0_"));
+        EXPECT_TRUE(file_info.name.ends_with(".sst"));
     }
 
     // Verify metadata state machine has recorded the operation

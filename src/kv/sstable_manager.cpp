@@ -224,10 +224,24 @@ public:
                            largest_key};
         std::vector<FileInfo> files{file_info};
         TableMetadataEntry entry(MetadataOpType::CreateSSTable, files, {}, memtable.GetMetadata().GetFlushSequence());
-        auto track_result = metadata_state_machine_->Replicate(entry.Serialize());
-        if (!track_result.ok()) {
-            LOG_ERROR("Failed to track SSTable creation in metadata: %s", track_result.error().message().c_str());
-            // Continue despite tracking failure - the SSTable is still valid
+
+        // Replicate the operation to the metadata state machine
+        {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool replication_complete = false;
+            
+            auto track_result = metadata_state_machine_->Replicate(entry.Serialize(), [&]() {
+                std::unique_lock<std::mutex> lock2(mtx);
+                replication_complete = true;
+                cv.notify_one();
+            });
+
+            RETURN_IF_ERROR_T(ReturnType, track_result);
+
+            // Wait for replication to complete
+            std::unique_lock<std::mutex> lock2(mtx);
+            cv.wait(lock2, [&] { return replication_complete; });
         }
 
         return common::Result<FileInfo>::success(file_info);
