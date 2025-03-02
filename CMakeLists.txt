@@ -159,6 +159,7 @@ add_library(pondhouse_common
     src/format/sstable/sstable_writer.cpp
     src/format/sstable/sstable_reader.cpp
     src/format/sstable/sstable_format.cpp
+    src/format/parquet/schema_converter.cpp
     src/rsm/rsm.cpp
     src/rsm/snapshot_manager.cpp
     ${PROTO_SRCS}
@@ -240,6 +241,7 @@ add_executable(
     tests/rsm/replicated_state_machine_test.cpp
     tests/rsm/snapshot_manager_test.cpp
     tests/format/parquet/parquet_test.cpp
+    tests/format/parquet/schema_converter_test.cpp
     tests/format/sstable/sstable_reader_test.cpp
     tests/format/sstable/sstable_writer_test.cpp
     tests/format/sstable/sstable_format_test.cpp
