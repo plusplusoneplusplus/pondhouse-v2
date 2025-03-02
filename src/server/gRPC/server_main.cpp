@@ -7,7 +7,7 @@
 #include "common/append_only_fs.h"
 #include "common/log.h"
 #include "kv/db.h"
-#include "gRPC/pond_service_impl.h"
+#include "pond_service_impl.h"
 
 int main(int argc, char** argv) {
     // Initialize logging
