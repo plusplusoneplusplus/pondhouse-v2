@@ -161,10 +161,10 @@ add_library(pondhouse_common
     src/format/sstable/sstable_reader.cpp
     src/format/sstable/sstable_format.cpp
     src/format/parquet/schema_converter.cpp
-    # src/query/planner/logical_optimizer.cpp
-    # src/query/planner/logical_plan_node.cpp
-    # src/query/planner/logical_plan_printer.cpp
-    # src/query/planner/logical_planner.cpp
+    src/query/planner/logical_optimizer.cpp
+    src/query/planner/logical_plan_node.cpp
+    src/query/planner/logical_plan_printer.cpp
+    src/query/planner/logical_planner.cpp
     src/rsm/rsm.cpp
     src/rsm/snapshot_manager.cpp
     ${PROTO_SRCS}
@@ -175,6 +175,7 @@ add_library(pondhouse_common
 target_include_directories(pondhouse_common PUBLIC 
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party/rapidjson/include
+    ${CMAKE_SOURCE_DIR}/third_party/sql-parser/src
     ${Protobuf_INCLUDE_DIRS}
     ${PROTO_OUTPUT_DIR}
 )
@@ -265,6 +266,7 @@ add_executable(
     tests/kv/table_test.cpp
     tests/kv/versioned_value_test.cpp
     tests/main.cpp
+    tests/query/test_logical_planner.cpp
     tests/sql/hyrise_parser_test.cpp
     tests/test_helper.cpp
     tests/proto/metadata_test.cpp

@@ -30,5 +30,4 @@ std::string GenerateKey(int i, int width = 3);
 std::vector<std::string> GenerateKeys(int count, int width = 3);
 
 TestKvEntry GenerateTestKvEntry(const std::string& key, common::HybridTime version, const std::string& value);
-
 }  // namespace pond::test
