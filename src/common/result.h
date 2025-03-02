@@ -12,7 +12,7 @@
 
 #define RETURN_IF_ERROR(expr)        \
     do {                             \
-        auto result_tmp = (expr);    \
+        auto&& result_tmp = (expr);  \
         if (result_tmp.hasError()) { \
             return result_tmp;       \
         }                            \
@@ -20,7 +20,7 @@
 
 #define RETURN_IF_ERROR_T(T, expr)                                                 \
     do {                                                                           \
-        auto result_tmp = (expr);                                                  \
+        auto&& result_tmp = (expr);                                                \
         if (result_tmp.hasError()) {                                               \
             LOG_ERROR("Failed (%s): Result: %s. File: %s, Line: %d",               \
                       #expr,                                                       \

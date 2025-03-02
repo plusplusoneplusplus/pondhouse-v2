@@ -114,5 +114,49 @@ common::Result<std::shared_ptr<common::Schema>> SchemaConverter::FromArrowSchema
     return common::Result<std::shared_ptr<common::Schema>>::success(
         std::make_shared<common::Schema>(std::move(columns)));
 }
+common::Result<void> SchemaConverter::ValidateSchema(const std::shared_ptr<arrow::Schema>& schema,
+                                                     const std::shared_ptr<common::Schema>& table_schema) {
+    using ReturnType = common::Result<void>;
+
+    // Convert table schema to Arrow schema for comparison
+    auto table_arrow_schema = SchemaConverter::ToArrowSchema(*table_schema);
+    RETURN_IF_ERROR_T(ReturnType, table_arrow_schema);
+
+    if (schema->num_fields() != table_arrow_schema.value()->num_fields()) {
+        return ReturnType::failure(common::ErrorCode::SchemaMismatch,
+                                   "Schema field count mismatch. Expected "
+                                       + std::to_string(table_arrow_schema.value()->num_fields()) + " fields, got "
+                                       + std::to_string(schema->num_fields()));
+    }
+
+    for (int i = 0; i < schema->num_fields(); i++) {
+        const auto& input_field = schema->field(i);
+        const auto& table_field = table_arrow_schema.value()->field(i);
+
+        // Check name
+        if (input_field->name() != table_field->name()) {
+            return ReturnType::failure(common::ErrorCode::SchemaMismatch,
+                                       "Field name mismatch at index " + std::to_string(i) + ". Expected '"
+                                           + table_field->name() + "', got '" + input_field->name() + "'");
+        }
+
+        // Check type
+        if (!input_field->type()->Equals(table_field->type())) {
+            return ReturnType::failure(common::ErrorCode::SchemaMismatch,
+                                       "Field type mismatch for '" + input_field->name() + "'. Expected "
+                                           + table_field->type()->ToString() + ", got "
+                                           + input_field->type()->ToString());
+        }
+
+        // Check nullability (only if input field is NOT nullable but table field IS nullable)
+        if (!input_field->nullable() && table_field->nullable()) {
+            return ReturnType::failure(common::ErrorCode::SchemaMismatch,
+                                       "Field nullability mismatch for '" + input_field->name()
+                                           + "'. Table allows nulls but input data is non-nullable");
+        }
+    }
+
+    return ReturnType::success();
+}
 
 }  // namespace pond::format

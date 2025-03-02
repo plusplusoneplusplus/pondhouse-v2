@@ -32,6 +32,10 @@ public:
     // Convert Arrow schema to Pond schema
     [[nodiscard]] static common::Result<std::shared_ptr<common::Schema>> FromArrowSchema(
         const std::shared_ptr<arrow::Schema>& schema);
+
+    // Validate Arrow schema against Pond schema
+    [[nodiscard]] static common::Result<void> ValidateSchema(const std::shared_ptr<arrow::Schema>& schema,
+                                                             const std::shared_ptr<common::Schema>& table_schema);
 };
 
 }  // namespace pond::format

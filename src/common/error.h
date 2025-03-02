@@ -100,6 +100,7 @@ enum class ErrorCode {
 
     // Schema errors
     SchemaFieldNotFound = 600,
+    SchemaMismatch = 601,
 
     // Predicate engine errors
     PredicateEngineInvalidExpression = 700,
