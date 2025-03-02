@@ -13,6 +13,8 @@ protected:
         return common::CreateSchemaBuilder()
             .AddField("int32_col", common::ColumnType::INT32)
             .AddField("int64_col", common::ColumnType::INT64)
+            .AddField("uint32_col", common::ColumnType::UINT32)
+            .AddField("uint64_col", common::ColumnType::UINT64)
             .AddField("float_col", common::ColumnType::FLOAT)
             .AddField("double_col", common::ColumnType::DOUBLE)
             .AddField("string_col", common::ColumnType::STRING, true)
@@ -28,6 +30,8 @@ TEST_F(SchemaConverterTest, TestColumnTypeConversion) {
     // Test conversion from Pond to Arrow
     EXPECT_EQ(SchemaConverter::ToArrowDataType(common::ColumnType::INT32)->id(), arrow::Type::INT32);
     EXPECT_EQ(SchemaConverter::ToArrowDataType(common::ColumnType::INT64)->id(), arrow::Type::INT64);
+    EXPECT_EQ(SchemaConverter::ToArrowDataType(common::ColumnType::UINT32)->id(), arrow::Type::UINT32);
+    EXPECT_EQ(SchemaConverter::ToArrowDataType(common::ColumnType::UINT64)->id(), arrow::Type::UINT64);
     EXPECT_EQ(SchemaConverter::ToArrowDataType(common::ColumnType::FLOAT)->id(), arrow::Type::FLOAT);
     EXPECT_EQ(SchemaConverter::ToArrowDataType(common::ColumnType::DOUBLE)->id(), arrow::Type::DOUBLE);
     EXPECT_EQ(SchemaConverter::ToArrowDataType(common::ColumnType::STRING)->id(), arrow::Type::STRING);
@@ -39,6 +43,8 @@ TEST_F(SchemaConverterTest, TestColumnTypeConversion) {
     // Test conversion from Arrow to Pond
     EXPECT_EQ(SchemaConverter::FromArrowDataType(arrow::int32()).value(), common::ColumnType::INT32);
     EXPECT_EQ(SchemaConverter::FromArrowDataType(arrow::int64()).value(), common::ColumnType::INT64);
+    EXPECT_EQ(SchemaConverter::FromArrowDataType(arrow::uint32()).value(), common::ColumnType::UINT32);
+    EXPECT_EQ(SchemaConverter::FromArrowDataType(arrow::uint64()).value(), common::ColumnType::UINT64);
     EXPECT_EQ(SchemaConverter::FromArrowDataType(arrow::float32()).value(), common::ColumnType::FLOAT);
     EXPECT_EQ(SchemaConverter::FromArrowDataType(arrow::float64()).value(), common::ColumnType::DOUBLE);
     EXPECT_EQ(SchemaConverter::FromArrowDataType(arrow::utf8()).value(), common::ColumnType::STRING);
