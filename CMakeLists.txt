@@ -161,6 +161,10 @@ add_library(pondhouse_common
     src/format/sstable/sstable_reader.cpp
     src/format/sstable/sstable_format.cpp
     src/format/parquet/schema_converter.cpp
+    # src/query/planner/logical_optimizer.cpp
+    # src/query/planner/logical_plan_node.cpp
+    # src/query/planner/logical_plan_printer.cpp
+    # src/query/planner/logical_planner.cpp
     src/rsm/rsm.cpp
     src/rsm/snapshot_manager.cpp
     ${PROTO_SRCS}
@@ -230,6 +234,7 @@ add_executable(
     tests/common/crc_test.cpp
     tests/common/data_chunk_test.cpp
     tests/common/error_test.cpp
+    tests/common/expression_test.cpp
     tests/common/iterator_test.cpp
     tests/common/lru_cache_test.cpp
     tests/common/result_test.cpp
