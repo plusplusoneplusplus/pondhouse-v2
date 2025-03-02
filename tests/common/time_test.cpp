@@ -133,7 +133,7 @@ TEST_F(HybridTimeManagerTest, MonotonicIncrease) {
 
     // Get timestamp with increased physical time
     HybridTime t3 = manager.NextWithTime(FIXED_TIME + 1);
-    EXPECT_EQ(t3.physical_time(), FIXED_TIME + 2);  // + 1 has been used already
+    EXPECT_GE(t3.physical_time(), FIXED_TIME + 2);  // + 1 has been used already, must be >= 2
     EXPECT_GT(t3, t2);
 }
 

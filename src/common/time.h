@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cinttypes>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -34,18 +35,18 @@ inline std::string TimestampToString(Timestamp timestamp) {
     auto microseconds = timestamp % 1000000LL;
 
     // Format the date/time string using UTC
-    char buffer[32];
+    char buffer[64];  // Increased buffer size to be safe
     auto tm = std::gmtime(&time);
     snprintf(buffer,
              sizeof(buffer),
-             "%04d/%02d/%02d %02d:%02d:%02d.%06lld",
+             "%04d/%02d/%02d %02d:%02d:%02d.%06" PRId64,  // Using PRId64 for 64-bit integer
              tm->tm_year + 1900,
              tm->tm_mon + 1,
              tm->tm_mday,
              tm->tm_hour,
              tm->tm_min,
              tm->tm_sec,
-             microseconds);
+             static_cast<int64_t>(microseconds));
     return std::string(buffer);
 }
 
