@@ -1,13 +1,39 @@
+#!/bin/bash
+
+# Read version from version.txt
+version=$(cat $(dirname "$0")/version.txt)
+export VERSION=$version
+
+echo "Deploying pond server version ${VERSION}"
+
+# Set docker environment to minikube's docker
+eval $(minikube docker-env)
+
 # copy build directory to here
-mkdir -p build
-cp ../../build/pond_server ./build/pond_server
-cp ../../build/libsqlparser.so ./build/libsqlparser.so
+mkdir -p gRPC/build
+cp ../../build/pond_server ./gRPC/build/pond_server
+cp ../../build/libsqlparser.so ./gRPC/build/libsqlparser.so
 
-# Build the image
-docker build --no-cache -t pond-server:0.0.1 .
+# Copy proto file for web application
+mkdir -p web/proto
+cp ../proto/pond_service.proto ./web/proto/
 
-# Save the image to minikube
-minikube image load pond-server:0.0.1
+cd gRPC
+# Build the server image
+docker build -t pond-server:${VERSION} .
+cd ..
 
-kubectl apply -f ./k8s/deployment.yaml
-kubectl apply -f ./k8s/service.yaml
+# Build the envoy image
+cd envoy
+docker build -t pond-envoy:${VERSION} .
+cd ..
+
+# Build the web application
+cd web
+docker build -t pond-web:${VERSION} .
+cd ..
+
+# Apply k8s configurations with version substitution
+envsubst < $(dirname "$0")/k8s/deployment.yaml | kubectl apply -f -
+envsubst < $(dirname "$0")/k8s/web-deployment.yaml | kubectl apply -f -
+kubectl apply -f $(dirname "$0")/k8s/service.yaml

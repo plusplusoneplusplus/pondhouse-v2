@@ -16,16 +16,31 @@ spec:
     spec:
       containers:
       - name: pond-server
-        image: pond-server:0.0.1
+        image: pond-server:${VERSION}
+        imagePullPolicy: Never
         ports:
         - containerPort: 50051
         volumeMounts:
         - name: pond-storage
           mountPath: /app/data
+      - name: envoy-proxy
+        image: pond-envoy:${VERSION}
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9901
+          name: admin
+        volumeMounts:
+        - name: envoy-config
+          mountPath: /etc/envoy
       volumes:
       - name: pond-storage
         persistentVolumeClaim:
           claimName: pond-pvc
+      - name: envoy-config
+        configMap:
+          name: envoy-config
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -37,3 +52,67 @@ spec:
   resources:
     requests:
       storage: 1Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-config
+data:
+  envoy.yaml: |
+    static_resources:
+      listeners:
+      - name: pond_listener
+        address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 8080
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: pond_grpc
+              codec_type: AUTO
+              route_config:
+                name: local_route
+                virtual_hosts:
+                - name: local_service
+                  domains: ["*"]
+                  routes:
+                  - match:
+                      prefix: "/"
+                      grpc: {}
+                    route:
+                      cluster: pond_service
+              http_filters:
+              - name: envoy.filters.http.grpc_web
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_web.v3.GrpcWeb
+              - name: envoy.filters.http.cors
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors
+              - name: envoy.filters.http.router
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+      clusters:
+      - name: pond_service
+        connect_timeout: 0.25s
+        type: STRICT_DNS
+        lb_policy: ROUND_ROBIN
+        http2_protocol_options: {}
+        load_assignment:
+          cluster_name: pond_service
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: localhost  # Since they're in the same pod
+                    port_value: 50051
+
+    admin:
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
