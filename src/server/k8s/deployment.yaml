@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pond-server
+  labels:
+    app: pond-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pond-server
+  template:
+    metadata:
+      labels:
+        app: pond-server
+    spec:
+      containers:
+      - name: pond-server
+        image: pond-server:0.0.1
+        ports:
+        - containerPort: 50051
+        volumeMounts:
+        - name: pond-storage
+          mountPath: /app/data
+      volumes:
+      - name: pond-storage
+        persistentVolumeClaim:
+          claimName: pond-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pond-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,21 @@
+FROM ubuntu:latest
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    libgrpc++-dev \
+    libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy the binary (assuming you've built it)
+COPY build/pond_server /app/pond_server
+COPY build/libsqlparser.so /app/libsqlparser.so
+
+EXPOSE 50051
+
+# Run the server
+CMD ["/app/pond_server", "--address", "0.0.0.0:50051"]
