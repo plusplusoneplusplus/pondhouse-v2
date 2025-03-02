@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>  // for memcpy
 #include <random>
 #include <string>
 

@@ -160,7 +160,7 @@ public:
 
             // If time went backwards or stayed the same, use steady clock delta
             if (new_physical <= current_encoded) {
-                new_physical = current_encoded + std::max(1ULL, static_cast<uint64_t>(steady_delta));
+                new_physical = current_encoded + std::max(static_cast<uint64_t>(1), static_cast<uint64_t>(steady_delta));
             }
 
             assert(new_physical > current_encoded);

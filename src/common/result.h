@@ -49,7 +49,7 @@ public:
     [[nodiscard]] bool hasError() const noexcept { return std::holds_alternative<Error>(data_); }
 
     // Access value
-    [[nodiscard]] const T& value() const& {
+    const T& value() const& {
         if (!ok()) {
             throw std::runtime_error("Attempting to access value of failed Result. Error: "
                                      + std::get<Error>(data_).message());
@@ -57,7 +57,7 @@ public:
         return std::get<T>(data_);
     }
 
-    [[nodiscard]] T&& value() && {
+    T&& value() && {
         if (!ok()) {
             throw std::runtime_error("Attempting to access value of failed Result. Error: "
                                      + std::get<Error>(data_).message());
@@ -66,14 +66,14 @@ public:
     }
 
     // Access error
-    [[nodiscard]] const Error& error() const& {
+    const Error& error() const& {
         if (!hasError()) {
             throw std::runtime_error("Attempting to access error of successful Result");
         }
         return std::get<Error>(data_);
     }
 
-    [[nodiscard]] Error&& error() && {
+    Error&& error() && {
         if (!hasError()) {
             throw std::runtime_error("Attempting to access error of successful Result");
         }

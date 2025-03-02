@@ -535,14 +535,14 @@ private:
             // Check L0 iterators first (they have newer versions)
             for (const auto& iter : iterators) {
                 if (iter->Valid() && iter->key() == current_key) {
-                    versions.emplace_back(iter->version(), ValueTuple(iter->value(), iter->IsTombstone()));
+                    versions.emplace_back(iter->version(), ValueTuple{iter->value(), iter->IsTombstone()});
                 }
             }
 
             // Check L1 iterators
             for (const auto& iter : l1_iterators) {
                 if (iter->Valid() && iter->key() == current_key) {
-                    versions.emplace_back(iter->version(), ValueTuple(iter->value(), iter->IsTombstone()));
+                    versions.emplace_back(iter->version(), ValueTuple{iter->value(), iter->IsTombstone()});
                 }
             }
 

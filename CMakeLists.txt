@@ -32,9 +32,6 @@ set(ABSL_LIBS
     absl::flat_hash_set
     absl::btree
     absl::time
-    absl::log
-    absl::log_internal_message
-    absl::log_internal_check_op
 )
 
 # Find xxHash library
