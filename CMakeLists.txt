@@ -200,8 +200,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE pondhouse_common)
 
 # Add server executable
 add_executable(pond_server 
-    src/server/server_main.cpp
-    src/server/pond_service_impl.cpp
+    src/server/gRPC/server_main.cpp
+    src/server/gRPC/pond_service_impl.cpp
 )
 
 # Link server executable with common library

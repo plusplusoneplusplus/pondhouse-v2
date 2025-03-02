@@ -7,7 +7,18 @@ spec:
   selector:
     app: pond-server
   ports:
-  - port: 50051
+  - name: grpc
+    port: 50051
     targetPort: 50051
     nodePort: 30051
+    protocol: TCP
+  - name: grpc-web
+    port: 8080
+    targetPort: 8080
+    nodePort: 30080
+    protocol: TCP
+  - name: envoy-admin
+    port: 9901
+    targetPort: 9901
+    nodePort: 30901
     protocol: TCP
