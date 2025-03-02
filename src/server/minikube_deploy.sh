@@ -1,6 +1,3 @@
-# Point your shell to minikube's docker-daemon
-eval $(minikube docker-env)
-
 # copy build directory to here
 mkdir -p build
 cp ../../build/pond_server ./build/pond_server

@@ -73,13 +73,13 @@ public:
         size_ += length;
     }
 
-    constexpr void Append(std::span<const uint8_t> data) { Append(data.data(), data.size()); }
+    void Append(std::span<const uint8_t> data) { Append(data.data(), data.size()); }
 
-    constexpr void Append(const std::vector<uint8_t> &other) { Append(other.data(), other.size()); }
+    void Append(const std::vector<uint8_t> &other) { Append(other.data(), other.size()); }
 
-    constexpr void Append(const DataChunk &other) { Append(other.Data(), other.Size()); }
+    void Append(const DataChunk &other) { Append(other.Data(), other.Size()); }
 
-    constexpr void AppendSizedDataChunk(const DataChunk &other) {
+    void AppendSizedDataChunk(const DataChunk &other) {
         size_t size = other.Size();
         Append(reinterpret_cast<const uint8_t *>(&size), sizeof(size));
         Append(other);

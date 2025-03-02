@@ -6,6 +6,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include <atomic>
 
 #include "append_only_fs.h"
 
