@@ -3,6 +3,8 @@
 #include <arrow/type.h>
 #include <gtest/gtest.h>
 
+#include "test_helper.h"
+
 namespace pond::format {
 
 class SchemaConverterTest : public ::testing::Test {
@@ -100,6 +102,66 @@ TEST_F(SchemaConverterTest, TestNullability) {
 
     EXPECT_EQ(back_to_nullable.value().nullability, common::Nullability::NULLABLE);
     EXPECT_EQ(back_to_not_null.value().nullability, common::Nullability::NOT_NULL);
+}
+
+TEST_F(SchemaConverterTest, TestSchemaValidation) {
+    // Create a Pond schema
+    std::vector<common::ColumnSchema> columns = {
+        common::ColumnSchema("id", common::ColumnType::INT32, common::Nullability::NOT_NULL),
+        common::ColumnSchema("name", common::ColumnType::STRING, common::Nullability::NULLABLE),
+        common::ColumnSchema("value", common::ColumnType::DOUBLE, common::Nullability::NULLABLE)};
+    auto pond_schema = std::make_shared<common::Schema>(columns);
+
+    // Test matching schema validation
+    auto arrow_schema_result = SchemaConverter::ToArrowSchema(*pond_schema);
+    ASSERT_TRUE(arrow_schema_result.ok());
+    auto arrow_schema = arrow_schema_result.value();
+
+    auto validation_result = SchemaConverter::ValidateSchema(arrow_schema, pond_schema);
+    VERIFY_RESULT(validation_result);
+
+    // Test schema with different field count
+    auto fewer_fields = arrow::schema({arrow::field("id", arrow::int32(), false), arrow::field("name", arrow::utf8())});
+    validation_result = SchemaConverter::ValidateSchema(fewer_fields, pond_schema);
+    EXPECT_FALSE(validation_result.ok());
+    EXPECT_EQ(validation_result.error().code(), common::ErrorCode::SchemaMismatch);
+    EXPECT_TRUE(validation_result.error().message().find("Schema field count mismatch") != std::string::npos);
+
+    // Test schema with different field name
+    auto wrong_name = arrow::schema({arrow::field("id", arrow::int32(), false),
+                                     arrow::field("wrong_name", arrow::utf8()),
+                                     arrow::field("value", arrow::float64())});
+    validation_result = SchemaConverter::ValidateSchema(wrong_name, pond_schema);
+    EXPECT_FALSE(validation_result.ok());
+    EXPECT_EQ(validation_result.error().code(), common::ErrorCode::SchemaMismatch);
+    EXPECT_TRUE(validation_result.error().message().find("Field name mismatch") != std::string::npos);
+
+    // Test schema with different type
+    auto wrong_type = arrow::schema({
+        arrow::field("id", arrow::int32(), false),
+        arrow::field("name", arrow::utf8()),
+        arrow::field("value", arrow::int64())  // Should be double
+    });
+    validation_result = SchemaConverter::ValidateSchema(wrong_type, pond_schema);
+    EXPECT_FALSE(validation_result.ok());
+    EXPECT_EQ(validation_result.error().code(), common::ErrorCode::SchemaMismatch);
+    EXPECT_TRUE(validation_result.error().message().find("Field type mismatch") != std::string::npos);
+
+    // Test schema with compatible nullability (table schema allows nulls)
+    auto valid_nullability = arrow::schema({arrow::field("id", arrow::int32(), true),
+                                            arrow::field("name", arrow::utf8()),
+                                            arrow::field("value", arrow::float64())});
+    validation_result = SchemaConverter::ValidateSchema(valid_nullability, pond_schema);
+    VERIFY_RESULT(validation_result);  // this should be ok because the table schema allows nulls
+
+    // Test schema with incompatible nullability (table schema does not allow nulls)
+    auto wrong_nullability = arrow::schema({arrow::field("id", arrow::int32()),
+                                            arrow::field("name", arrow::utf8(), false),  // Should be NULLABLE
+                                            arrow::field("value", arrow::float64())});
+    validation_result = SchemaConverter::ValidateSchema(wrong_nullability, pond_schema);
+    EXPECT_FALSE(validation_result.ok());
+    EXPECT_EQ(validation_result.error().code(), common::ErrorCode::SchemaMismatch);
+    EXPECT_TRUE(validation_result.error().message().find("Field nullability mismatch") != std::string::npos);
 }
 
 }  // namespace pond::format

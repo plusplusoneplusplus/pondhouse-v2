@@ -37,6 +37,8 @@ struct PartitionSpec {
     std::vector<PartitionField> fields;
 
     explicit PartitionSpec(PartitionSpecId spec_id_) : spec_id(spec_id_) {}
+
+    PartitionSpec() : spec_id(-1) {}
 };
 
 struct DataFile {
@@ -109,6 +111,16 @@ struct TableMetadata {
           current_snapshot_id(-1),  // No snapshot yet
           schema(std::move(schema_)),
           properties(std::move(properties_)) {}
+
+    TableMetadata()
+        : format_version(-1),
+          table_uuid(""),
+          location(""),
+          last_sequence_number(-1),
+          last_updated_time(-1),
+          current_snapshot_id(-1),
+          schema(nullptr),
+          properties({}) {}
 };
 
 }  // namespace pond::catalog

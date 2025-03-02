@@ -135,6 +135,7 @@ add_library(pondhouse_common
     src/catalog/kv_catalog.cpp
     src/catalog/kv_catalog_util.cpp
     src/catalog/types.cpp
+    src/catalog/table_data_ingestor.cpp
     src/common/append_only_fs.cpp
     src/common/memory_append_only_fs.cpp
     src/common/log.cpp
@@ -222,6 +223,7 @@ add_executable(
     unit_tests
     tests/catalog/kv_catalog_test.cpp
     tests/catalog/kv_catalog_util_test.cpp
+    tests/catalog/table_data_ingestor_test.cpp
     tests/common/append_only_fs_test.cpp
     tests/common/bloom_filter_test.cpp
     tests/common/bplus_tree_test.cpp
