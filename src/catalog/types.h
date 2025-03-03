@@ -20,7 +20,19 @@ using PartitionSpecId = int32_t;
 enum class Operation { CREATE, APPEND, REPLACE, DELETE, OVERWRITE };
 
 // Partition transforms
-enum class Transform { IDENTITY, YEAR, MONTH, DAY, HOUR, BUCKET, TRUNCATE };
+enum class Transform {
+    // individual fields
+    IDENTITY,
+    // date/time fields
+    YEAR,
+    MONTH,
+    DAY,
+    HOUR,
+    // bucket fields
+    BUCKET,
+    // truncate fields
+    TRUNCATE
+};
 
 // File format types
 enum class FileFormat { UNKNOWN, PARQUET };

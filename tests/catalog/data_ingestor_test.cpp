@@ -115,7 +115,7 @@ TEST_F(DataIngestorTest, TestIngestBatch) {
     auto ingest_result = ingestor->IngestBatch(batch);
     ASSERT_TRUE(ingest_result.ok());
     auto data_file = std::move(ingest_result).value();
-    EXPECT_EQ(data_file.file_path, "/tmp/test_table/FILES/data_0_0.parquet");
+    EXPECT_EQ(data_file.file_path, "/tmp/test_table/data/part_0_0.parquet");
 
     // Verify the data file was created
     auto files_result = catalog_->ListDataFiles("test_table");

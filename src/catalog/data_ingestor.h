@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "catalog/catalog.h"
@@ -63,12 +64,19 @@ private:
                  const std::string& table_name,
                  TableMetadata metadata);
 
-    common::Result<std::string> GenerateDataFilePath();
+    common::Result<std::string> GenerateDataFilePath(
+        const std::unordered_map<std::string, std::string>& partition_values);
     common::Result<std::unique_ptr<format::ParquetWriter>> CreateWriter(const std::string& file_path);
-    common::Result<DataFile> FinalizeDataFile(const std::string& file_path, int64_t num_records);
+    common::Result<DataFile> FinalizeDataFile(const std::string& file_path,
+                                              int64_t num_records,
+                                              const std::unordered_map<std::string, std::string>& partition_values);
 
     // Add new helper method for schema validation
     common::Result<void> ValidateSchema(const std::shared_ptr<arrow::Schema>& input_schema) const;
+
+    // Add new helper method for partition value extraction
+    common::Result<std::unordered_map<std::string, std::string>> ExtractPartitionValues(
+        const std::shared_ptr<arrow::RecordBatch>& batch) const;
 
     std::shared_ptr<Catalog> catalog_;
     std::shared_ptr<common::IAppendOnlyFileSystem> fs_;

@@ -30,6 +30,23 @@ struct PartitionField {
           name(std::move(name_)),
           transform(transform_),
           transform_param(transform_param_) {}
+
+    bool IsValid() const {
+        if (source_id == -1 || field_id == -1 || name.empty()) {
+            return false;
+        }
+        if ((transform == Transform::BUCKET || transform == Transform::TRUNCATE) && !transform_param.has_value()) {
+            return false;
+        }
+        return true;
+    }
+
+    int32_t GetTransformParam() const {
+        if (!transform_param.has_value()) {
+            throw std::runtime_error("Transform parameter not set");
+        }
+        return transform_param.value();
+    }
 };
 
 struct PartitionSpec {
