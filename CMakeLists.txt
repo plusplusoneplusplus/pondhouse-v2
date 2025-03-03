@@ -266,7 +266,8 @@ add_executable(
     tests/kv/table_test.cpp
     tests/kv/versioned_value_test.cpp
     tests/main.cpp
-    tests/query/test_logical_planner.cpp
+    tests/query/logical_planner_test.cpp
+    tests/query/logical_optimizer_test.cpp
     tests/sql/hyrise_parser_test.cpp
     tests/test_helper.cpp
     tests/proto/metadata_test.cpp

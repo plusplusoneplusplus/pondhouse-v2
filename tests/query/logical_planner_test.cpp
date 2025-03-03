@@ -1,13 +1,8 @@
 #include <memory>
 
-#include <gtest/gtest.h>
-
-#include "catalog/catalog.h"
-#include "catalog/kv_catalog.h"
-#include "common/memory_append_only_fs.h"
 #include "common/schema.h"
 #include "query/planner/logical_optimizer.h"
-#include "query/planner/logical_planner.h"
+#include "query/query_test_helper.h"
 #include "test_helper.h"
 
 using namespace pond::catalog;
@@ -15,42 +10,6 @@ using namespace pond::query;
 using namespace pond::common;
 
 namespace pond::query {
-
-class QueryTestContext {
-public:
-    QueryTestContext(const std::string& catalog_name) : catalog_name_(catalog_name) {
-        fs_ = std::make_shared<common::MemoryAppendOnlyFileSystem>();
-        auto db_result = kv::DB::Create(fs_, catalog_name_);
-        db_ = std::move(db_result.value());
-        catalog_ = std::make_shared<KVCatalog>(db_);
-    }
-
-    void SetupOrdersTable() {
-        auto schema = std::make_shared<Schema>();
-        schema->AddField("order_id", ColumnType::INT32);
-        schema->AddField("user_id", ColumnType::INT32);
-        schema->AddField("amount", ColumnType::DOUBLE);
-        catalog_->CreateTable("orders", schema, partition_spec_, "test_catalog/orders");
-    }
-
-    void SetupUsersTable() {
-        auto schema = std::make_shared<Schema>();
-        schema->AddField("id", ColumnType::INT32);
-        schema->AddField("name", ColumnType::STRING);
-        schema->AddField("age", ColumnType::INT32);
-        schema->AddField("salary", ColumnType::DOUBLE);
-        catalog_->CreateTable("users", schema, partition_spec_, "test_catalog/users");
-    }
-
-public:
-    std::string catalog_name_;
-    std::string table_name_;
-
-    std::shared_ptr<common::MemoryAppendOnlyFileSystem> fs_;
-    std::shared_ptr<kv::DB> db_;
-    std::shared_ptr<KVCatalog> catalog_;
-    PartitionSpec partition_spec_;
-};
 
 class LogicalPlannerTest : public ::testing::Test {
 protected:
@@ -61,19 +20,7 @@ protected:
     }
 
     Result<std::shared_ptr<LogicalPlanNode>> PlanLogical(const std::string& query, bool optimize = false) {
-        LogicalPlanner planner(*context_->catalog_);
-        hsql::SQLParserResult parse_result;
-        hsql::SQLParser::parse(query, &parse_result);
-        EXPECT_TRUE(parse_result.isValid()) << "SQL parsing should succeed";
-        EXPECT_EQ(1, parse_result.size()) << "Should have one statement";
-        auto logical_plan = planner.Plan(parse_result.getStatement(0));
-        if (optimize) {
-            LogicalOptimizer optimizer;
-            auto optimized_plan_result = optimizer.Optimize(logical_plan.value());
-            EXPECT_TRUE(optimized_plan_result.ok()) << "Logical optimization should succeed";
-            return optimized_plan_result;
-        }
-        return logical_plan;
+        return context_->PlanLogical(query, optimize);
     }
 
     Catalog* catalog() { return context_->catalog_.get(); }
