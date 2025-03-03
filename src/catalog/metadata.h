@@ -84,20 +84,20 @@ struct Snapshot {
     SnapshotId snapshot_id;
     int64_t timestamp_ms;
     Operation operation;
-    std::string manifest_list;  // Path to manifest list file
+    std::vector<DataFile> files;  // Files valid in this snapshot
     std::unordered_map<std::string, std::string> summary;
     std::optional<SnapshotId> parent_snapshot_id;
 
     Snapshot(SnapshotId snapshot_id_,
              int64_t timestamp_ms_,
              Operation operation_,
-             std::string manifest_list_,
+             std::vector<DataFile> files_,
              std::unordered_map<std::string, std::string> summary_,
              std::optional<SnapshotId> parent_snapshot_id_ = std::nullopt)
         : snapshot_id(snapshot_id_),
           timestamp_ms(timestamp_ms_),
           operation(operation_),
-          manifest_list(std::move(manifest_list_)),
+          files(std::move(files_)),
           summary(std::move(summary_)),
           parent_snapshot_id(parent_snapshot_id_) {}
 };

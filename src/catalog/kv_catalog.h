@@ -111,10 +111,6 @@ protected:
                                           const std::string& name,
                                           const TableMetadata& metadata);
 
-    common::Result<void> AddFilesToSnapshot(const std::string& name,
-                                            SnapshotId snapshot_id,
-                                            const std::vector<DataFile>& files);
-
     // Member variables
     std::shared_ptr<pond::kv::DB> db_;
 
@@ -123,9 +119,6 @@ protected:
 
     // Stores Snapshots
     std::shared_ptr<pond::kv::Table> snapshots_table_;
-
-    // Stores Files
-    std::shared_ptr<pond::kv::Table> files_table_;
 
     std::recursive_mutex mutex_;
 };

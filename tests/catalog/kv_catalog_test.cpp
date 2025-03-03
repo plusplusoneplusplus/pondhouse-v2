@@ -219,7 +219,7 @@ TEST_F(KVCatalogTest, CreateSnapshotAndListFiles) {
     VERIFY_RESULT(snapshot_result);
 
     auto metadata = snapshot_result.value();
-    EXPECT_EQ(metadata.snapshots.size(), 1);
+    EXPECT_EQ(metadata.snapshots.size(), 2);
     EXPECT_EQ(metadata.current_snapshot_id, 1);
 
     // List files
@@ -556,6 +556,71 @@ TEST_F(KVCatalogTest, RenameTableMetadata) {
     load_result = catalog_->LoadTable("new_name");
     VERIFY_RESULT(load_result);
     EXPECT_EQ(load_result.value().current_snapshot_id, current_id);
+}
+
+//
+// Test Setup:
+//      Create a table with multiple snapshots and verify serialization/deserialization
+// Test Result:
+//      Table metadata with multiple snapshots should be correctly serialized and deserialized
+//
+TEST_F(KVCatalogTest, MultipleSnapshotsSerializationDeserialization) {
+    auto schema = CreateTestSchema();
+    auto spec = CreateTestPartitionSpec();
+
+    // Create a table
+    auto create_result = catalog_->CreateTable("users", schema, spec, "/data/users");
+    VERIFY_RESULT(create_result);
+
+    // Create first snapshot with 2021 data
+    auto files2021 = CreateTestDataFiles("2021");
+    auto snapshot1_result = catalog_->CreateSnapshot("users", files2021);
+    VERIFY_RESULT(snapshot1_result);
+
+    // Create second snapshot with 2022 data
+    auto files2022 = CreateTestDataFiles("2022");
+    auto snapshot2_result = catalog_->CreateSnapshot("users", files2022);
+    VERIFY_RESULT(snapshot2_result);
+
+    // Create third snapshot with 2023 data
+    auto files2023 = CreateTestDataFiles("2023");
+    auto snapshot3_result = catalog_->CreateSnapshot("users", files2023);
+    VERIFY_RESULT(snapshot3_result);
+
+    // Load the table to verify serialization/deserialization
+    auto load_result = catalog_->LoadTable("users");
+    VERIFY_RESULT(load_result);
+
+    auto metadata = load_result.value();
+
+    // Verify snapshots were correctly deserialized
+    EXPECT_EQ(metadata.snapshots.size(), 4);
+    EXPECT_EQ(metadata.current_snapshot_id, 3);
+
+    // Verify first snapshot, which is empty
+    EXPECT_EQ(metadata.snapshots[0].snapshot_id, 0);
+    EXPECT_EQ(metadata.snapshots[0].files.size(), 0);
+    EXPECT_EQ(metadata.snapshots[0].parent_snapshot_id, -1);
+
+    // Verify second snapshot
+    EXPECT_EQ(metadata.snapshots[1].snapshot_id, 1);
+    EXPECT_EQ(metadata.snapshots[1].files.size(), 2);
+    EXPECT_EQ(metadata.snapshots[1].files[0].partition_values.at("year"), "2021");
+    EXPECT_EQ(metadata.snapshots[1].parent_snapshot_id, 0);
+
+    // Verify third snapshot
+    EXPECT_EQ(metadata.snapshots[2].snapshot_id, 2);
+    EXPECT_EQ(metadata.snapshots[2].files.size(), 2 + 2);
+    EXPECT_EQ(metadata.snapshots[2].files[2].partition_values.at("year"), "2022");
+    EXPECT_EQ(metadata.snapshots[2].files[3].partition_values.at("year"), "2022");
+    EXPECT_EQ(metadata.snapshots[2].parent_snapshot_id, 1);
+
+    // Verify fourth snapshot
+    EXPECT_EQ(metadata.snapshots[3].snapshot_id, 3);
+    EXPECT_EQ(metadata.snapshots[3].files.size(), 2 + 2 + 2);
+    EXPECT_EQ(metadata.snapshots[3].files[4].partition_values.at("year"), "2023");
+    EXPECT_EQ(metadata.snapshots[3].files[5].partition_values.at("year"), "2023");
+    EXPECT_EQ(metadata.snapshots[3].parent_snapshot_id, 2);
 }
 
 }  // namespace pond::catalog

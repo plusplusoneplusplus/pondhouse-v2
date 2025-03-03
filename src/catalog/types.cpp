@@ -12,7 +12,8 @@ const std::unordered_map<Operation, std::string> kOperationToString = {{Operatio
                                                                        {Operation::DELETE, "delete"},
                                                                        {Operation::OVERWRITE, "overwrite"}};
 
-const std::unordered_map<std::string, Operation> kStringToOperation = {{"append", Operation::APPEND},
+const std::unordered_map<std::string, Operation> kStringToOperation = {{"create", Operation::CREATE},
+                                                                       {"append", Operation::APPEND},
                                                                        {"replace", Operation::REPLACE},
                                                                        {"delete", Operation::DELETE},
                                                                        {"overwrite", Operation::OVERWRITE}};

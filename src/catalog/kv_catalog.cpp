@@ -18,7 +18,6 @@ using namespace pond::common;
 namespace {
 constexpr const char* TABLES_TABLE = "__tables";
 constexpr const char* SNAPSHOTS_TABLE = "__snapshots";
-constexpr const char* FILES_TABLE = "__files";
 constexpr const char* CURRENT_TABLE = "__current";
 
 }  // namespace
@@ -63,20 +62,6 @@ common::Result<void> KVCatalog::Initialize() {
         }
     }
     snapshots_table_ = snapshots_result.value();
-
-    // Create files table if it doesn't exist
-    auto files_result = db_->GetTable(FILES_TABLE);
-    if (!files_result.ok()) {
-        auto create_result = db_->CreateTable(FILES_TABLE, GetFilesTableSchema());
-        if (!create_result.ok()) {
-            return common::Result<void>::failure(create_result.error());
-        }
-        files_result = db_->GetTable(FILES_TABLE);
-        if (!files_result.ok()) {
-            return common::Result<void>::failure(files_result.error());
-        }
-    }
-    files_table_ = files_result.value();
 
     return common::Result<void>::success();
 }
@@ -185,6 +170,8 @@ common::Result<TableMetadata> KVCatalog::CreateTable(const std::string& name,
 
 // Load a table
 common::Result<TableMetadata> KVCatalog::LoadTable(const std::string& name) {
+    using ReturnType = common::Result<TableMetadata>;
+
     auto lock = std::unique_lock(mutex_);
 
     // Get the table record
@@ -198,9 +185,7 @@ common::Result<TableMetadata> KVCatalog::LoadTable(const std::string& name) {
 
     // Deserialize schema
     auto schema_result = record->Get<common::DataChunk>(7);  // SCHEMA_FIELD
-    if (!schema_result.ok()) {
-        return common::Result<TableMetadata>::failure(schema_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, schema_result);
 
     std::shared_ptr<common::Schema> schema = std::make_shared<common::Schema>();
     bool deserialize_success = schema->Deserialize(schema_result.value());
@@ -211,14 +196,10 @@ common::Result<TableMetadata> KVCatalog::LoadTable(const std::string& name) {
 
     // Get properties
     auto properties_result = record->Get<std::string>(6);  // PROPERTIES_FIELD
-    if (!properties_result.ok()) {
-        return common::Result<TableMetadata>::failure(properties_result.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, properties_result);
 
     auto properties = DeserializePartitionValues(properties_result.value());
-    if (!properties.ok()) {
-        return common::Result<TableMetadata>::failure(properties.error());
-    }
+    RETURN_IF_ERROR_T(ReturnType, properties);
 
     // Create metadata object
     TableMetadata metadata(record->Get<std::string>(1).value(),  // TABLE_UUID_FIELD
@@ -234,16 +215,70 @@ common::Result<TableMetadata> KVCatalog::LoadTable(const std::string& name) {
     auto specs_result = record->Get<std::string>(8);  // PARTITION_SPECS_FIELD
     if (specs_result.ok()) {
         auto specs = DeserializePartitionSpecs(specs_result.value());
-        if (!specs.ok()) {
-            return common::Result<TableMetadata>::failure(specs.error());
-        }
+        RETURN_IF_ERROR_T(ReturnType, specs);
         metadata.partition_specs = specs.value();
     }
 
     // Load snapshots for this table
     auto snapshots_prefix = name + "/";  // We'll use table name as prefix for snapshots
-    // TODO: Implement scan with prefix in Table interface
-    // For now, we'll leave snapshots empty
+
+    // Scan for all snapshots for this table
+    auto scan_result = snapshots_table_->ScanPrefix(snapshots_prefix);
+    RETURN_IF_ERROR_T(ReturnType, scan_result);
+
+    auto iterator = scan_result.value();
+
+    while (iterator->Valid()) {
+        auto& record = iterator->value();
+
+        // Get snapshot fields
+        auto snapshot_id_result = record->Get<int64_t>(1);
+        RETURN_IF_ERROR_T(ReturnType, snapshot_id_result);
+        SnapshotId snapshot_id = snapshot_id_result.value();
+
+        std::optional<SnapshotId> parent_id = std::nullopt;
+        auto parent_result = record->Get<int64_t>(2);
+        RETURN_IF_ERROR_T(ReturnType, parent_result);
+        parent_id = parent_result.value();
+
+        auto timestamp_result = record->Get<int64_t>(3);
+        RETURN_IF_ERROR_T(ReturnType, timestamp_result);
+        int64_t timestamp = timestamp_result.value();
+
+        auto op_result = record->Get<std::string>(4);
+        RETURN_IF_ERROR_T(ReturnType, op_result);
+        Operation op = OperationFromString(op_result.value());
+
+        // Deserialize files
+        std::vector<DataFile> files;
+        {
+            auto files_result = record->Get<common::DataChunk>(5);
+            RETURN_IF_ERROR_T(ReturnType, files_result);
+            auto deserialize_result = DeserializeDataFiles(files_result.value().ToString());
+            RETURN_IF_ERROR_T(ReturnType, deserialize_result);
+            files = std::move(deserialize_result.value());
+        }
+
+        // Deserialize summary
+        std::unordered_map<std::string, std::string> summary;
+        {
+            auto summary_result = record->Get<common::DataChunk>(6);
+            RETURN_IF_ERROR_T(ReturnType, summary_result);
+            auto deserialize_result = DeserializePartitionValues(summary_result.value().ToString());
+            RETURN_IF_ERROR_T(ReturnType, deserialize_result);
+            summary = std::move(deserialize_result.value());
+        }
+
+        // Create and add the snapshot
+        metadata.snapshots.push_back(Snapshot(snapshot_id, timestamp, op, files, summary, parent_id));
+
+        iterator->Next();
+    }
+
+    // Sort snapshots by ID for consistent order
+    std::sort(metadata.snapshots.begin(), metadata.snapshots.end(), [](const Snapshot& a, const Snapshot& b) {
+        return a.snapshot_id < b.snapshot_id;
+    });
 
     return common::Result<TableMetadata>::success(metadata);
 }
@@ -362,43 +397,6 @@ TableId KVCatalog::GenerateUuid() {
     return uuid.ToString();
 }
 
-common::Result<void> KVCatalog::AddFilesToSnapshot(const std::string& name,
-                                                   SnapshotId snapshot_id,
-                                                   const std::vector<DataFile>& files) {
-    using ReturnType = common::Result<void>;
-
-    // Store the files
-    for (const auto& file : files) {
-        auto file_record = std::make_unique<kv::Record>(files_table_->schema());
-        file_record->Set(0, name);                             // TABLE_NAME_FIELD
-        file_record->Set(1, snapshot_id);                      // SNAPSHOT_ID_FIELD
-        file_record->Set(2, file.file_path);                   // FILE_PATH_FIELD
-        file_record->Set(3, FileFormatToString(file.format));  // FILE_FORMAT_FIELD
-        file_record->Set(4, file.record_count);                // RECORD_COUNT_FIELD
-        file_record->Set(5, file.file_size_bytes);             // FILE_SIZE_FIELD
-
-        // Serialize partition values to binary
-        rapidjson::Document partition_doc;
-        auto& allocator = partition_doc.GetAllocator();
-        partition_doc.SetObject();
-        for (const auto& [key, value] : file.partition_values) {
-            partition_doc.AddMember(
-                rapidjson::Value(key.c_str(), allocator), rapidjson::Value(value.c_str(), allocator), allocator);
-        }
-        rapidjson::StringBuffer partition_buffer;
-        rapidjson::Writer<rapidjson::StringBuffer> partition_writer(partition_buffer);
-        partition_doc.Accept(partition_writer);
-        file_record->Set(6, common::DataChunk::FromString(partition_buffer.GetString()));  // PARTITION_VALUES_FIELD
-
-        // Save the file record
-        std::string file_key = name + "/" + std::to_string(snapshot_id) + "/" + file.file_path;
-        auto file_put_result = files_table_->Put(file_key, std::move(file_record));
-        RETURN_IF_ERROR_T(ReturnType, file_put_result);
-    }
-
-    return ReturnType::success();
-}
-
 std::string GetSummary(const std::vector<DataFile>& added_files, const std::vector<DataFile>& deleted_files) {
     std::unordered_map<std::string, std::string> summary;
     summary["added-files"] = std::to_string(added_files.size());
@@ -452,9 +450,43 @@ common::Result<TableMetadata> KVCatalog::CreateSnapshot(const std::string& name,
     // Generate a new snapshot ID (increment the current one)
     SnapshotId new_snapshot_id = metadata.current_snapshot_id + 1;
 
-    // Create the manifest list path
-    std::string manifest_list =
-        metadata.location + "/metadata/manifest-list-" + std::to_string(new_snapshot_id) + ".json";
+    // Resolve the files for this snapshot
+    std::vector<DataFile> snapshot_files;
+    std::unordered_set<std::string> deleted_file_paths;
+
+    // Track all deleted file paths for fast lookup
+    for (const auto& file : deleted_files) {
+        deleted_file_paths.insert(file.file_path);
+    }
+
+    // If we have a parent snapshot, include its files (except deleted ones)
+    if (metadata.current_snapshot_id >= 0) {
+        // Find the current snapshot
+        auto current_snapshot_iter =
+            std::find_if(metadata.snapshots.begin(), metadata.snapshots.end(), [&](const Snapshot& s) {
+                return s.snapshot_id == metadata.current_snapshot_id;
+            });
+
+        if (current_snapshot_iter != metadata.snapshots.end()) {
+            // Include files from the current snapshot that aren't being deleted
+            for (const auto& file : current_snapshot_iter->files) {
+                if (deleted_file_paths.find(file.file_path) == deleted_file_paths.end()) {
+                    snapshot_files.push_back(file);
+                }
+            }
+        }
+    }
+
+    // Add new files
+    for (const auto& file : added_files) {
+        snapshot_files.push_back(file);
+    }
+
+    // Create summary
+    std::unordered_map<std::string, std::string> summary;
+    summary["added-files"] = std::to_string(added_files.size());
+    summary["deleted-files"] = std::to_string(deleted_files.size());
+    summary["total-files"] = std::to_string(snapshot_files.size());
 
     // Create a record for the snapshots table
     auto snapshot_record = std::make_unique<kv::Record>(snapshots_table_->schema());
@@ -463,7 +495,12 @@ common::Result<TableMetadata> KVCatalog::CreateSnapshot(const std::string& name,
     snapshot_record->Set(2, metadata.current_snapshot_id);  // PARENT_SNAPSHOT_ID_FIELD
     snapshot_record->Set(3, GetCurrentTime());              // TIMESTAMP_MS_FIELD
     snapshot_record->Set(4, OperationToString(op));         // OPERATION_FIELD
-    snapshot_record->Set(5, manifest_list);                 // MANIFEST_LIST_FIELD
+
+    // Serialize and store the files
+    std::string files_json = SerializeDataFiles(snapshot_files);
+    snapshot_record->Set(5, common::DataChunk::FromString(files_json));  // FILES_FIELD
+
+    // Serialize and store the summary
     snapshot_record->Set(6, common::DataChunk::FromString(GetSummary(added_files, deleted_files)));  // SUMMARY_FIELD
 
     // Save the snapshot record
@@ -471,23 +508,27 @@ common::Result<TableMetadata> KVCatalog::CreateSnapshot(const std::string& name,
     auto snapshot_put_result = snapshots_table_->Put(snapshot_key, std::move(snapshot_record));
     RETURN_IF_ERROR_T(ReturnType, snapshot_put_result);
 
-    // Add the files to the snapshot
-    auto add_files_result = AddFilesToSnapshot(name, new_snapshot_id, added_files);
-    RETURN_IF_ERROR_T(ReturnType, add_files_result);
-
     // Update the table metadata with the new snapshot
     metadata.current_snapshot_id = new_snapshot_id;
     metadata.last_updated_time = GetCurrentTime();
     metadata.last_sequence_number++;
 
     if (op == Operation::CREATE || op == Operation::APPEND) {
-        metadata.snapshots.push_back(Snapshot(new_snapshot_id, GetCurrentTime(), op, manifest_list, {}));
+        // Create a new snapshot object with the resolved files
+        metadata.snapshots.push_back(Snapshot(
+            new_snapshot_id,
+            GetCurrentTime(),
+            op,
+            snapshot_files,
+            summary,
+            metadata.current_snapshot_id > 0 ? std::optional<SnapshotId>(metadata.current_snapshot_id) : std::nullopt));
     }
 
     auto table_put_result = PutTableMetadata(false /* create_if_not_exists */, name, metadata);
     RETURN_IF_ERROR_T(ReturnType, table_put_result);
 
-    LOG_STATUS("Created snapshot %d for table '%s'.", new_snapshot_id, name.c_str());
+    LOG_STATUS(
+        "Created snapshot %d for table '%s' with %zu files.", new_snapshot_id, name.c_str(), snapshot_files.size());
 
     return common::Result<TableMetadata>::success(metadata);
 }
@@ -506,43 +547,39 @@ common::Result<std::vector<DataFile>> KVCatalog::ListDataFiles(const std::string
     TableMetadata metadata = metadata_result.value();
     SnapshotId target_snapshot_id = snapshot_id.value_or(metadata.current_snapshot_id);
 
-    // Verify the snapshot exists
-    std::string snapshot_key = name + "/" + std::to_string(target_snapshot_id);
-    auto snapshot_get = snapshots_table_->Get(snapshot_key);
-    if (!snapshot_get.ok()) {
-        return common::Result<std::vector<DataFile>>::failure(
-            common::ErrorCode::NotFound,
-            "Snapshot ID " + std::to_string(target_snapshot_id) + " not found for table '" + name + "'");
-    }
+    // Find the snapshot in the metadata
+    auto snapshot_iter =
+        std::find_if(metadata.snapshots.begin(), metadata.snapshots.end(), [target_snapshot_id](const Snapshot& s) {
+            return s.snapshot_id == target_snapshot_id;
+        });
 
-    // List all files for this snapshot using prefix scan
-    std::string files_prefix = name + "/" + std::to_string(target_snapshot_id) + "/";
-    auto iter_result = files_table_->ScanPrefix(files_prefix);
-    if (!iter_result.ok()) {
-        return common::Result<std::vector<DataFile>>::failure(iter_result.error());
-    }
-
-    std::vector<DataFile> files;
-    auto iter = iter_result.value();
-    for (iter->Seek(files_prefix); iter->Valid(); iter->Next()) {
-        const auto& record = iter->value();
-
-        DataFile file;
-        file.file_path = record->Get<std::string>(2).value();                     // FILE_PATH_FIELD
-        file.format = FileFormatFromString(record->Get<std::string>(3).value());  // FILE_FORMAT_FIELD
-        file.record_count = record->Get<int64_t>(4).value();                      // RECORD_COUNT_FIELD
-        file.file_size_bytes = record->Get<int64_t>(5).value();                   // FILE_SIZE_FIELD
-
-        // Get partition values
-        auto partition_values_result = record->Get<common::DataChunk>(6);  // PARTITION_VALUES_FIELD
-        if (partition_values_result.ok()) {
-            file.partition_values = DeserializePartitionValues(partition_values_result.value().ToString()).value();
+    if (snapshot_iter == metadata.snapshots.end()) {
+        // If not found in metadata, try to get it from the snapshots table
+        std::string snapshot_key = name + "/" + std::to_string(target_snapshot_id);
+        auto snapshot_get = snapshots_table_->Get(snapshot_key);
+        if (!snapshot_get.ok()) {
+            return common::Result<std::vector<DataFile>>::failure(
+                common::ErrorCode::NotFound,
+                "Snapshot ID " + std::to_string(target_snapshot_id) + " not found for table '" + name + "'");
         }
 
-        files.push_back(std::move(file));
+        // Get files from the snapshot record
+        auto files_data = snapshot_get.value()->Get<common::DataChunk>(5);  // FILES_FIELD
+        if (!files_data.ok()) {
+            return common::Result<std::vector<DataFile>>::failure(common::ErrorCode::InvalidOperation,
+                                                                  "Failed to retrieve files from snapshot record");
+        }
+
+        auto files_result = DeserializeDataFiles(files_data.value().ToString());
+        if (!files_result.ok()) {
+            return common::Result<std::vector<DataFile>>::failure(files_result.error());
+        }
+
+        return common::Result<std::vector<DataFile>>::success(files_result.value());
     }
 
-    return common::Result<std::vector<DataFile>>::success(files);
+    // Return files directly from the snapshot in memory
+    return common::Result<std::vector<DataFile>>::success(snapshot_iter->files);
 }
 
 // Update the schema for a table
@@ -618,19 +655,6 @@ common::Result<bool> KVCatalog::DropTable(const std::string& name) {
         auto delete_snapshot = snapshots_table_->Delete(snapshot_key);
         if (!delete_snapshot.ok()) {
             LOG_ERROR("Failed to delete snapshot record: %s", delete_snapshot.error().message().c_str());
-        }
-    }
-
-    // Delete all file records
-    std::string files_prefix = name + "/";
-    auto iter_result = files_table_->ScanPrefix(files_prefix);
-    if (iter_result.ok()) {
-        auto iter = iter_result.value();
-        for (iter->Seek(files_prefix); iter->Valid(); iter->Next()) {
-            auto delete_file = files_table_->Delete(iter->key());
-            if (!delete_file.ok()) {
-                LOG_ERROR("Failed to delete file record: %s", delete_file.error().message().c_str());
-            }
         }
     }
 

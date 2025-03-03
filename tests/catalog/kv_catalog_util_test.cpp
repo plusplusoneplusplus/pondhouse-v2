@@ -84,15 +84,24 @@ protected:
     std::vector<Snapshot> CreateTestSnapshots() {
         std::vector<Snapshot> snapshots;
 
+        // Create test files to include in snapshots
+        auto files1 = CreateTestDataFiles();
+
+        // Add more files for the second snapshot
+        std::vector<DataFile> files2 = files1;
+        // Add an additional file
+        std::unordered_map<std::string, std::string> partition3 = {{"year", "2023"}, {"month", "03"}};
+        files2.emplace_back("data/part-00002.parquet", FileFormat::PARQUET, partition3, 2000, 2 * 1024 * 1024);
+
         // First snapshot
         std::unordered_map<std::string, std::string> summary1 = {{"added-files", "10"}, {"total-records", "1000"}};
-        Snapshot snapshot1(1, 1648176000000, Operation::APPEND, "metadata/manifests/snap-1.avro", summary1);
+        Snapshot snapshot1(1, 1648176000000, Operation::APPEND, files1, summary1);
         snapshots.push_back(snapshot1);
 
         // Second snapshot with parent
         std::unordered_map<std::string, std::string> summary2 = {
             {"added-files", "5"}, {"deleted-files", "2"}, {"total-records", "1500"}};
-        Snapshot snapshot2(2, 1648262400000, Operation::REPLACE, "metadata/manifests/snap-2.avro", summary2);
+        Snapshot snapshot2(2, 1648262400000, Operation::REPLACE, files2, summary2);
         snapshot2.parent_snapshot_id = 1;
         snapshots.push_back(snapshot2);
 
@@ -240,7 +249,7 @@ TEST_F(KVCatalogUtilTest, SerializeDeserializeSnapshots) {
         EXPECT_EQ(deserialized[i].snapshot_id, snapshots[i].snapshot_id);
         EXPECT_EQ(deserialized[i].timestamp_ms, snapshots[i].timestamp_ms);
         EXPECT_EQ(deserialized[i].operation, snapshots[i].operation);
-        EXPECT_EQ(deserialized[i].manifest_list, snapshots[i].manifest_list);
+        EXPECT_EQ(deserialized[i].files.size(), snapshots[i].files.size());
         EXPECT_EQ(deserialized[i].parent_snapshot_id, snapshots[i].parent_snapshot_id);
 
         // Verify summary
@@ -248,6 +257,20 @@ TEST_F(KVCatalogUtilTest, SerializeDeserializeSnapshots) {
         for (const auto& [key, value] : snapshots[i].summary) {
             ASSERT_TRUE(deserialized[i].summary.find(key) != deserialized[i].summary.end());
             EXPECT_EQ(deserialized[i].summary[key], value);
+        }
+
+        // Verify files in the snapshot
+        for (size_t j = 0; j < snapshots[i].files.size(); j++) {
+            EXPECT_EQ(deserialized[i].files[j].file_path, snapshots[i].files[j].file_path);
+            EXPECT_EQ(deserialized[i].files[j].format, snapshots[i].files[j].format);
+            EXPECT_EQ(deserialized[i].files[j].record_count, snapshots[i].files[j].record_count);
+            EXPECT_EQ(deserialized[i].files[j].file_size_bytes, snapshots[i].files[j].file_size_bytes);
+
+            // Verify partition values
+            EXPECT_EQ(deserialized[i].files[j].partition_values.size(), snapshots[i].files[j].partition_values.size());
+            for (const auto& [key, value] : snapshots[i].files[j].partition_values) {
+                EXPECT_EQ(deserialized[i].files[j].partition_values.at(key), value);
+            }
         }
     }
 }
@@ -688,21 +711,15 @@ TEST_F(KVCatalogUtilTest, BoundaryValuesSerialization) {
 
     // Max int64_t values
     std::unordered_map<std::string, std::string> summary1 = {{"count", "9223372036854775807"}};
-    Snapshot max_snapshot(std::numeric_limits<int64_t>::max(),
-                          std::numeric_limits<int64_t>::max(),
-                          Operation::APPEND,
-                          "max.avro",
-                          summary1);
+    Snapshot max_snapshot(
+        std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::max(), Operation::APPEND, {}, summary1);
     max_snapshot.parent_snapshot_id = std::numeric_limits<int64_t>::max() - 1;
     boundary_snapshots.push_back(max_snapshot);
 
     // Min int64_t values
     std::unordered_map<std::string, std::string> summary2 = {{"count", "-9223372036854775808"}};
-    Snapshot min_snapshot(std::numeric_limits<int64_t>::min(),
-                          std::numeric_limits<int64_t>::min(),
-                          Operation::DELETE,
-                          "min.avro",
-                          summary2);
+    Snapshot min_snapshot(
+        std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::min(), Operation::DELETE, {}, summary2);
     min_snapshot.parent_snapshot_id = std::numeric_limits<int64_t>::min() + 1;
     boundary_snapshots.push_back(min_snapshot);
 
@@ -721,6 +738,474 @@ TEST_F(KVCatalogUtilTest, BoundaryValuesSerialization) {
     EXPECT_EQ(result.value()[1].snapshot_id, std::numeric_limits<int64_t>::min());
     EXPECT_EQ(result.value()[1].timestamp_ms, std::numeric_limits<int64_t>::min());
     EXPECT_EQ(*result.value()[1].parent_snapshot_id, std::numeric_limits<int64_t>::min() + 1);
+}
+
+//
+// Test Setup:
+//      Test snapshots with various file configurations (empty, single, multiple files)
+// Test Result:
+//      Serialization/deserialization should correctly handle various file configurations
+//
+TEST_F(KVCatalogUtilTest, SnapshotWithEmbeddedFiles) {
+    // Create a snapshot with no files
+    std::unordered_map<std::string, std::string> summary_empty = {{"total-files", "0"}};
+    Snapshot snapshot_empty(1, 1648176000000, Operation::APPEND, {}, summary_empty);
+
+    // Create a snapshot with a single file
+    std::vector<DataFile> single_file;
+    std::unordered_map<std::string, std::string> partition1 = {{"year", "2023"}, {"month", "01"}};
+    single_file.emplace_back("data/single-file.parquet", FileFormat::PARQUET, partition1, 1000, 1024 * 1024);
+    std::unordered_map<std::string, std::string> summary_single = {{"total-files", "1"}};
+    Snapshot snapshot_single(2, 1648176500000, Operation::APPEND, single_file, summary_single);
+
+    // Create a snapshot with many files (5 files)
+    std::vector<DataFile> many_files;
+    for (int i = 0; i < 5; i++) {
+        std::unordered_map<std::string, std::string> partition = {
+            {"year", "2023"},
+            {"month", std::to_string(i + 1).size() == 1 ? "0" + std::to_string(i + 1) : std::to_string(i + 1)}};
+        many_files.emplace_back("data/part-" + std::to_string(i) + ".parquet",
+                                FileFormat::PARQUET,
+                                partition,
+                                1000 * (i + 1),
+                                1024 * 1024 * (i + 1));
+    }
+    std::unordered_map<std::string, std::string> summary_many = {{"total-files", "5"}};
+    Snapshot snapshot_many(3, 1648177000000, Operation::APPEND, many_files, summary_many);
+
+    // Test empty files
+    std::string json_empty = SerializeSnapshots({snapshot_empty});
+    auto result_empty = DeserializeSnapshots(json_empty);
+    VERIFY_RESULT(result_empty);
+    auto deserialized_empty = result_empty.value();
+    ASSERT_EQ(deserialized_empty.size(), 1);
+    EXPECT_EQ(deserialized_empty[0].files.size(), 0);
+
+    // Test single file
+    std::string json_single = SerializeSnapshots({snapshot_single});
+    auto result_single = DeserializeSnapshots(json_single);
+    VERIFY_RESULT(result_single);
+    auto deserialized_single = result_single.value();
+    ASSERT_EQ(deserialized_single.size(), 1);
+    ASSERT_EQ(deserialized_single[0].files.size(), 1);
+    EXPECT_EQ(deserialized_single[0].files[0].file_path, single_file[0].file_path);
+    EXPECT_EQ(deserialized_single[0].files[0].format, single_file[0].format);
+    EXPECT_EQ(deserialized_single[0].files[0].record_count, single_file[0].record_count);
+
+    // Test many files
+    std::string json_many = SerializeSnapshots({snapshot_many});
+    auto result_many = DeserializeSnapshots(json_many);
+    VERIFY_RESULT(result_many);
+    auto deserialized_many = result_many.value();
+    ASSERT_EQ(deserialized_many.size(), 1);
+    ASSERT_EQ(deserialized_many[0].files.size(), 5);
+
+    // Verify all files were correctly deserialized
+    for (size_t i = 0; i < many_files.size(); i++) {
+        EXPECT_EQ(deserialized_many[0].files[i].file_path, many_files[i].file_path);
+        EXPECT_EQ(deserialized_many[0].files[i].format, many_files[i].format);
+        EXPECT_EQ(deserialized_many[0].files[i].record_count, many_files[i].record_count);
+        EXPECT_EQ(deserialized_many[0].files[i].file_size_bytes, many_files[i].file_size_bytes);
+
+        // Verify partition values
+        for (const auto& [key, value] : many_files[i].partition_values) {
+            EXPECT_EQ(deserialized_many[0].files[i].partition_values.at(key), value);
+        }
+    }
+}
+
+//
+// Test Setup:
+//      Test serialization/deserialization of table metadata with embedded files
+// Test Result:
+//      Table metadata should correctly serialize/deserialize with embedded files
+//
+TEST_F(KVCatalogUtilTest, TableMetadataWithEmbeddedFiles) {
+    auto metadata = CreateTestTableMetadata();
+
+    // Serialize
+    std::string json = SerializeTableMetadata(metadata);
+
+    // Verify JSON format
+    rapidjson::Document doc;
+    ASSERT_FALSE(doc.Parse(json.c_str()).HasParseError());
+    ASSERT_TRUE(doc.IsObject());
+
+    // Deserialize
+    auto result = DeserializeTableMetadata(json);
+    VERIFY_RESULT(result);
+
+    // Verify deserialized metadata
+    auto deserialized = result.value();
+    EXPECT_EQ(deserialized.table_uuid, metadata.table_uuid);
+    EXPECT_EQ(deserialized.format_version, metadata.format_version);
+    EXPECT_EQ(deserialized.location, metadata.location);
+    EXPECT_EQ(deserialized.current_snapshot_id, metadata.current_snapshot_id);
+    EXPECT_EQ(deserialized.last_updated_time, metadata.last_updated_time);
+
+    // Verify properties
+    ASSERT_EQ(deserialized.properties.size(), metadata.properties.size());
+    for (const auto& [key, value] : metadata.properties) {
+        ASSERT_TRUE(deserialized.properties.find(key) != deserialized.properties.end());
+        EXPECT_EQ(deserialized.properties[key], value);
+    }
+
+    // Verify partition specs
+    ASSERT_EQ(deserialized.partition_specs.size(), metadata.partition_specs.size());
+    for (size_t i = 0; i < metadata.partition_specs.size(); i++) {
+        EXPECT_EQ(deserialized.partition_specs[i].spec_id, metadata.partition_specs[i].spec_id);
+        ASSERT_EQ(deserialized.partition_specs[i].fields.size(), metadata.partition_specs[i].fields.size());
+    }
+}
+
+//
+// Test Setup:
+//      Test error handling for malformed snapshots with embedded files
+// Test Result:
+//      Deserialization should fail with appropriate error codes
+//
+TEST_F(KVCatalogUtilTest, MalformedEmbeddedFilesDeserialization) {
+    // Malformed snapshot with invalid files array (not an array)
+    const char* malformed_snapshot1 = R"({
+        "snapshot_id": 1,
+        "timestamp_ms": 1648176000000,
+        "operation": "append",
+        "files": "should be an array but is a string"
+    })";
+
+    auto result1 = DeserializeSnapshots("[" + std::string(malformed_snapshot1) + "]");
+    EXPECT_FALSE(result1.ok());
+    EXPECT_EQ(result1.error().code(), ErrorCode::DeserializationError);
+
+    // Malformed snapshot with files that are missing required fields
+    const char* malformed_snapshot2 = R"({
+        "snapshot_id": 2,
+        "timestamp_ms": 1648176500000,
+        "operation": "append",
+        "files": [
+            {
+                "file_path": "data/file1.parquet",
+                "format": "parquet"
+                // Missing record_count and file_size_bytes
+            }
+        ]
+    })";
+
+    auto result2 = DeserializeSnapshots("[" + std::string(malformed_snapshot2) + "]");
+    EXPECT_FALSE(result2.ok());
+    EXPECT_EQ(result2.error().code(), ErrorCode::DeserializationError);
+
+    // Malformed snapshot with file that has invalid format
+    const char* malformed_snapshot3 = R"({
+        "snapshot_id": 3,
+        "timestamp_ms": 1648177000000,
+        "operation": "append",
+        "files": [
+            {
+                "file_path": "data/file1.parquet",
+                "format": "invalid_format",
+                "record_count": 1000,
+                "file_size_bytes": 1048576,
+                "partition_values": {}
+            }
+        ]
+    })";
+
+    auto result3 = DeserializeSnapshots("[" + std::string(malformed_snapshot3) + "]");
+    EXPECT_FALSE(result3.ok());
+    EXPECT_EQ(result3.error().code(), ErrorCode::DeserializationError);
+
+    // Malformed snapshot with invalid partition values (not an object)
+    const char* malformed_snapshot4 = R"({
+        "snapshot_id": 4,
+        "timestamp_ms": 1648177500000,
+        "operation": "append",
+        "files": [
+            {
+                "file_path": "data/file1.parquet",
+                "format": "parquet",
+                "record_count": 1000,
+                "file_size_bytes": 1048576,
+                "partition_values": "should be an object"
+            }
+        ]
+    })";
+
+    auto result4 = DeserializeSnapshots("[" + std::string(malformed_snapshot4) + "]");
+    EXPECT_FALSE(result4.ok());
+    EXPECT_EQ(result4.error().code(), ErrorCode::DeserializationError);
+}
+
+//
+// Test Setup:
+//      Test integration between table metadata and snapshots with embedded files
+// Test Result:
+//      Metadata with snapshots containing embedded files should be serialized/deserialized correctly
+//
+TEST_F(KVCatalogUtilTest, TableMetadataWithMultipleSnapshots) {
+    // Create table metadata with multiple snapshots that have embedded files
+    auto metadata = CreateTestTableMetadata();
+
+    // Create three snapshots with different numbers of files
+    std::vector<Snapshot> snapshots;
+
+    // Snapshot 1 - empty
+    std::unordered_map<std::string, std::string> summary1 = {{"total-files", "0"}};
+    snapshots.emplace_back(1, 1648176000000, Operation::APPEND, std::vector<DataFile>{}, summary1);
+
+    // Snapshot 2 - with 2 files
+    std::vector<DataFile> files2;
+    std::unordered_map<std::string, std::string> partition1 = {{"year", "2023"}, {"month", "01"}};
+    files2.emplace_back("data/file1.parquet", FileFormat::PARQUET, partition1, 1000, 1024 * 1024);
+    std::unordered_map<std::string, std::string> partition2 = {{"year", "2023"}, {"month", "02"}};
+    files2.emplace_back("data/file2.parquet", FileFormat::PARQUET, partition2, 2000, 2 * 1024 * 1024);
+    std::unordered_map<std::string, std::string> summary2 = {{"total-files", "2"}, {"added-files", "2"}};
+    Snapshot snapshot2(2, 1648176500000, Operation::APPEND, files2, summary2);
+    snapshot2.parent_snapshot_id = 1;
+    snapshots.push_back(snapshot2);
+
+    // Snapshot 3 - with 3 files
+    std::vector<DataFile> files3 = files2;  // Keep the first two files
+    std::unordered_map<std::string, std::string> partition3 = {{"year", "2023"}, {"month", "03"}};
+    files3.emplace_back("data/file3.parquet", FileFormat::PARQUET, partition3, 3000, 3 * 1024 * 1024);
+    std::unordered_map<std::string, std::string> summary3 = {{"total-files", "3"}, {"added-files", "1"}};
+    Snapshot snapshot3(3, 1648177000000, Operation::APPEND, files3, summary3);
+    snapshot3.parent_snapshot_id = 2;
+    snapshots.push_back(snapshot3);
+
+    // Set the snapshots in the metadata and update current snapshot ID
+    metadata.snapshots = snapshots;
+    metadata.current_snapshot_id = 3;  // Latest snapshot
+
+    // Serialize and deserialize
+    std::string json = SerializeTableMetadata(metadata);
+    auto result = DeserializeTableMetadata(json);
+    VERIFY_RESULT(result);
+
+    // Verify metadata
+    auto deserialized = result.value();
+    EXPECT_EQ(deserialized.current_snapshot_id, 3);
+    EXPECT_EQ(deserialized.snapshots.size(), 3);
+
+    // Verify first snapshot (empty)
+    EXPECT_EQ(deserialized.snapshots[0].snapshot_id, 1);
+    EXPECT_EQ(deserialized.snapshots[0].files.size(), 0);
+
+    // Verify second snapshot (2 files)
+    EXPECT_EQ(deserialized.snapshots[1].snapshot_id, 2);
+    EXPECT_EQ(deserialized.snapshots[1].files.size(), 2);
+    EXPECT_EQ(deserialized.snapshots[1].parent_snapshot_id, std::optional<SnapshotId>(1));
+
+    // Verify file details in second snapshot
+    for (size_t i = 0; i < files2.size(); i++) {
+        EXPECT_EQ(deserialized.snapshots[1].files[i].file_path, files2[i].file_path);
+        EXPECT_EQ(deserialized.snapshots[1].files[i].format, files2[i].format);
+        EXPECT_EQ(deserialized.snapshots[1].files[i].record_count, files2[i].record_count);
+    }
+
+    // Verify third snapshot (3 files)
+    EXPECT_EQ(deserialized.snapshots[2].snapshot_id, 3);
+    EXPECT_EQ(deserialized.snapshots[2].files.size(), 3);
+    EXPECT_EQ(deserialized.snapshots[2].parent_snapshot_id, std::optional<SnapshotId>(2));
+
+    // Verify file details in third snapshot
+    for (size_t i = 0; i < files3.size(); i++) {
+        EXPECT_EQ(deserialized.snapshots[2].files[i].file_path, files3[i].file_path);
+        EXPECT_EQ(deserialized.snapshots[2].files[i].format, files3[i].format);
+        EXPECT_EQ(deserialized.snapshots[2].files[i].record_count, files3[i].record_count);
+    }
+}
+
+//
+// Test Setup:
+//      Test snapshots with large file collections (stress test)
+// Test Result:
+//      Serialization/deserialization should handle large file collections correctly
+//
+TEST_F(KVCatalogUtilTest, SnapshotWithLargeFileCollection) {
+    // Create a snapshot with a large number of files (50 files)
+    std::vector<DataFile> large_file_collection;
+
+    for (int i = 0; i < 100; i++) {
+        // Generate file path with leading zeros for sorting
+        std::string file_number = std::to_string(i);
+        if (file_number.length() < 2) {
+            file_number = "0" + file_number;
+        }
+
+        // Create varied partition values
+        std::unordered_map<std::string, std::string> partition;
+
+        // Simulate year/month/day partitioning
+        int year = 2020 + (i % 4);  // Years 2020-2023
+        int month = 1 + (i % 12);   // Months 1-12
+        int day = 1 + (i % 28);     // Days 1-28
+
+        partition["year"] = std::to_string(year);
+        partition["month"] = (month < 10) ? "0" + std::to_string(month) : std::to_string(month);
+        partition["day"] = (day < 10) ? "0" + std::to_string(day) : std::to_string(day);
+
+        // Add some varied file formats
+        FileFormat format = FileFormat::PARQUET;
+
+        // Create file with varied sizes and record counts
+        large_file_collection.emplace_back("data/part-" + file_number + "." + FileFormatToString(format),
+                                           format,
+                                           partition,
+                                           1000 * (i + 1),             // Varied record counts
+                                           1024 * 1024 * (i % 10 + 1)  // Varied file sizes
+        );
+    }
+
+    // Create snapshot with the large file collection
+    std::unordered_map<std::string, std::string> summary = {
+        {"total-files", "50"},
+        {"total-records", "1275000"},                      // Sum of all record counts
+        {"total-size-bytes", "275" + std::string(6, '0')}  // Approximate total bytes
+    };
+
+    Snapshot large_snapshot(1, 1648176000000, Operation::APPEND, large_file_collection, summary);
+
+    // Serialize and deserialize
+    std::string json = SerializeSnapshots({large_snapshot});
+
+    // Check JSON is not too small (should be substantial)
+    EXPECT_GT(json.size(), 10000);
+
+    auto result = DeserializeSnapshots(json);
+    VERIFY_RESULT(result);
+
+    // Verify deserialized snapshot
+    auto deserialized = result.value();
+    ASSERT_EQ(deserialized.size(), 1);
+    ASSERT_EQ(deserialized[0].files.size(), 100);
+
+    // Verify all files match (use a sampling approach for efficiency)
+    std::vector<int> sample_indices = {0, 10, 20, 30, 40, 49, 99};  // Sample from different parts
+
+    for (int idx : sample_indices) {
+        EXPECT_EQ(deserialized[0].files[idx].file_path, large_file_collection[idx].file_path);
+        EXPECT_EQ(deserialized[0].files[idx].format, large_file_collection[idx].format);
+        EXPECT_EQ(deserialized[0].files[idx].record_count, large_file_collection[idx].record_count);
+        EXPECT_EQ(deserialized[0].files[idx].file_size_bytes, large_file_collection[idx].file_size_bytes);
+
+        // Verify partition values
+        for (const auto& [key, value] : large_file_collection[idx].partition_values) {
+            EXPECT_EQ(deserialized[0].files[idx].partition_values.at(key), value);
+        }
+    }
+
+    // Verify the summary
+    ASSERT_EQ(deserialized[0].summary.size(), summary.size());
+    for (const auto& [key, value] : summary) {
+        ASSERT_TRUE(deserialized[0].summary.find(key) != deserialized[0].summary.end());
+        EXPECT_EQ(deserialized[0].summary[key], value);
+    }
+}
+
+//
+// Test Setup:
+//      Test the DeserializeSnapshot method with various edge cases
+// Test Result:
+//      The method should handle all edge cases correctly and return appropriate errors
+//
+TEST_F(KVCatalogUtilTest, DeserializeSnapshotEdgeCases) {
+    // Test case 1: Missing required fields
+    const char* missing_fields_json = R"({
+        "snapshot_id": 1,
+        "timestamp_ms": 1648176000000
+        // Missing operation and files fields
+    })";
+
+    rapidjson::Document doc1;
+    doc1.Parse(missing_fields_json);
+    auto result1 = DeserializeSnapshot(doc1);
+    EXPECT_FALSE(result1.ok());
+    EXPECT_EQ(result1.error().code(), ErrorCode::DeserializationError);
+    EXPECT_TRUE(std::string(result1.error().message()).find("Snapshot must be an object") != std::string::npos);
+
+    // Test case 2: Invalid files format (not an array)
+    const char* invalid_files_json = R"({
+        "snapshot_id": 2,
+        "timestamp_ms": 1648176500000,
+        "operation": "append",
+        "files": "should be an array"
+    })";
+
+    rapidjson::Document doc2;
+    doc2.Parse(invalid_files_json);
+    auto result2 = DeserializeSnapshot(doc2);
+    EXPECT_FALSE(result2.ok());
+    EXPECT_EQ(result2.error().code(), ErrorCode::DeserializationError);
+    EXPECT_TRUE(std::string(result2.error().message()).find("Files must be an array") != std::string::npos);
+
+    // Test case 3: Invalid file format in files array
+    const char* invalid_file_format_json = R"({
+        "snapshot_id": 3,
+        "timestamp_ms": 1648177000000,
+        "operation": "append",
+        "files": [
+            {
+                "file_path": "data/file1.parquet",
+                "format": "invalid_format",
+                "record_count": 1000,
+                "file_size_bytes": 1048576
+            }
+        ]
+    })";
+
+    rapidjson::Document doc3;
+    doc3.Parse(invalid_file_format_json);
+    auto result3 = DeserializeSnapshot(doc3);
+    EXPECT_FALSE(result3.ok());
+    EXPECT_EQ(result3.error().code(), ErrorCode::DeserializationError);
+    EXPECT_TRUE(std::string(result3.error().message()).find("Invalid file format") != std::string::npos);
+
+    // Test case 4: Valid snapshot with all required fields
+    const char* valid_snapshot_json = R"({
+        "snapshot_id": 4,
+        "timestamp_ms": 1648177500000,
+        "operation": "append",
+        "parent_snapshot_id": 3,
+        "files": [
+            {
+                "file_path": "data/file1.parquet",
+                "format": "parquet",
+                "record_count": 1000,
+                "file_size_bytes": 1048576,
+                "partition_values": {
+                    "year": "2023",
+                    "month": "01"
+                }
+            }
+        ],
+        "summary": {
+            "total-files": "1",
+            "added-files": "1"
+        }
+    })";
+
+    rapidjson::Document doc4;
+    doc4.Parse(valid_snapshot_json);
+    auto result4 = DeserializeSnapshot(doc4);
+    EXPECT_TRUE(result4.ok());
+
+    // Verify the deserialized snapshot
+    auto snapshot = result4.value();
+    EXPECT_EQ(snapshot.snapshot_id, 4);
+    EXPECT_EQ(snapshot.timestamp_ms, 1648177500000);
+    EXPECT_EQ(snapshot.operation, Operation::APPEND);
+    EXPECT_EQ(snapshot.parent_snapshot_id.value_or(-1), 3);
+    EXPECT_EQ(snapshot.files.size(), 1);
+    EXPECT_EQ(snapshot.files[0].file_path, "data/file1.parquet");
+    EXPECT_EQ(snapshot.files[0].format, FileFormat::PARQUET);
+    EXPECT_EQ(snapshot.files[0].record_count, 1000);
+    EXPECT_EQ(snapshot.files[0].file_size_bytes, 1048576);
+    EXPECT_EQ(snapshot.files[0].partition_values.at("year"), "2023");
+    EXPECT_EQ(snapshot.files[0].partition_values.at("month"), "01");
+    EXPECT_EQ(snapshot.summary.size(), 2);
+    EXPECT_EQ(snapshot.summary.at("total-files"), "1");
+    EXPECT_EQ(snapshot.summary.at("added-files"), "1");
 }
 
 }  // namespace pond::catalog

@@ -64,6 +64,14 @@ std::string SerializeSnapshots(const std::vector<Snapshot>& snapshots);
 common::Result<std::vector<Snapshot>> DeserializeSnapshots(const std::string& json);
 
 /**
+ * Deserializes a single snapshot from a JSON object.
+ *
+ * @param snapshot_json The JSON object representing a snapshot
+ * @return A Result containing either the deserialized snapshot or an error
+ */
+common::Result<Snapshot> DeserializeSnapshot(const rapidjson::Value& snapshot_json);
+
+/**
  * Serializes a vector of data files to a JSON string.
  *
  * @param files The data files to serialize
@@ -147,7 +155,7 @@ constexpr const char* SNAPSHOT_ID_FIELD = "snapshot_id";                // INT64
 constexpr const char* PARENT_SNAPSHOT_ID_FIELD = "parent_snapshot_id";  // INT64
 constexpr const char* TIMESTAMP_MS_FIELD = "timestamp_ms";              // INT64
 constexpr const char* OPERATION_FIELD = "operation";                    // STRING
-constexpr const char* MANIFEST_LIST_FIELD = "manifest_list";            // STRING
+constexpr const char* FILES_FIELD = "files";                            // BINARY (serialized file list)
 constexpr const char* SUMMARY_FIELD = "summary";                        // BINARY (serialized map)
 
 // Files metadata schema

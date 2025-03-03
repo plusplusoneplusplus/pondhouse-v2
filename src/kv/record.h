@@ -54,10 +54,6 @@ public:
 
     template <typename T>
     common::Result<T> Get(size_t col_idx) const {
-        if (col_idx >= schema_->num_columns()) {
-            throw std::out_of_range("Column index out of range");
-        }
-
         if (col_idx >= values_.size()) {
             throw std::out_of_range("Column index out of data range");
         }
@@ -74,6 +70,18 @@ public:
         }
 
         return UnpackValue<T>(values_[col_idx].value());
+    }
+
+    template <typename T>
+    T GetOrDefault(size_t col_idx, const T& default_value) const {
+        if (IsNull(col_idx)) {
+            return default_value;
+        }
+        auto result = Get<T>(col_idx);
+        if (!result.ok()) {
+            return default_value;
+        }
+        return result.value();
     }
 
     // Serialization

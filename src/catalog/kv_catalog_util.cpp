@@ -20,6 +20,7 @@ static constexpr const char* KEY_LAST_UPDATED_TIME = "last_updated_time";
 static constexpr const char* KEY_PROPERTIES = "properties";
 static constexpr const char* KEY_SCHEMA = "schema";
 static constexpr const char* KEY_PARTITION_SPECS = "partition_specs";
+static constexpr const char* KEY_SNAPSHOTS = "snapshots";
 
 // JSON keys for partition specs
 static constexpr const char* KEY_SPEC_ID = "spec_id";
@@ -35,7 +36,7 @@ static constexpr const char* KEY_SNAPSHOT_ID = "snapshot_id";
 static constexpr const char* KEY_PARENT_SNAPSHOT_ID = "parent_snapshot_id";
 static constexpr const char* KEY_TIMESTAMP_MS = "timestamp_ms";
 static constexpr const char* KEY_OPERATION = "operation";
-static constexpr const char* KEY_MANIFEST_LIST = "manifest_list";
+static constexpr const char* KEY_FILES = "files";
 static constexpr const char* KEY_SUMMARY = "summary";
 
 // JSON keys for data files
@@ -46,6 +47,71 @@ static constexpr const char* KEY_FILE_SIZE_BYTES = "file_size_bytes";
 static constexpr const char* KEY_PARTITION_VALUES = "partition_values";
 
 #define CSTR_TO_VALUE(str) rapidjson::Value(str, allocator)
+
+rapidjson::Value SerializeSnapshot(const Snapshot& snapshot, rapidjson::Document::AllocatorType& allocator) {
+    rapidjson::Value snap_json(rapidjson::kObjectType);
+
+    // Add required fields - create Value objects for the keys
+    rapidjson::Value snapshot_id_key(KEY_SNAPSHOT_ID, allocator);
+    rapidjson::Value timestamp_ms_key(KEY_TIMESTAMP_MS, allocator);
+    rapidjson::Value operation_key(KEY_OPERATION, allocator);
+    rapidjson::Value files_key(KEY_FILES, allocator);
+
+    snap_json.AddMember(snapshot_id_key, snapshot.snapshot_id, allocator);
+    snap_json.AddMember(timestamp_ms_key, snapshot.timestamp_ms, allocator);
+    snap_json.AddMember(
+        operation_key, rapidjson::Value(OperationToString(snapshot.operation).c_str(), allocator), allocator);
+
+    // Serialize files array
+    rapidjson::Value files_array(rapidjson::kArrayType);
+    for (const auto& file : snapshot.files) {
+        rapidjson::Value file_json(rapidjson::kObjectType);
+
+        // Add file fields
+        rapidjson::Value file_path_key(KEY_FILE_PATH, allocator);
+        rapidjson::Value format_key(KEY_FORMAT, allocator);
+        rapidjson::Value record_count_key(KEY_RECORD_COUNT, allocator);
+        rapidjson::Value file_size_bytes_key(KEY_FILE_SIZE_BYTES, allocator);
+
+        file_json.AddMember(file_path_key, rapidjson::Value(file.file_path.c_str(), allocator), allocator);
+        file_json.AddMember(
+            format_key, rapidjson::Value(FileFormatToString(file.format).c_str(), allocator), allocator);
+        file_json.AddMember(record_count_key, file.record_count, allocator);
+        file_json.AddMember(file_size_bytes_key, file.file_size_bytes, allocator);
+
+        // Add partition values
+        if (!file.partition_values.empty()) {
+            rapidjson::Value partition_values(rapidjson::kObjectType);
+            for (const auto& [key, value] : file.partition_values) {
+                rapidjson::Value key_val(key.c_str(), allocator);
+                partition_values.AddMember(key_val, rapidjson::Value(value.c_str(), allocator), allocator);
+            }
+            rapidjson::Value partition_values_key("partition_values", allocator);
+            file_json.AddMember(partition_values_key, partition_values, allocator);
+        }
+
+        files_array.PushBack(file_json, allocator);
+    }
+
+    snap_json.AddMember(files_key, files_array, allocator);
+
+    // Add optional parent_snapshot_id if present
+    if (snapshot.parent_snapshot_id) {
+        rapidjson::Value parent_id_key(KEY_PARENT_SNAPSHOT_ID, allocator);
+        snap_json.AddMember(parent_id_key, *snapshot.parent_snapshot_id, allocator);
+    }
+
+    // Serialize summary map
+    rapidjson::Value summary_json(rapidjson::kObjectType);
+    for (const auto& [key, value] : snapshot.summary) {
+        rapidjson::Value key_val(key.c_str(), allocator);
+        summary_json.AddMember(key_val, rapidjson::Value(value.c_str(), allocator), allocator);
+    }
+
+    rapidjson::Value summary_key(KEY_SUMMARY, allocator);
+    snap_json.AddMember(summary_key, summary_json, allocator);
+    return snap_json;
+}
 
 // Serialization
 std::string SerializeTableMetadata(const TableMetadata& metadata) {
@@ -63,24 +129,7 @@ std::string SerializeTableMetadata(const TableMetadata& metadata) {
     // Serialize snapshots
     rapidjson::Value snapshots(rapidjson::kArrayType);
     for (const auto& snapshot : metadata.snapshots) {
-        rapidjson::Value snap(rapidjson::kObjectType);
-        snap.AddMember("snapshot_id", snapshot.snapshot_id, allocator);
-        snap.AddMember("timestamp_ms", snapshot.timestamp_ms, allocator);
-        snap.AddMember(
-            "operation", rapidjson::Value(OperationToString(snapshot.operation).c_str(), allocator), allocator);
-        snap.AddMember("manifest_list", rapidjson::Value(snapshot.manifest_list.c_str(), allocator), allocator);
-
-        // Serialize summary map
-        rapidjson::Value summary(rapidjson::kObjectType);
-        for (const auto& [key, value] : snapshot.summary) {
-            summary.AddMember(
-                rapidjson::Value(key.c_str(), allocator), rapidjson::Value(value.c_str(), allocator), allocator);
-        }
-        snap.AddMember("summary", summary, allocator);
-
-        if (snapshot.parent_snapshot_id) {
-            snap.AddMember("parent_snapshot_id", *snapshot.parent_snapshot_id, allocator);
-        }
+        rapidjson::Value snap = SerializeSnapshot(snapshot, allocator);
 
         snapshots.PushBack(snap, allocator);
     }
@@ -144,6 +193,99 @@ std::string SerializeTableMetadata(const TableMetadata& metadata) {
     doc.Accept(writer);
 
     return buffer.GetString();
+}
+
+// Deserialize a single snapshot from a JSON object
+Result<Snapshot> DeserializeSnapshot(const rapidjson::Value& snapshot_json) {
+    // Validate that snapshot_json is an object
+    if (!snapshot_json.IsObject()) {
+        return Result<Snapshot>::failure(ErrorCode::DeserializationError, "Snapshot must be an object");
+    }
+
+    // Validate required fields
+    if (!snapshot_json.HasMember(KEY_SNAPSHOT_ID) || !snapshot_json.HasMember(KEY_TIMESTAMP_MS)
+        || !snapshot_json.HasMember(KEY_OPERATION) || !snapshot_json.HasMember(KEY_FILES)) {
+        return Result<Snapshot>::failure(ErrorCode::DeserializationError, "Missing required snapshot fields");
+    }
+
+    // Create a snapshot object and populate it
+    Snapshot snapshot(snapshot_json[KEY_SNAPSHOT_ID].GetInt64(),
+                      snapshot_json[KEY_TIMESTAMP_MS].GetInt64(),
+                      OperationFromString(snapshot_json[KEY_OPERATION].GetString()),
+                      {},  // Will populate files below
+                      {}   // summary will be populated below
+    );
+
+    // Set parent_snapshot_id if present
+    if (snapshot_json.HasMember(KEY_PARENT_SNAPSHOT_ID)) {
+        snapshot.parent_snapshot_id = snapshot_json[KEY_PARENT_SNAPSHOT_ID].GetInt64();
+    }
+
+    // Deserialize files
+    const auto& files_json = snapshot_json[KEY_FILES];
+    if (!files_json.IsArray()) {
+        return Result<Snapshot>::failure(ErrorCode::DeserializationError, "Files must be an array");
+    }
+
+    for (const auto& file_json : files_json.GetArray()) {
+        if (!file_json.IsObject() || !file_json.HasMember(KEY_FILE_PATH) || !file_json.HasMember(KEY_FORMAT)
+            || !file_json.HasMember(KEY_RECORD_COUNT) || !file_json.HasMember(KEY_FILE_SIZE_BYTES)) {
+            return Result<Snapshot>::failure(ErrorCode::DeserializationError, "Missing required file fields");
+        }
+
+        // Initialize partition values map
+        std::unordered_map<std::string, std::string> partition_values;
+
+        // Parse partition values if present
+        if (file_json.HasMember(KEY_PARTITION_VALUES)) {
+            const auto& pv_json = file_json[KEY_PARTITION_VALUES];
+            if (!pv_json.IsObject()) {
+                return Result<Snapshot>::failure(ErrorCode::DeserializationError, "Partition values must be an object");
+            }
+
+            for (auto it = pv_json.MemberBegin(); it != pv_json.MemberEnd(); ++it) {
+                if (!it->value.IsString()) {
+                    return Result<Snapshot>::failure(ErrorCode::DeserializationError,
+                                                     "Partition value must be a string");
+                }
+                partition_values[it->name.GetString()] = it->value.GetString();
+            }
+        }
+
+        // Parse file format
+        FileFormat format;
+        try {
+            format = FileFormatFromString(file_json[KEY_FORMAT].GetString());
+        } catch (const std::exception& e) {
+            return Result<Snapshot>::failure(ErrorCode::DeserializationError,
+                                             std::string("Invalid file format: ") + e.what());
+        }
+
+        // Create data file and add to snapshot
+        DataFile data_file(file_json[KEY_FILE_PATH].GetString(),
+                           format,
+                           partition_values,
+                           file_json[KEY_RECORD_COUNT].GetInt64(),
+                           file_json[KEY_FILE_SIZE_BYTES].GetInt64());
+        snapshot.files.push_back(std::move(data_file));
+    }
+
+    // Deserialize summary if present
+    if (snapshot_json.HasMember(KEY_SUMMARY)) {
+        const auto& summary_json = snapshot_json[KEY_SUMMARY];
+        if (!summary_json.IsObject()) {
+            return Result<Snapshot>::failure(ErrorCode::DeserializationError, "Summary must be an object");
+        }
+
+        for (auto it = summary_json.MemberBegin(); it != summary_json.MemberEnd(); ++it) {
+            if (!it->value.IsString()) {
+                return Result<Snapshot>::failure(ErrorCode::DeserializationError, "Summary value must be a string");
+            }
+            snapshot.summary[it->name.GetString()] = it->value.GetString();
+        }
+    }
+
+    return Result<Snapshot>::success(std::move(snapshot));
 }
 
 Result<TableMetadata> DeserializeTableMetadata(const std::string& data) {
@@ -224,6 +366,24 @@ Result<TableMetadata> DeserializeTableMetadata(const std::string& data) {
         }
 
         metadata.partition_specs.push_back(std::move(partition_spec));
+    }
+
+    // Deserialize snapshots if present
+    if (doc.HasMember(KEY_SNAPSHOTS)) {
+        const auto& snapshots_json = doc[KEY_SNAPSHOTS];
+        if (!snapshots_json.IsArray()) {
+            return Result<TableMetadata>::failure(ErrorCode::DeserializationError, "Snapshots must be an array");
+        }
+
+        for (const auto& snapshot_json : snapshots_json.GetArray()) {
+            auto result = DeserializeSnapshot(snapshot_json);
+            if (!result.ok()) {
+                return Result<TableMetadata>::failure(
+                    ErrorCode::DeserializationError,
+                    "Failed to deserialize snapshot: " + std::string(result.error().message()));
+            }
+            metadata.snapshots.push_back(std::move(result.value()));
+        }
     }
 
     return Result<TableMetadata>::success(std::move(metadata));
@@ -459,36 +619,7 @@ std::string SerializeSnapshots(const std::vector<Snapshot>& snapshots) {
     auto& allocator = doc.GetAllocator();
 
     for (const auto& snapshot : snapshots) {
-        rapidjson::Value snap_json(rapidjson::kObjectType);
-
-        // Add required fields - create Value objects for the keys
-        rapidjson::Value snapshot_id_key(KEY_SNAPSHOT_ID, allocator);
-        rapidjson::Value timestamp_ms_key(KEY_TIMESTAMP_MS, allocator);
-        rapidjson::Value operation_key(KEY_OPERATION, allocator);
-        rapidjson::Value manifest_list_key(KEY_MANIFEST_LIST, allocator);
-
-        snap_json.AddMember(snapshot_id_key, snapshot.snapshot_id, allocator);
-        snap_json.AddMember(timestamp_ms_key, snapshot.timestamp_ms, allocator);
-        snap_json.AddMember(
-            operation_key, rapidjson::Value(OperationToString(snapshot.operation).c_str(), allocator), allocator);
-        snap_json.AddMember(manifest_list_key, rapidjson::Value(snapshot.manifest_list.c_str(), allocator), allocator);
-
-        // Add optional parent_snapshot_id if present
-        if (snapshot.parent_snapshot_id) {
-            rapidjson::Value parent_id_key(KEY_PARENT_SNAPSHOT_ID, allocator);
-            snap_json.AddMember(parent_id_key, *snapshot.parent_snapshot_id, allocator);
-        }
-
-        // Serialize summary map
-        rapidjson::Value summary_json(rapidjson::kObjectType);
-        for (const auto& [key, value] : snapshot.summary) {
-            rapidjson::Value key_val(key.c_str(), allocator);
-            summary_json.AddMember(key_val, rapidjson::Value(value.c_str(), allocator), allocator);
-        }
-
-        rapidjson::Value summary_key(KEY_SUMMARY, allocator);
-        snap_json.AddMember(summary_key, summary_json, allocator);
-
+        rapidjson::Value snap_json = SerializeSnapshot(snapshot, allocator);
         doc.PushBack(snap_json, allocator);
     }
 
@@ -501,44 +632,23 @@ std::string SerializeSnapshots(const std::vector<Snapshot>& snapshots) {
 Result<std::vector<Snapshot>> DeserializeSnapshots(const std::string& data) {
     rapidjson::Document doc;
     if (doc.Parse(data.c_str()).HasParseError()) {
-        return Result<std::vector<Snapshot>>::failure(ErrorCode::DeserializationError,
-                                                      "Failed to parse snapshots JSON");
+        return Result<std::vector<Snapshot>>::failure(ErrorCode::DeserializationError, "Invalid JSON format");
     }
 
     if (!doc.IsArray()) {
-        return Result<std::vector<Snapshot>>::failure(ErrorCode::DeserializationError, "Snapshots must be an array");
+        return Result<std::vector<Snapshot>>::failure(ErrorCode::DeserializationError,
+                                                      "Expected an array of snapshots");
     }
 
     std::vector<Snapshot> snapshots;
-    for (const auto& snap : doc.GetArray()) {
-        if (!snap.IsObject() || !snap.HasMember(KEY_SNAPSHOT_ID) || !snap.HasMember(KEY_TIMESTAMP_MS)
-            || !snap.HasMember(KEY_OPERATION) || !snap.HasMember(KEY_MANIFEST_LIST)) {
-            return Result<std::vector<Snapshot>>::failure(ErrorCode::DeserializationError, "Invalid snapshot format");
+    for (const auto& snapshot_json : doc.GetArray()) {
+        auto result = DeserializeSnapshot(snapshot_json);
+        if (!result.ok()) {
+            return Result<std::vector<Snapshot>>::failure(
+                ErrorCode::DeserializationError,
+                "Failed to deserialize snapshot: " + std::string(result.error().message()));
         }
-
-        std::unordered_map<std::string, std::string> summary;
-        if (snap.HasMember(KEY_SUMMARY) && snap[KEY_SUMMARY].IsObject()) {
-            const auto& summary_obj = snap[KEY_SUMMARY];
-            for (auto it = summary_obj.MemberBegin(); it != summary_obj.MemberEnd(); ++it) {
-                if (!it->value.IsString()) {
-                    return Result<std::vector<Snapshot>>::failure(ErrorCode::DeserializationError,
-                                                                  "Summary values must be strings");
-                }
-                summary[it->name.GetString()] = it->value.GetString();
-            }
-        }
-
-        Snapshot snapshot(snap[KEY_SNAPSHOT_ID].GetInt64(),
-                          snap[KEY_TIMESTAMP_MS].GetInt64(),
-                          OperationFromString(snap[KEY_OPERATION].GetString()),
-                          snap[KEY_MANIFEST_LIST].GetString(),
-                          summary);
-
-        if (snap.HasMember(KEY_PARENT_SNAPSHOT_ID)) {
-            snapshot.parent_snapshot_id = snap[KEY_PARENT_SNAPSHOT_ID].GetInt64();
-        }
-
-        snapshots.push_back(std::move(snapshot));
+        snapshots.push_back(std::move(result.value()));
     }
 
     return Result<std::vector<Snapshot>>::success(std::move(snapshots));
@@ -646,7 +756,7 @@ std::shared_ptr<common::Schema> GetSnapshotsTableSchema() {
                              .AddField(PARENT_SNAPSHOT_ID_FIELD, common::ColumnType::INT64)
                              .AddField(TIMESTAMP_MS_FIELD, common::ColumnType::INT64)
                              .AddField(OPERATION_FIELD, common::ColumnType::STRING)
-                             .AddField(MANIFEST_LIST_FIELD, common::ColumnType::STRING)
+                             .AddField(FILES_FIELD, common::ColumnType::BINARY)
                              .AddField(SUMMARY_FIELD, common::ColumnType::BINARY)
                              .Build();
     return schema;
