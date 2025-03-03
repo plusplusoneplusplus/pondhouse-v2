@@ -7,6 +7,7 @@
 #include "common/memory_append_only_fs.h"
 #include "query/planner/logical_optimizer.h"
 #include "query/planner/logical_planner.h"
+#include "query/planner/physical_planner.h"
 
 namespace pond::query {
 
@@ -54,6 +55,13 @@ public:
         auto optimized_plan_result = optimizer.Optimize(plan);
         EXPECT_TRUE(optimized_plan_result.ok()) << "Logical optimization should succeed";
         return optimized_plan_result;
+    }
+
+    Result<std::shared_ptr<PhysicalPlanNode>> PlanPhysical(const std::string& query, bool optimize = false) {
+        PhysicalPlanner planner(*catalog_);
+        auto logical_plan = PlanLogical(query, optimize);
+        EXPECT_TRUE(logical_plan.ok()) << "Logical planning should succeed";
+        return planner.Plan(logical_plan.value());
     }
 
 public:

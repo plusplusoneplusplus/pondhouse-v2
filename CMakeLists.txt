@@ -165,6 +165,9 @@ add_library(pondhouse_common
     src/query/planner/logical_plan_node.cpp
     src/query/planner/logical_plan_printer.cpp
     src/query/planner/logical_planner.cpp
+    src/query/planner/physical_plan_node.cpp
+    src/query/planner/physical_plan_printer.cpp
+    src/query/planner/physical_planner.cpp
     src/rsm/rsm.cpp
     src/rsm/snapshot_manager.cpp
     ${PROTO_SRCS}
@@ -268,6 +271,7 @@ add_executable(
     tests/main.cpp
     tests/query/logical_planner_test.cpp
     tests/query/logical_optimizer_test.cpp
+    tests/query/physical_planner_test.cpp
     tests/sql/hyrise_parser_test.cpp
     tests/test_helper.cpp
     tests/proto/metadata_test.cpp
