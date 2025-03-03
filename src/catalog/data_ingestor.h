@@ -14,42 +14,43 @@
 namespace pond::catalog {
 
 /**
- * TableDataIngestor handles the ingestion of data into tables managed by the catalog.
+ * DataIngestor handles the ingestion of data into tables managed by the catalog.
  * It manages writing data to Parquet files and updating the catalog metadata.
  */
-class TableDataIngestor {
+class DataIngestor {
 public:
     /**
-     * Creates a new TableDataIngestor instance.
+     * Creates a new DataIngestor instance.
      * @param catalog The catalog managing the table
      * @param fs The filesystem to write data to
      * @param table_name The name of the table to ingest data into
      */
-    static common::Result<std::unique_ptr<TableDataIngestor>> Create(std::shared_ptr<Catalog> catalog,
-                                                                     std::shared_ptr<common::IAppendOnlyFileSystem> fs,
-                                                                     const std::string& table_name);
+    static common::Result<std::unique_ptr<DataIngestor>> Create(std::shared_ptr<Catalog> catalog,
+                                                                std::shared_ptr<common::IAppendOnlyFileSystem> fs,
+                                                                const std::string& table_name);
 
     /**
      * Ingest a batch of data into the table.
      * @param batch The record batch to ingest
      * @param commit_after_write Whether to commit the changes immediately after writing
      */
-    common::Result<bool> IngestBatch(const std::shared_ptr<arrow::RecordBatch>& batch, bool commit_after_write = true);
+    common::Result<DataFile> IngestBatch(const std::shared_ptr<arrow::RecordBatch>& batch,
+                                         bool commit_after_write = true);
 
     /**
      * Ingest multiple batches of data into the table.
      * @param batches The record batches to ingest
      * @param commit_after_write Whether to commit the changes immediately after writing
      */
-    common::Result<bool> IngestBatches(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches,
-                                       bool commit_after_write = true);
+    common::Result<std::vector<DataFile>> IngestBatches(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches,
+                                                        bool commit_after_write = true);
 
     /**
      * Ingest an Arrow table into the table.
      * @param table The Arrow table to ingest
      * @param commit_after_write Whether to commit the changes immediately after writing
      */
-    common::Result<bool> IngestTable(const std::shared_ptr<arrow::Table>& table, bool commit_after_write = true);
+    common::Result<DataFile> IngestTable(const std::shared_ptr<arrow::Table>& table, bool commit_after_write = true);
 
     /**
      * Commit any pending changes to the catalog.
@@ -57,10 +58,10 @@ public:
     common::Result<bool> Commit();
 
 private:
-    TableDataIngestor(std::shared_ptr<Catalog> catalog,
-                      std::shared_ptr<common::IAppendOnlyFileSystem> fs,
-                      const std::string& table_name,
-                      TableMetadata metadata);
+    DataIngestor(std::shared_ptr<Catalog> catalog,
+                 std::shared_ptr<common::IAppendOnlyFileSystem> fs,
+                 const std::string& table_name,
+                 TableMetadata metadata);
 
     common::Result<std::string> GenerateDataFilePath();
     common::Result<std::unique_ptr<format::ParquetWriter>> CreateWriter(const std::string& file_path);

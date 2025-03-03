@@ -1,35 +1,34 @@
-#include "catalog/table_data_ingestor.h"
+#include "catalog/data_ingestor.h"
 
 #include "common/result.h"
 #include "format/parquet/schema_converter.h"
 
 namespace pond::catalog {
 
-common::Result<std::unique_ptr<TableDataIngestor>> TableDataIngestor::Create(
-    std::shared_ptr<Catalog> catalog,
-    std::shared_ptr<common::IAppendOnlyFileSystem> fs,
-    const std::string& table_name) {
-    using ReturnType = common::Result<std::unique_ptr<TableDataIngestor>>;
+common::Result<std::unique_ptr<DataIngestor>> DataIngestor::Create(std::shared_ptr<Catalog> catalog,
+                                                                   std::shared_ptr<common::IAppendOnlyFileSystem> fs,
+                                                                   const std::string& table_name) {
+    using ReturnType = common::Result<std::unique_ptr<DataIngestor>>;
 
     auto metadata_result = catalog->LoadTable(table_name);
     RETURN_IF_ERROR_T(ReturnType, metadata_result);
 
     return ReturnType::success(
-        std::unique_ptr<TableDataIngestor>(new TableDataIngestor(catalog, fs, table_name, metadata_result.value())));
+        std::unique_ptr<DataIngestor>(new DataIngestor(catalog, fs, table_name, metadata_result.value())));
 }
 
-TableDataIngestor::TableDataIngestor(std::shared_ptr<Catalog> catalog,
-                                     std::shared_ptr<common::IAppendOnlyFileSystem> fs,
-                                     const std::string& table_name,
-                                     TableMetadata metadata)
+DataIngestor::DataIngestor(std::shared_ptr<Catalog> catalog,
+                           std::shared_ptr<common::IAppendOnlyFileSystem> fs,
+                           const std::string& table_name,
+                           TableMetadata metadata)
     : catalog_(std::move(catalog)),
       fs_(std::move(fs)),
       table_name_(table_name),
       current_metadata_(std::move(metadata)) {}
 
-common::Result<bool> TableDataIngestor::IngestBatch(const std::shared_ptr<arrow::RecordBatch>& batch,
-                                                    bool commit_after_write) {
-    using ReturnType = common::Result<bool>;
+common::Result<DataFile> DataIngestor::IngestBatch(const std::shared_ptr<arrow::RecordBatch>& batch,
+                                                   bool commit_after_write) {
+    using ReturnType = common::Result<DataFile>;
 
     // Validate schema before proceeding
     auto schema_validation = ValidateSchema(batch->schema());
@@ -52,20 +51,20 @@ common::Result<bool> TableDataIngestor::IngestBatch(const std::shared_ptr<arrow:
 
     auto data_file_result = FinalizeDataFile(file_path, num_records);
     RETURN_IF_ERROR_T(ReturnType, data_file_result);
-    pending_files_.push_back(std::move(data_file_result).value());
+    pending_files_.push_back(data_file_result.value());
 
     if (commit_after_write) {
-        return Commit();
+        RETURN_IF_ERROR_T(ReturnType, Commit());
     }
-    return ReturnType::success(true);
+    return ReturnType::success(data_file_result.value());
 }
 
-common::Result<bool> TableDataIngestor::IngestBatches(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches,
-                                                      bool commit_after_write) {
-    using ReturnType = common::Result<bool>;
+common::Result<std::vector<DataFile>> DataIngestor::IngestBatches(
+    const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches, bool commit_after_write) {
+    using ReturnType = common::Result<std::vector<DataFile>>;
 
     if (batches.empty()) {
-        return ReturnType::success(true);
+        return ReturnType::success({});
     }
 
     // Validate schema using the first batch's schema
@@ -92,14 +91,14 @@ common::Result<bool> TableDataIngestor::IngestBatches(const std::vector<std::sha
     pending_files_.push_back(std::move(data_file_result).value());
 
     if (commit_after_write) {
-        return Commit();
+        RETURN_IF_ERROR_T(ReturnType, Commit());
     }
-    return ReturnType::success(true);
+    return ReturnType::success(pending_files_);
 }
 
-common::Result<bool> TableDataIngestor::IngestTable(const std::shared_ptr<arrow::Table>& table,
-                                                    bool commit_after_write) {
-    using ReturnType = common::Result<bool>;
+common::Result<DataFile> DataIngestor::IngestTable(const std::shared_ptr<arrow::Table>& table,
+                                                   bool commit_after_write) {
+    using ReturnType = common::Result<DataFile>;
 
     // Validate schema before proceeding
     auto schema_validation = ValidateSchema(table->schema());
@@ -125,12 +124,12 @@ common::Result<bool> TableDataIngestor::IngestTable(const std::shared_ptr<arrow:
     pending_files_.push_back(std::move(data_file_result).value());
 
     if (commit_after_write) {
-        return Commit();
+        RETURN_IF_ERROR_T(ReturnType, Commit());
     }
-    return ReturnType::success(true);
+    return ReturnType::success(std::move(data_file_result).value());
 }
 
-common::Result<bool> TableDataIngestor::Commit() {
+common::Result<bool> DataIngestor::Commit() {
     using ReturnType = common::Result<bool>;
 
     if (pending_files_.empty()) {
@@ -148,23 +147,23 @@ common::Result<bool> TableDataIngestor::Commit() {
     return ReturnType::success(true);
 }
 
-common::Result<std::string> TableDataIngestor::GenerateDataFilePath() {
+common::Result<std::string> DataIngestor::GenerateDataFilePath() {
     std::string base_path = current_metadata_.location;
     if (!base_path.empty() && base_path.back() != '/') {
         base_path += '/';
     }
     std::string file_name = "data_" + std::to_string(current_metadata_.current_snapshot_id) + "_"
                             + std::to_string(pending_files_.size()) + ".parquet";
-    return common::Result<std::string>::success(base_path + "data/" + file_name);
+    return common::Result<std::string>::success(base_path + "FILES/" + file_name);
 }
 
-common::Result<std::unique_ptr<format::ParquetWriter>> TableDataIngestor::CreateWriter(const std::string& file_path) {
+common::Result<std::unique_ptr<format::ParquetWriter>> DataIngestor::CreateWriter(const std::string& file_path) {
     auto arrow_schema_result = format::SchemaConverter::ToArrowSchema(*current_metadata_.schema);
     RETURN_IF_ERROR_T(common::Result<std::unique_ptr<format::ParquetWriter>>, arrow_schema_result);
     return format::ParquetWriter::create(fs_, file_path, arrow_schema_result.value());
 }
 
-common::Result<DataFile> TableDataIngestor::FinalizeDataFile(const std::string& file_path, int64_t num_records) {
+common::Result<DataFile> DataIngestor::FinalizeDataFile(const std::string& file_path, int64_t num_records) {
     using ReturnType = common::Result<DataFile>;
 
     DataFile file;
@@ -186,7 +185,7 @@ common::Result<DataFile> TableDataIngestor::FinalizeDataFile(const std::string& 
     return ReturnType::success(std::move(file));
 }
 
-common::Result<void> TableDataIngestor::ValidateSchema(const std::shared_ptr<arrow::Schema>& input_schema) const {
+common::Result<void> DataIngestor::ValidateSchema(const std::shared_ptr<arrow::Schema>& input_schema) const {
     return format::SchemaConverter::ValidateSchema(input_schema, current_metadata_.schema);
 }
 

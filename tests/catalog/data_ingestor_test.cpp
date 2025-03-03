@@ -1,4 +1,4 @@
-#include "catalog/table_data_ingestor.h"
+#include "catalog/data_ingestor.h"
 
 #include <arrow/table.h>
 #include <gtest/gtest.h>
@@ -12,7 +12,7 @@
 
 namespace pond::catalog {
 
-class TableDataIngestorTest : public ::testing::Test {
+class DataIngestorTest : public ::testing::Test {
 protected:
     void SetUp() override {
         // Create test schema
@@ -106,13 +106,16 @@ protected:
 // Test Result:
 //      Verify data file is created and metadata is updated
 //
-TEST_F(TableDataIngestorTest, TestIngestBatch) {
-    auto ingestor_result = TableDataIngestor::Create(catalog_, fs_, "test_table");
+TEST_F(DataIngestorTest, TestIngestBatch) {
+    auto ingestor_result = DataIngestor::Create(catalog_, fs_, "test_table");
     ASSERT_TRUE(ingestor_result.ok());
     auto ingestor = std::move(ingestor_result).value();
 
     auto batch = CreateTestBatch();
-    ASSERT_TRUE(ingestor->IngestBatch(batch).ok());
+    auto ingest_result = ingestor->IngestBatch(batch);
+    ASSERT_TRUE(ingest_result.ok());
+    auto data_file = std::move(ingest_result).value();
+    EXPECT_EQ(data_file.file_path, "/tmp/test_table/FILES/data_0_0.parquet");
 
     // Verify the data file was created
     auto files_result = catalog_->ListDataFiles("test_table");
@@ -128,8 +131,8 @@ TEST_F(TableDataIngestorTest, TestIngestBatch) {
 // Test Result:
 //      Verify all data is written and committed together
 //
-TEST_F(TableDataIngestorTest, TestMultipleBatches) {
-    auto ingestor_result = TableDataIngestor::Create(catalog_, fs_, "test_table");
+TEST_F(DataIngestorTest, TestMultipleBatches) {
+    auto ingestor_result = DataIngestor::Create(catalog_, fs_, "test_table");
     ASSERT_TRUE(ingestor_result.ok());
     auto ingestor = std::move(ingestor_result).value();
 
@@ -152,8 +155,8 @@ TEST_F(TableDataIngestorTest, TestMultipleBatches) {
 // Test Result:
 //      Data should be correctly written to Parquet file and readable back
 //
-TEST_F(TableDataIngestorTest, TestDataPersistence) {
-    auto ingestor_result = TableDataIngestor::Create(catalog_, fs_, "test_table");
+TEST_F(DataIngestorTest, TestDataPersistence) {
+    auto ingestor_result = DataIngestor::Create(catalog_, fs_, "test_table");
     ASSERT_TRUE(ingestor_result.ok());
     auto ingestor = std::move(ingestor_result).value();
 
@@ -183,8 +186,8 @@ TEST_F(TableDataIngestorTest, TestDataPersistence) {
 // Test Result:
 //      All data should be correctly written to separate Parquet files
 //
-TEST_F(TableDataIngestorTest, TestMultipleBatchesPersistence) {
-    auto ingestor_result = TableDataIngestor::Create(catalog_, fs_, "test_table");
+TEST_F(DataIngestorTest, TestMultipleBatchesPersistence) {
+    auto ingestor_result = DataIngestor::Create(catalog_, fs_, "test_table");
     ASSERT_TRUE(ingestor_result.ok());
     auto ingestor = std::move(ingestor_result).value();
 
@@ -242,7 +245,7 @@ TEST_F(TableDataIngestorTest, TestMultipleBatchesPersistence) {
 // Test Result:
 //      Should return appropriate error
 //
-TEST_F(TableDataIngestorTest, TestNonExistentFile) {
+TEST_F(DataIngestorTest, TestNonExistentFile) {
     auto reader_result = format::ParquetReader::create(fs_, "/tmp/non_existent.parquet");
     EXPECT_FALSE(reader_result.ok());
     EXPECT_EQ(reader_result.error().code(), common::ErrorCode::FileOpenFailed);
@@ -254,8 +257,8 @@ TEST_F(TableDataIngestorTest, TestNonExistentFile) {
 // Test Result:
 //      Should fail with appropriate schema mismatch errors
 //
-TEST_F(TableDataIngestorTest, TestSchemaMismatch) {
-    auto ingestor_result = TableDataIngestor::Create(catalog_, fs_, "test_table");
+TEST_F(DataIngestorTest, TestSchemaMismatch) {
+    auto ingestor_result = DataIngestor::Create(catalog_, fs_, "test_table");
     ASSERT_TRUE(ingestor_result.ok());
     auto ingestor = std::move(ingestor_result).value();
 
@@ -317,8 +320,8 @@ TEST_F(TableDataIngestorTest, TestSchemaMismatch) {
 // Test Result:
 //      Should handle nullability appropriately
 //
-TEST_F(TableDataIngestorTest, TestNullabilityHandling) {
-    auto ingestor_result = TableDataIngestor::Create(catalog_, fs_, "test_table");
+TEST_F(DataIngestorTest, TestNullabilityHandling) {
+    auto ingestor_result = DataIngestor::Create(catalog_, fs_, "test_table");
     ASSERT_TRUE(ingestor_result.ok());
     auto ingestor = std::move(ingestor_result).value();
 

@@ -135,7 +135,7 @@ add_library(pondhouse_common
     src/catalog/kv_catalog.cpp
     src/catalog/kv_catalog_util.cpp
     src/catalog/types.cpp
-    src/catalog/table_data_ingestor.cpp
+    src/catalog/data_ingestor.cpp
     src/common/append_only_fs.cpp
     src/common/memory_append_only_fs.cpp
     src/common/log.cpp
@@ -161,6 +161,7 @@ add_library(pondhouse_common
     src/format/sstable/sstable_reader.cpp
     src/format/sstable/sstable_format.cpp
     src/format/parquet/schema_converter.cpp
+    src/query/data/catalog_data_accessor.cpp
     src/query/planner/logical_optimizer.cpp
     src/query/planner/logical_plan_node.cpp
     src/query/planner/logical_plan_printer.cpp
@@ -231,7 +232,7 @@ add_executable(
     unit_tests
     tests/catalog/kv_catalog_test.cpp
     tests/catalog/kv_catalog_util_test.cpp
-    tests/catalog/table_data_ingestor_test.cpp
+    tests/catalog/data_ingestor_test.cpp
     tests/common/append_only_fs_test.cpp
     tests/common/bloom_filter_test.cpp
     tests/common/bplus_tree_test.cpp
@@ -269,6 +270,7 @@ add_executable(
     tests/kv/table_test.cpp
     tests/kv/versioned_value_test.cpp
     tests/main.cpp
+    tests/query/data_accessor_test.cpp
     tests/query/logical_planner_test.cpp
     tests/query/logical_optimizer_test.cpp
     tests/query/physical_planner_test.cpp

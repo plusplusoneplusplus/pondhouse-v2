@@ -178,6 +178,8 @@ common::Result<TableMetadata> KVCatalog::CreateTable(const std::string& name,
         return common::Result<TableMetadata>::failure(snapshot_result.error());
     }
 
+    LOG_STATUS("Created table '%s' in catalog.", name.c_str());
+
     return common::Result<TableMetadata>::success(snapshot_result.value());
 }
 
@@ -484,6 +486,8 @@ common::Result<TableMetadata> KVCatalog::CreateSnapshot(const std::string& name,
 
     auto table_put_result = PutTableMetadata(false /* create_if_not_exists */, name, metadata);
     RETURN_IF_ERROR_T(ReturnType, table_put_result);
+
+    LOG_STATUS("Created snapshot %d for table '%s'.", new_snapshot_id, name.c_str());
 
     return common::Result<TableMetadata>::success(metadata);
 }
