@@ -30,39 +30,13 @@ common::Result<DataFile> DataIngestor::IngestBatch(const std::shared_ptr<arrow::
                                                    bool commit_after_write) {
     using ReturnType = common::Result<DataFile>;
 
-    // Validate schema before proceeding
-    auto schema_validation = ValidateSchema(batch->schema());
-    RETURN_IF_ERROR_T(ReturnType, schema_validation);
-
-    // Extract partition values from the batch
-    auto partition_values_result = ExtractPartitionValues(batch);
-    RETURN_IF_ERROR_T(ReturnType, partition_values_result);
-    auto partition_values = partition_values_result.value();
-
-    auto file_path_result = GenerateDataFilePath(partition_values);
-    RETURN_IF_ERROR_T(ReturnType, file_path_result);
-    auto file_path = file_path_result.value();
-
-    auto writer_result = CreateWriter(file_path);
-    RETURN_IF_ERROR_T(ReturnType, writer_result);
-    auto writer = std::move(writer_result).value();
-
-    auto write_result = writer->write(batch);
-    RETURN_IF_ERROR_T(ReturnType, write_result);
-    auto num_records = writer->num_rows();
-
-    auto close_result = writer->close();
-    RETURN_IF_ERROR_T(ReturnType, close_result);
-
-    auto data_file_result = FinalizeDataFile(file_path, num_records, partition_values);
-    RETURN_IF_ERROR_T(ReturnType, data_file_result);
-    auto data_file = std::move(data_file_result).value();
-    pending_files_.push_back(data_file);
-
-    if (commit_after_write) {
-        RETURN_IF_ERROR_T(ReturnType, Commit());
+    auto result = IngestBatches({batch}, commit_after_write);
+    RETURN_IF_ERROR_T(ReturnType, result);
+    if (result.value().empty()) {
+        return common::Error(common::ErrorCode::InvalidOperation, "No data files were created");
     }
-    return ReturnType::success(data_file);
+
+    return ReturnType::success(result.value()[0]);
 }
 
 common::Result<std::vector<DataFile>> DataIngestor::IngestBatches(
@@ -78,7 +52,7 @@ common::Result<std::vector<DataFile>> DataIngestor::IngestBatches(
     RETURN_IF_ERROR_T(ReturnType, schema_validation);
 
     // Extract partition values from the first batch
-    auto partition_values_result = ExtractPartitionValues(batches[0]);
+    auto partition_values_result = ExtractPartitionValues(current_metadata_, batches[0]);
     RETURN_IF_ERROR_T(ReturnType, partition_values_result);
     auto partition_values = partition_values_result.value();
 
@@ -102,10 +76,13 @@ common::Result<std::vector<DataFile>> DataIngestor::IngestBatches(
     auto data_file = std::move(data_file_result).value();
     pending_files_.push_back(data_file);
 
+    auto result_files = pending_files_;
+
     if (commit_after_write) {
         RETURN_IF_ERROR_T(ReturnType, Commit());
     }
-    return ReturnType::success(pending_files_);
+
+    return ReturnType::success(result_files);
 }
 
 common::Result<DataFile> DataIngestor::IngestTable(const std::shared_ptr<arrow::Table>& table,
@@ -133,7 +110,7 @@ common::Result<DataFile> DataIngestor::IngestTable(const std::shared_ptr<arrow::
     }
     std::shared_ptr<arrow::RecordBatch> batch = arrow::RecordBatch::Make(table->schema(), 1, columns);
 
-    auto partition_values_result = ExtractPartitionValues(batch);
+    auto partition_values_result = ExtractPartitionValues(current_metadata_, batch);
     RETURN_IF_ERROR_T(ReturnType, partition_values_result);
     auto partition_values = partition_values_result.value();
 
@@ -243,21 +220,26 @@ common::Result<void> DataIngestor::ValidateSchema(const std::shared_ptr<arrow::S
     return format::SchemaConverter::ValidateSchema(input_schema, current_metadata_.schema);
 }
 
-common::Result<std::unordered_map<std::string, std::string>> DataIngestor::ExtractPartitionValues(
-    const std::shared_ptr<arrow::RecordBatch>& batch) const {
+/*static*/ common::Result<std::unordered_map<std::string, std::string>> DataIngestor::ExtractPartitionValues(
+    const TableMetadata& metadata, const std::shared_ptr<arrow::RecordBatch>& batch) {
     using ReturnType = common::Result<std::unordered_map<std::string, std::string>>;
 
     std::unordered_map<std::string, std::string> partition_values;
 
+    if (batch->num_rows() == 0 || metadata.partition_specs.empty()) {
+        // just return empty partition values
+        return ReturnType::success(partition_values);
+    }
+
     // Extract partition values based on partition spec
-    for (const auto& partition_field : current_metadata_.partition_specs[0].fields) {
+    for (const auto& partition_field : metadata.partition_specs[0].fields) {
         if (!partition_field.IsValid()) {
             return common::Error(common::ErrorCode::InvalidOperation,
                                  "Invalid partition field: " + partition_field.name);
         }
 
         // Get the source field name from schema
-        std::string source_field_name = current_metadata_.schema->Fields()[partition_field.source_id].name;
+        std::string source_field_name = metadata.schema->Fields()[partition_field.source_id].name;
 
         // Find the field in the input batch
         int field_idx = batch->schema()->GetFieldIndex(source_field_name);
