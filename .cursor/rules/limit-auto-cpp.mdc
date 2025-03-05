@@ -1,0 +1,10 @@
+---
+description: Limit the usage of auto in c++
+globs: *.h,*.cpp,*.cc,*.hh
+alwaysApply: false
+---
+
+Use auto keyword for the type only in certain cases:
+- Return value of Result<T> ([result.h](mdc:src/common/result.h)).
+- c++ iterator
+- trivial type like size_t, uint32_t, std::string etc. 

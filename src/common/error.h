@@ -61,6 +61,7 @@ enum class ErrorCode {
     ParquetFileCreationError = 211,
     ParquetMemoryAllocationError = 212,
     ParquetBufferOverflow = 213,
+    ParquetInvalidNullability = 214,
 
     // Data structure errors
     BloomFilterFull = 300,

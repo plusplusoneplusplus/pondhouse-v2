@@ -13,10 +13,10 @@
 namespace pond::catalog {
 
 struct PartitionField {
-    FieldId source_id;
-    FieldId field_id;
-    std::string name;
-    Transform transform;
+    FieldId source_id;                       // The source field id in the schema
+    FieldId field_id;                        // The field id in the partition spec
+    std::string name;                        // The name of the partition field
+    Transform transform;                     // The transform to apply to the partition field
     std::optional<int32_t> transform_param;  // For BUCKET/TRUNCATE
 
     // Constructor for convenience

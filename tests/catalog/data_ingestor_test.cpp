@@ -1,103 +1,8 @@
-#include "catalog/data_ingestor.h"
-
-#include <arrow/table.h>
-#include <gtest/gtest.h>
-
-#include "catalog/kv_catalog.h"
-#include "common/memory_append_only_fs.h"
-#include "common/schema.h"
-#include "format/parquet/parquet_reader.h"
-#include "format/parquet/schema_converter.h"
-#include "test_helper.h"
+#include "shared.h"
 
 namespace pond::catalog {
 
-class DataIngestorTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        // Create test schema
-        schema_ = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-        fs_ = std::make_shared<common::MemoryAppendOnlyFileSystem>();
-        auto db_result = kv::DB::Create(fs_, "test_catalog");
-        VERIFY_RESULT(db_result);
-        db_ = std::move(db_result.value());
-
-        catalog_ = std::make_shared<KVCatalog>(db_);
-
-        // Create test table
-        auto result = catalog_->CreateTable("test_table",
-                                            schema_,
-                                            PartitionSpec{},  // No partitioning
-                                            "/tmp/test_table",
-                                            {});
-        ASSERT_TRUE(result.ok());
-        table_metadata_ = result.value();
-    }
-
-    std::shared_ptr<common::Schema> schema_;
-    std::shared_ptr<common::IAppendOnlyFileSystem> fs_;
-    std::shared_ptr<kv::DB> db_;
-    std::shared_ptr<Catalog> catalog_;
-    TableMetadata table_metadata_;
-
-    std::shared_ptr<arrow::RecordBatch> CreateTestBatch() {
-        // Create test data
-        std::vector<std::shared_ptr<arrow::Array>> arrays;
-
-        // Create ID column
-        arrow::Int32Builder id_builder;
-        EXPECT_TRUE(id_builder.AppendValues({1, 2, 3}).ok());
-        arrays.push_back(id_builder.Finish().ValueOrDie());
-
-        // Create name column
-        arrow::StringBuilder name_builder;
-        EXPECT_TRUE(name_builder.AppendValues({"one", "two", "three"}).ok());
-        arrays.push_back(name_builder.Finish().ValueOrDie());
-
-        // Create value column
-        arrow::DoubleBuilder value_builder;
-        EXPECT_TRUE(value_builder.AppendValues({1.1, 2.2, 3.3}).ok());
-        arrays.push_back(value_builder.Finish().ValueOrDie());
-
-        auto arrow_schema = format::SchemaConverter::ToArrowSchema(*schema_).value();
-        return arrow::RecordBatch::Make(arrow_schema, 3, arrays);
-    }
-
-    // Add new helper method to verify data in a Parquet file
-    void VerifyParquetFileContents(const std::string& file_path,
-                                   const std::vector<int32_t>& expected_ids,
-                                   const std::vector<std::string>& expected_names,
-                                   const std::vector<double>& expected_values) {
-        auto reader_result = format::ParquetReader::create(fs_, file_path);
-        ASSERT_TRUE(reader_result.ok());
-        auto reader = std::move(reader_result).value();
-
-        // Read the data
-        auto table_result = reader->read();
-        ASSERT_TRUE(table_result.ok());
-        auto table = table_result.value();
-
-        // Verify number of rows
-        ASSERT_EQ(table->num_rows(), expected_ids.size());
-
-        // Get columns
-        auto id_array = std::static_pointer_cast<arrow::Int32Array>(table->column(0)->chunk(0));
-        auto name_array = std::static_pointer_cast<arrow::StringArray>(table->column(1)->chunk(0));
-        auto value_array = std::static_pointer_cast<arrow::DoubleArray>(table->column(2)->chunk(0));
-
-        // Verify contents
-        for (int64_t i = 0; i < table->num_rows(); i++) {
-            EXPECT_EQ(id_array->Value(i), expected_ids[i]);
-            EXPECT_EQ(name_array->GetString(i), expected_names[i]);
-            EXPECT_DOUBLE_EQ(value_array->Value(i), expected_values[i]);
-        }
-    }
-};
+class DataIngestorTest : public DataIngestorTestBase {};
 
 //
 // Test Setup:
@@ -325,6 +230,7 @@ TEST_F(DataIngestorTest, TestNullabilityHandling) {
     VERIFY_RESULT(ingestor_result);
     auto ingestor = std::move(ingestor_result).value();
 
+    // First test: Non-nullable input for nullable table schema
     // Create batch with non-nullable fields
     auto strict_schema = arrow::schema({arrow::field("id", arrow::int32(), false),
                                         arrow::field("name", arrow::utf8(), false),
@@ -334,542 +240,179 @@ TEST_F(DataIngestorTest, TestNullabilityHandling) {
     auto result = ingestor->IngestBatch(batch);
     VERIFY_RESULT(result);
 
-    // The reverse case (nullable input for non-nullable table) would be tested
-    // if we had any non-nullable fields in our table schema
+    // Second test: Nullable input for nullable table schema
+    // Check if table schema has nullable fields
+    bool has_nullable_fields = false;
+    for (const auto& field : schema_->Fields()) {
+        if (field.nullability == common::Nullability::NULLABLE) {
+            has_nullable_fields = true;
+            break;
+        }
+    }
+
+    if (has_nullable_fields) {
+        // Create batch with null values in nullable fields
+        arrow::Int32Builder id_builder;
+        ASSERT_TRUE(id_builder.AppendValues({1, 2, 3}).ok());
+        ASSERT_TRUE(id_builder.AppendNull().ok());
+        auto id_array = id_builder.Finish().ValueOrDie();
+
+        arrow::StringBuilder name_builder;
+        ASSERT_TRUE(name_builder.AppendValues({"one", "two", "three"}).ok());
+        ASSERT_TRUE(name_builder.AppendNull().ok());
+        auto name_array = name_builder.Finish().ValueOrDie();
+
+        arrow::DoubleBuilder value_builder;
+        ASSERT_TRUE(value_builder.AppendValues({1.1, 2.2, 3.3}).ok());
+        ASSERT_TRUE(value_builder.AppendNull().ok());
+        auto value_array = value_builder.Finish().ValueOrDie();
+
+        auto batch_with_nulls = arrow::RecordBatch::Make(strict_schema, 4, {id_array, name_array, value_array});
+        result = ingestor->IngestBatch(batch_with_nulls);
+        VERIFY_RESULT(result);
+    }
+
+    // Third test: Nullable input for non-nullable table schema
+    // Create a new table with non-nullable fields
+    auto non_nullable_schema = common::CreateSchemaBuilder()
+                                   .AddField("id", common::ColumnType::INT32, false)
+                                   .AddField("name", common::ColumnType::STRING, false)
+                                   .AddField("value", common::ColumnType::DOUBLE, false)
+                                   .Build();
+
+    auto create_result = catalog_->CreateTable(
+        "non_nullable_table", non_nullable_schema, PartitionSpec{}, "/tmp/non_nullable_table", {});
+    VERIFY_RESULT(create_result);
+
+    // Create ingestor for non-nullable table
+    auto non_nullable_ingestor_result = DataIngestor::Create(catalog_, fs_, "non_nullable_table");
+    VERIFY_RESULT(non_nullable_ingestor_result);
+    auto non_nullable_ingestor = std::move(non_nullable_ingestor_result).value();
+
+    // Try to ingest batch with null values
+    arrow::Int32Builder id_builder2;
+    ASSERT_TRUE(id_builder2.AppendValues({1, 2, 3}).ok());
+    ASSERT_TRUE(id_builder2.AppendNull().ok());
+    auto id_array2 = id_builder2.Finish().ValueOrDie();
+
+    arrow::StringBuilder name_builder2;
+    ASSERT_TRUE(name_builder2.AppendValues({"one", "two", "three"}).ok());
+    ASSERT_TRUE(name_builder2.AppendNull().ok());
+    auto name_array2 = name_builder2.Finish().ValueOrDie();
+
+    arrow::DoubleBuilder value_builder2;
+    ASSERT_TRUE(value_builder2.AppendValues({1.1, 2.2, 3.3}).ok());
+    ASSERT_TRUE(value_builder2.AppendNull().ok());
+    auto value_array2 = value_builder2.Finish().ValueOrDie();
+
+    auto batch_with_nulls2 = arrow::RecordBatch::Make(strict_schema, 4, {id_array2, name_array2, value_array2});
+    result = non_nullable_ingestor->IngestBatch(batch_with_nulls2);
+    VERIFY_ERROR_CODE(result, common::ErrorCode::ParquetInvalidNullability);
 }
 
 //
 // Test Setup:
-//      Create table with identity partition on "id" field
-//      Create a batch with valid data
+//      Create a table with year partition spec
+//      Create a batch with data from multiple years
+//      Ingest the batch
 // Test Result:
-//      Should extract correct partition values using identity transform
+//      Data should be partitioned into separate files by year
 //
-TEST_F(DataIngestorTest, TestExtractPartitionValuesIdentity) {
-    // Create schema with partition field
+TEST_F(DataIngestorTest, TestIngestPartitionedBatch) {
+    // Create schema with date field
     auto schema = common::CreateSchemaBuilder()
                       .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
+                      .AddField("date", common::ColumnType::STRING)  // Using string for simplicity
                       .AddField("value", common::ColumnType::DOUBLE)
                       .Build();
 
-    // Create table with partition spec
+    // Create a partition spec on the date field by year
     PartitionSpec partition_spec;
     partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(0, 0, "id_part", Transform::IDENTITY);
+    partition_spec.fields.emplace_back(1, 0, "year", Transform::YEAR);
 
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
+    // Create table with year partition
+    auto create_result =
+        catalog_->CreateTable("partitioned_table", schema, partition_spec, "/tmp/partitioned_table", {});
+    VERIFY_RESULT(create_result);
+    auto table_metadata = create_result.value();
 
-    // Create test batch
-    auto batch = CreateTestBatch();
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_TRUE(result.ok());
-
-    auto partition_values = result.value();
-    ASSERT_EQ(partition_values.size(), 1);
-    ASSERT_EQ(partition_values["id_part"], "1");  // First row has id=1
-}
-
-//
-// Test Setup:
-//      Create table with bucket partition on "id" field
-//      Create a batch with valid data
-// Test Result:
-//      Should extract correct partition values using bucket transform
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesBucket) {
-    // Create schema with partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table with partition spec
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(0, 0, "id_bucket", Transform::BUCKET, 10);  // 10 buckets
-
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
-
-    // Create test batch
-    auto batch = CreateTestBatch();
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_TRUE(result.ok());
-
-    auto partition_values = result.value();
-    ASSERT_EQ(partition_values.size(), 1);
-    // The exact bucket value depends on the hash function implementation
-    ASSERT_FALSE(partition_values["id_bucket"].empty());
-    // Check it's a valid bucket number (0-9)
-    int bucket = std::stoi(partition_values["id_bucket"]);
-    ASSERT_GE(bucket, 0);
-    ASSERT_LT(bucket, 10);
-}
-
-//
-// Test Setup:
-//      Create table with truncate partition on "value" field
-//      Create a batch with valid data
-// Test Result:
-//      Should extract correct partition values using truncate transform
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesTruncate) {
-    // Create schema with partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table with partition spec
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(2, 0, "value_trunc", Transform::TRUNCATE, 1);  // Truncate to nearest 1
-
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
-
-    // Create test batch
-    auto batch = CreateTestBatch();  // First row has value=1.1
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_TRUE(result.ok());
-
-    auto partition_values = result.value();
-    ASSERT_EQ(partition_values.size(), 1);
-    ASSERT_EQ(partition_values["value_trunc"], "1");  // 1.1 truncated to 1
-}
-
-//
-// Test Setup:
-//      Create table with string partition field
-//      Create a batch with valid string data
-// Test Result:
-//      Should extract correct string partition values
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesString) {
-    // Create schema with partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table with partition spec
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(1, 0, "name_part", Transform::IDENTITY);
-
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
-
-    // Create test batch
-    auto batch = CreateTestBatch();  // First row has name="one"
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_TRUE(result.ok());
-
-    auto partition_values = result.value();
-    ASSERT_EQ(partition_values.size(), 1);
-    ASSERT_EQ(partition_values["name_part"], "one");
-}
-
-//
-// Test Setup:
-//      Create table with multiple partition fields
-//      Create a batch with valid data
-// Test Result:
-//      Should extract correct partition values for all partition fields
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesMultipleFields) {
-    // Create schema with partition fields
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table with partition spec for multiple fields
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(0, 0, "id_part", Transform::IDENTITY);
-    partition_spec.fields.emplace_back(1, 1, "name_part", Transform::IDENTITY);
-
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
-
-    // Create test batch
-    auto batch = CreateTestBatch();
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_TRUE(result.ok());
-
-    auto partition_values = result.value();
-    ASSERT_EQ(partition_values.size(), 2);
-    ASSERT_EQ(partition_values["id_part"], "1");
-    ASSERT_EQ(partition_values["name_part"], "one");
-}
-
-//
-// Test Setup:
-//      Create table with partition specs but empty batch
-// Test Result:
-//      Should return empty partition values map
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesEmptyBatch) {
-    // Create schema with partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table with partition spec
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(0, 0, "id_part", Transform::IDENTITY);
-
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
-
-    // Create empty Arrow schema and batch
-    auto arrow_schema = format::SchemaConverter::ToArrowSchema(*schema).value();
-    std::vector<std::shared_ptr<arrow::Array>> arrays;
-    arrow::Int32Builder id_builder;
-    arrays.push_back(id_builder.Finish().ValueOrDie());
-    arrow::StringBuilder name_builder;
-    arrays.push_back(name_builder.Finish().ValueOrDie());
-    arrow::DoubleBuilder value_builder;
-    arrays.push_back(value_builder.Finish().ValueOrDie());
-    auto empty_batch = arrow::RecordBatch::Make(arrow_schema, 0, arrays);
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, empty_batch);
-    ASSERT_TRUE(result.ok());
-
-    auto partition_values = result.value();
-    ASSERT_TRUE(partition_values.empty());
-}
-
-//
-// Test Setup:
-//      Create table without partition specs
-// Test Result:
-//      Should return empty partition values map
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesNoPartitionSpecs) {
-    // Create schema without partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table without partition spec
-    TableMetadata metadata;
-    metadata.schema = schema;
-    // No partition_specs added
-
-    // Create test batch
-    auto batch = CreateTestBatch();
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_TRUE(result.ok());
-
-    auto partition_values = result.value();
-    ASSERT_TRUE(partition_values.empty());
-}
-
-//
-// Test Setup:
-//      Create table with invalid partition field (missing transform param)
-// Test Result:
-//      Should return error for invalid partition field
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesInvalidField) {
-    // Create schema with partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table with invalid partition spec (BUCKET without param)
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(0, 0, "id_bucket", Transform::BUCKET);  // Missing transform param
-
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
-
-    // Create test batch
-    auto batch = CreateTestBatch();
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.error().code(), common::ErrorCode::InvalidOperation);
-}
-
-//
-// Test Setup:
-//      Create table with partition on non-existent field
-// Test Result:
-//      Should return error for missing field
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesFieldNotFound) {
-    // Create schema with partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table with partition spec on non-existent field
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    // Use invalid source_id that doesn't exist in schema
-    partition_spec.fields.emplace_back(10, 0, "missing_field", Transform::IDENTITY);
-
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
-
-    // Create test batch
-    auto batch = CreateTestBatch();
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.error().code(), common::ErrorCode::SchemaMismatch);
-    ASSERT_TRUE(result.error().message().find("Partition field not found in input") != std::string::npos);
-}
-
-//
-// Test Setup:
-//      Create table with partition field that doesn't match input schema
-// Test Result:
-//      Should return schema mismatch error
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesSchemaMismatch) {
-    // Create schema with partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table with partition spec
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(0, 0, "id_part", Transform::IDENTITY);
-
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
-
-    // Create a batch with different schema
-    auto different_schema =
-        arrow::schema({arrow::field("different_id", arrow::int32()), arrow::field("different_name", arrow::utf8())});
-
-    arrow::Int32Builder id_builder;
-    ASSERT_TRUE(id_builder.AppendValues({1, 2, 3}).ok());
-    auto id_array = id_builder.Finish().ValueOrDie();
-
-    arrow::StringBuilder name_builder;
-    ASSERT_TRUE(name_builder.AppendValues({"one", "two", "three"}).ok());
-    auto name_array = name_builder.Finish().ValueOrDie();
-
-    auto batch = arrow::RecordBatch::Make(different_schema, 3, {id_array, name_array});
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.error().code(), common::ErrorCode::SchemaMismatch);
-}
-
-//
-// Test Setup:
-//      Create table with partition on nullable field with null values
-// Test Result:
-//      Should return error for null partition field
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesNullField) {
-    // Create schema with partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table with partition spec
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(0, 0, "id_part", Transform::IDENTITY);
-
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
-
-    // Create a batch with null value in partition field
+    // Create a record batch with data spanning multiple years
     auto arrow_schema = format::SchemaConverter::ToArrowSchema(*schema).value();
 
-    // Create ID column with null
     arrow::Int32Builder id_builder;
-    ASSERT_TRUE(id_builder.AppendNull().ok());
+    ASSERT_TRUE(id_builder.AppendValues({1, 2, 3, 4}).ok());
     auto id_array = id_builder.Finish().ValueOrDie();
 
-    // Create other columns
-    arrow::StringBuilder name_builder;
-    ASSERT_TRUE(name_builder.Append("test").ok());
-    auto name_array = name_builder.Finish().ValueOrDie();
+    arrow::StringBuilder date_builder;
+    ASSERT_TRUE(date_builder.AppendValues({"2020-01-15", "2020-06-20", "2021-03-10", "2021-11-30"}).ok());
+    auto date_array = date_builder.Finish().ValueOrDie();
 
     arrow::DoubleBuilder value_builder;
-    ASSERT_TRUE(value_builder.Append(1.0).ok());
+    ASSERT_TRUE(value_builder.AppendValues({10.0, 20.0, 30.0, 40.0}).ok());
     auto value_array = value_builder.Finish().ValueOrDie();
 
-    auto batch = arrow::RecordBatch::Make(arrow_schema, 1, {id_array, name_array, value_array});
+    auto batch = arrow::RecordBatch::Make(arrow_schema, 4, {id_array, date_array, value_array});
 
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.error().code(), common::ErrorCode::InvalidOperation);
-    ASSERT_TRUE(result.error().message().find("Partition field cannot be null") != std::string::npos);
-}
+    // Create ingestor
+    auto ingestor_result = DataIngestor::Create(catalog_, fs_, "partitioned_table");
+    VERIFY_RESULT(ingestor_result);
+    auto ingestor = std::move(ingestor_result).value();
 
-//
-// Test Setup:
-//      Create table with unsupported partition field type
-// Test Result:
-//      Should return not implemented error
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesUnsupportedType) {
-    // Create custom schema with binary field
-    auto arrow_schema = arrow::schema({arrow::field("id", arrow::int32()),
-                                       arrow::field("binary_field", arrow::binary()),
-                                       arrow::field("value", arrow::float64())});
+    // Ingest the batch
+    auto ingest_result = ingestor->IngestBatch(batch);
+    VERIFY_RESULT(ingest_result);
 
-    // Create batch with binary data
-    arrow::Int32Builder id_builder;
-    ASSERT_TRUE(id_builder.Append(1).ok());
-    auto id_array = id_builder.Finish().ValueOrDie();
+    // List files to verify partitioning
+    auto files_result = catalog_->ListDataFiles("partitioned_table");
+    VERIFY_RESULT(files_result);
 
-    arrow::BinaryBuilder binary_builder;
-    std::string binary_data = "binary data";
-    ASSERT_TRUE(binary_builder.Append(binary_data).ok());
-    auto binary_array = binary_builder.Finish().ValueOrDie();
+    // Should have 2 files (one for 2020 and one for 2021)
+    ASSERT_EQ(files_result.value().size(), 2);
 
-    arrow::DoubleBuilder value_builder;
-    ASSERT_TRUE(value_builder.Append(1.0).ok());
-    auto value_array = value_builder.Finish().ValueOrDie();
+    // Verify partition values
+    bool found_2020 = false;
+    bool found_2021 = false;
 
-    auto batch = arrow::RecordBatch::Make(arrow_schema, 1, {id_array, binary_array, value_array});
+    for (const auto& file : files_result.value()) {
+        ASSERT_EQ(file.partition_values.size(), 1);
+        ASSERT_TRUE(file.partition_values.find("year") != file.partition_values.end());
 
-    // Create common::Schema equivalent (simplified for test)
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("binary_field", common::ColumnType::BINARY)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
+        if (file.partition_values.at("year") == "2020") {
+            found_2020 = true;
+            ASSERT_EQ(file.record_count, 2);  // 2 records from 2020
 
-    // Create partition spec on binary field
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(1, 0, "binary_part", Transform::IDENTITY);
+            // Verify the file path contains the partition info
+            ASSERT_TRUE(file.file_path.find("year=2020") != std::string::npos);
 
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
+            // Verify file exists
+            ASSERT_TRUE(fs_->Exists(file.file_path));
 
-    // Extract partition values - should fail with unsupported type
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.error().code(), common::ErrorCode::NotImplemented);
-}
+            // Verify file contents
+            std::vector<int32_t> expected_ids = {1, 2};
+            std::vector<std::string> expected_dates = {"2020-01-15", "2020-06-20"};
+            std::vector<double> expected_values = {10.0, 20.0};
+            VerifyParquetFileContents(file.file_path, expected_ids, expected_dates, expected_values);
+        } else if (file.partition_values.at("year") == "2021") {
+            found_2021 = true;
+            ASSERT_EQ(file.record_count, 2);  // 2 records from 2021
 
-//
-// Test Setup:
-//      Attempt to use unsupported transform type
-// Test Result:
-//      Should return not implemented error
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesUnsupportedTransform) {
-    // Create schema with partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
+            // Verify the file path contains the partition info
+            ASSERT_TRUE(file.file_path.find("year=2021") != std::string::npos);
 
-    // Create table with invalid transform type (using underlying enum value beyond valid range)
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    // Cast invalid transform value
-    Transform invalid_transform = static_cast<Transform>(999);
-    partition_spec.fields.emplace_back(0, 0, "id_part", invalid_transform);
+            // Verify file exists
+            ASSERT_TRUE(fs_->Exists(file.file_path));
 
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
+            // Verify file contents
+            std::vector<int32_t> expected_ids = {3, 4};
+            std::vector<std::string> expected_dates = {"2021-03-10", "2021-11-30"};
+            std::vector<double> expected_values = {30.0, 40.0};
+            VerifyParquetFileContents(file.file_path, expected_ids, expected_dates, expected_values);
+        }
+    }
 
-    // Create test batch
-    auto batch = CreateTestBatch();
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.error().code(), common::ErrorCode::NotImplemented);
-}
-
-//
-// Test Setup:
-//      Try to apply TRUNCATE transform to a string field
-// Test Result:
-//      Should return invalid operation error
-//
-TEST_F(DataIngestorTest, TestExtractPartitionValuesInvalidTransformForType) {
-    // Create schema with partition field
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("value", common::ColumnType::DOUBLE)
-                      .Build();
-
-    // Create table with invalid transform for field type (TRUNCATE on string)
-    PartitionSpec partition_spec;
-    partition_spec.spec_id = 1;
-    partition_spec.fields.emplace_back(1, 0, "name_trunc", Transform::TRUNCATE, 10);
-
-    TableMetadata metadata;
-    metadata.schema = schema;
-    metadata.partition_specs.push_back(partition_spec);
-
-    // Create test batch
-    auto batch = CreateTestBatch();
-
-    // Extract partition values
-    auto result = DataIngestor::ExtractPartitionValues(metadata, batch);
-    ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.error().code(), common::ErrorCode::InvalidOperation);
-    ASSERT_TRUE(result.error().message().find("TRUNCATE transform only applies to numeric types") != std::string::npos);
+    ASSERT_TRUE(found_2020);
+    ASSERT_TRUE(found_2021);
 }
 
 }  // namespace pond::catalog

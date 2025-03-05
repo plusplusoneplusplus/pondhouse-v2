@@ -1,5 +1,17 @@
 #include "catalog/data_ingestor.h"
 
+#include <iostream>
+
+#include <arrow/array.h>
+#include <arrow/array/builder_binary.h>
+#include <arrow/array/builder_primitive.h>
+#include <arrow/compute/api.h>
+#include <arrow/record_batch.h>
+#include <arrow/table.h>
+#include <arrow/type.h>
+#include <arrow/util/bit_util.h>
+
+#include "catalog/data_ingestor_util.h"
 #include "common/result.h"
 #include "format/parquet/schema_converter.h"
 
@@ -36,6 +48,7 @@ common::Result<DataFile> DataIngestor::IngestBatch(const std::shared_ptr<arrow::
         return common::Error(common::ErrorCode::InvalidOperation, "No data files were created");
     }
 
+    // Return the first file for backward compatibility
     return ReturnType::success(result.value()[0]);
 }
 
@@ -47,36 +60,67 @@ common::Result<std::vector<DataFile>> DataIngestor::IngestBatches(
         return ReturnType::success({});
     }
 
-    // Validate schema using the first batch's schema
-    auto schema_validation = ValidateSchema(batches[0]->schema());
-    RETURN_IF_ERROR_T(ReturnType, schema_validation);
+    // Validate schema for each batch
+    for (const auto& batch : batches) {
+        auto schema_validation = ValidateSchema(batch->schema());
+        RETURN_IF_ERROR_T(ReturnType, schema_validation);
+    }
 
-    // Extract partition values from the first batch
-    auto partition_values_result = ExtractPartitionValues(current_metadata_, batches[0]);
-    RETURN_IF_ERROR_T(ReturnType, partition_values_result);
-    auto partition_values = partition_values_result.value();
+    std::vector<DataFile> result_files;
 
-    auto file_path_result = GenerateDataFilePath(partition_values);
-    RETURN_IF_ERROR_T(ReturnType, file_path_result);
-    auto file_path = file_path_result.value();
+    // Process each batch
+    for (const auto& batch : batches) {
+        // Skip empty batches
+        if (batch->num_rows() == 0) {
+            continue;
+        }
 
-    auto writer_result = CreateWriter(file_path);
-    RETURN_IF_ERROR_T(ReturnType, writer_result);
-    auto writer = std::move(writer_result).value();
+        // If we have partition specs, split the batch by partition
+        if (!current_metadata_.partition_specs.empty()) {
+            // Partition the batch
+            auto partitioned_result = DataIngestorUtil::PartitionRecordBatch(current_metadata_, batch);
+            RETURN_IF_ERROR_T(ReturnType, partitioned_result);
+            std::vector<PartitionedBatch> partitioned_batches = partitioned_result.value();
 
-    auto write_result = writer->write(batches);
-    RETURN_IF_ERROR_T(ReturnType, write_result);
-    auto num_records = writer->num_rows();
+            // Skip if no partitions were created (could happen if all rows are filtered out)
+            if (partitioned_batches.empty()) {
+                LOG_STATUS("No partitions were created for batch, falling back to unpartitioned file");
 
-    auto close_result = writer->close();
-    RETURN_IF_ERROR_T(ReturnType, close_result);
+                // Fall back to using the original batch with empty partition values
+                std::unordered_map<std::string, std::string> empty_partition_values;
 
-    auto data_file_result = FinalizeDataFile(file_path, num_records, partition_values);
-    RETURN_IF_ERROR_T(ReturnType, data_file_result);
-    auto data_file = std::move(data_file_result).value();
-    pending_files_.push_back(data_file);
+                // Use the new method
+                auto data_file_result = WriteBatchToFile(batch, empty_partition_values);
+                RETURN_IF_ERROR_T(ReturnType, data_file_result);
+                result_files.push_back(data_file_result.value());
 
-    auto result_files = pending_files_;
+                continue;
+            }
+
+            // Process each partitioned batch separately
+            for (const auto& p_batch : partitioned_batches) {
+                // Use the new method
+                auto data_file_result = WriteBatchToFile(p_batch.batch, p_batch.partition_values);
+                RETURN_IF_ERROR_T(ReturnType, data_file_result);
+                result_files.push_back(data_file_result.value());
+            }
+        } else {
+            // No partitioning, process the whole batch
+            auto partition_values_result = DataIngestorUtil::ExtractPartitionValues(current_metadata_, batch);
+            RETURN_IF_ERROR_T(ReturnType, partition_values_result);
+            std::unordered_map<std::string, std::string> partition_values = partition_values_result.value();
+
+            // Use the common method
+            auto data_file_result = WriteBatchToFile(batch, partition_values);
+            RETURN_IF_ERROR_T(ReturnType, data_file_result);
+            result_files.push_back(data_file_result.value());
+        }
+    }
+
+    // If we didn't create any files, return an error
+    if (result_files.empty()) {
+        return common::Error(common::ErrorCode::InvalidOperation, "No data files were created");
+    }
 
     if (commit_after_write) {
         RETURN_IF_ERROR_T(ReturnType, Commit());
@@ -89,7 +133,7 @@ common::Result<DataFile> DataIngestor::IngestTable(const std::shared_ptr<arrow::
                                                    bool commit_after_write) {
     using ReturnType = common::Result<DataFile>;
 
-    // Validate schema before proceeding
+    // Validate schema
     auto schema_validation = ValidateSchema(table->schema());
     RETURN_IF_ERROR_T(ReturnType, schema_validation);
 
@@ -98,46 +142,67 @@ common::Result<DataFile> DataIngestor::IngestTable(const std::shared_ptr<arrow::
         return common::Error(common::ErrorCode::InvalidOperation, "Cannot ingest empty table");
     }
 
-    // Create a record batch from the first row of the table
-    std::vector<std::shared_ptr<arrow::Array>> columns;
-    for (int i = 0; i < table->num_columns(); i++) {
-        auto chunked_array = table->column(i);
-        if (chunked_array->num_chunks() == 0) {
-            return common::Error(common::ErrorCode::InvalidOperation, "Column " + std::to_string(i) + " has no chunks");
+    // If we have partition specs, we need to convert the table to record batches and use IngestBatches
+    if (!current_metadata_.partition_specs.empty()) {
+        // Convert table to record batches
+        std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+
+        // Create a record batch reader from the table
+        auto reader = std::make_shared<arrow::TableBatchReader>(*table);
+        std::shared_ptr<arrow::RecordBatch> batch;
+
+        // Read all batches
+        while (reader->ReadNext(&batch).ok() && batch != nullptr) {
+            batches.push_back(batch);
         }
-        // Get the first chunk and slice to get just the first row
-        columns.push_back(chunked_array->chunk(0)->Slice(0, 1));
+
+        // Use IngestBatches to handle partitioning
+        auto result = IngestBatches(batches, commit_after_write);
+        RETURN_IF_ERROR_T(ReturnType, result);
+        if (result.value().empty()) {
+            return common::Error(common::ErrorCode::InvalidOperation, "No data files were created");
+        }
+
+        // Return the first file for backward compatibility
+        return ReturnType::success(result.value()[0]);
+    } else {
+        // No partitioning, process the whole table directly
+        // Create a record batch from the first row of the table to extract partition values
+        std::vector<std::shared_ptr<arrow::Array>> columns;
+        for (int i = 0; i < table->num_columns(); i++) {
+            auto chunked_array = table->column(i);
+            if (chunked_array->num_chunks() == 0) {
+                return common::Error(common::ErrorCode::InvalidOperation,
+                                     "Column " + std::to_string(i) + " has no chunks");
+            }
+            // Get the first chunk and slice to get just the first row
+            columns.push_back(chunked_array->chunk(0)->Slice(0, 1));
+        }
+        std::shared_ptr<arrow::RecordBatch> batch = arrow::RecordBatch::Make(table->schema(), 1, columns);
+
+        auto partition_values_result = DataIngestorUtil::ExtractPartitionValues(current_metadata_, batch);
+        RETURN_IF_ERROR_T(ReturnType, partition_values_result);
+        std::unordered_map<std::string, std::string> partition_values = partition_values_result.value();
+
+        // Convert table to a single record batch for writing
+        auto reader = std::make_shared<arrow::TableBatchReader>(*table);
+        std::shared_ptr<arrow::RecordBatch> full_batch;
+        auto read_result = reader->ReadNext(&full_batch);
+        if (!read_result.ok()) {
+            return common::Error(common::ErrorCode::InvalidOperation, "Failed to read table");
+        }
+
+        // Use the common method
+        auto data_file_result = WriteBatchToFile(full_batch, partition_values);
+        RETURN_IF_ERROR_T(ReturnType, data_file_result);
+        auto data_file = data_file_result.value();
+
+        if (commit_after_write) {
+            RETURN_IF_ERROR_T(ReturnType, Commit());
+        }
+
+        return ReturnType::success(data_file);
     }
-    std::shared_ptr<arrow::RecordBatch> batch = arrow::RecordBatch::Make(table->schema(), 1, columns);
-
-    auto partition_values_result = ExtractPartitionValues(current_metadata_, batch);
-    RETURN_IF_ERROR_T(ReturnType, partition_values_result);
-    auto partition_values = partition_values_result.value();
-
-    auto file_path_result = GenerateDataFilePath(partition_values);
-    RETURN_IF_ERROR_T(ReturnType, file_path_result);
-    auto file_path = file_path_result.value();
-
-    auto writer_result = CreateWriter(file_path);
-    RETURN_IF_ERROR_T(ReturnType, writer_result);
-    auto writer = std::move(writer_result).value();
-
-    auto write_result = writer->write(table);
-    RETURN_IF_ERROR_T(ReturnType, write_result);
-    auto num_records = writer->num_rows();
-
-    auto close_result = writer->close();
-    RETURN_IF_ERROR_T(ReturnType, close_result);
-
-    auto data_file_result = FinalizeDataFile(file_path, num_records, partition_values);
-    RETURN_IF_ERROR_T(ReturnType, data_file_result);
-    auto data_file = std::move(data_file_result).value();
-    pending_files_.push_back(data_file);
-
-    if (commit_after_write) {
-        RETURN_IF_ERROR_T(ReturnType, Commit());
-    }
-    return ReturnType::success(std::move(data_file));
 }
 
 common::Result<bool> DataIngestor::Commit() {
@@ -168,7 +233,15 @@ common::Result<bool> DataIngestor::Commit() {
 
 common::Result<std::string> DataIngestor::GenerateDataFilePath(
     const std::unordered_map<std::string, std::string>& partition_values) {
+    // Start with the base path from metadata
     std::string base_path = current_metadata_.location;
+
+    // If base path doesn't start with /, add it
+    if (!base_path.empty() && base_path[0] != '/') {
+        base_path = "/" + base_path;
+    }
+
+    // Ensure base path ends with /
     if (!base_path.empty() && base_path.back() != '/') {
         base_path += '/';
     }
@@ -179,8 +252,11 @@ common::Result<std::string> DataIngestor::GenerateDataFilePath(
         partition_path += "/" + key + "=" + value;
     }
 
+    // Generate unique file name using snapshot ID and pending files count
     std::string file_name = "part_" + std::to_string(current_metadata_.current_snapshot_id) + "_"
                             + std::to_string(pending_files_.size()) + ".parquet";
+
+    // Combine all parts
     return common::Result<std::string>::success(base_path + partition_path + "/" + file_name);
 }
 
@@ -220,238 +296,55 @@ common::Result<void> DataIngestor::ValidateSchema(const std::shared_ptr<arrow::S
     return format::SchemaConverter::ValidateSchema(input_schema, current_metadata_.schema);
 }
 
-/*static*/ common::Result<std::unordered_map<std::string, std::string>> DataIngestor::ExtractPartitionValues(
-    const TableMetadata& metadata, const std::shared_ptr<arrow::RecordBatch>& batch) {
-    using ReturnType = common::Result<std::unordered_map<std::string, std::string>>;
+common::Result<DataFile> DataIngestor::WriteBatchToFile(
+    const std::shared_ptr<arrow::RecordBatch>& batch,
+    const std::unordered_map<std::string, std::string>& partition_values) {
+    using ReturnType = common::Result<DataFile>;
 
-    std::unordered_map<std::string, std::string> partition_values;
-
-    if (batch->num_rows() == 0 || metadata.partition_specs.empty()) {
-        // just return empty partition values
-        return ReturnType::success(partition_values);
+    // Validate nullability constraints first
+    auto schema = current_metadata_.schema;
+    for (int i = 0; i < schema->FieldCount(); i++) {
+        auto field = schema->Fields()[i];
+        if (field.nullability == common::Nullability::NOT_NULL) {
+            auto array = batch->column(i);
+            if (array->null_count() > 0) {
+                return common::Error(common::ErrorCode::ParquetInvalidNullability,
+                                     "Column '" + field.name + "' is declared non-nullable but contains "
+                                         + std::to_string(array->null_count()) + " null values");
+            }
+        }
     }
 
-    // Extract partition values based on partition spec
-    for (const auto& partition_field : metadata.partition_specs[0].fields) {
-        if (!partition_field.IsValid()) {
-            return common::Error(common::ErrorCode::InvalidOperation,
-                                 "Invalid partition field: " + partition_field.name);
-        }
+    // Generate file path
+    auto file_path_result = GenerateDataFilePath(partition_values);
+    RETURN_IF_ERROR_T(ReturnType, file_path_result);
+    auto file_path = file_path_result.value();
 
-        // Get the source field name from schema
-        std::string source_field_name = metadata.schema->Fields()[partition_field.source_id].name;
+    // Create writer
+    auto writer_result = CreateWriter(file_path);
+    RETURN_IF_ERROR_T(ReturnType, writer_result);
+    auto writer = std::move(writer_result).value();
 
-        // Find the field in the input batch
-        int field_idx = batch->schema()->GetFieldIndex(source_field_name);
-        if (field_idx == -1) {
-            return common::Error(common::ErrorCode::SchemaMismatch,
-                                 "Partition field not found in input: " + source_field_name);
-        }
+    // Write the batch
+    auto write_result = writer->write({batch});
+    RETURN_IF_ERROR_T(ReturnType, write_result);
+    auto num_records = writer->num_rows();
 
-        // Get the value from the first row (assuming all rows in batch have same partition value)
-        auto array = batch->column(field_idx);
-        if (array->null_count() > 0) {
-            return common::Error(common::ErrorCode::InvalidOperation,
-                                 "Partition field cannot be null: " + source_field_name);
-        }
+    // Close the writer
+    auto close_result = writer->close();
+    RETURN_IF_ERROR_T(ReturnType, close_result);
 
-        // Extract raw value based on type
-        std::string raw_value;
-        int32_t int32_value = 0;
-        int64_t int64_value = 0;
-        double double_value = 0.0;
-        std::string string_value;
-        bool have_int32 = false;
-        bool have_int64 = false;
-        bool have_double = false;
-        bool have_string = false;
+    // Finalize the data file
+    auto data_file_result = FinalizeDataFile(file_path, num_records, partition_values);
+    RETURN_IF_ERROR_T(ReturnType, data_file_result);
+    auto data_file = std::move(data_file_result).value();
 
-        switch (array->type_id()) {
-            case arrow::Type::INT32: {
-                auto int_array = std::static_pointer_cast<arrow::Int32Array>(array);
-                int32_value = int_array->Value(0);
-                raw_value = std::to_string(int32_value);
-                have_int32 = true;
-                break;
-            }
-            case arrow::Type::INT64: {
-                auto int_array = std::static_pointer_cast<arrow::Int64Array>(array);
-                int64_value = int_array->Value(0);
-                raw_value = std::to_string(int64_value);
-                have_int64 = true;
-                break;
-            }
-            case arrow::Type::DOUBLE: {
-                auto double_array = std::static_pointer_cast<arrow::DoubleArray>(array);
-                double_value = double_array->Value(0);
-                raw_value = std::to_string(double_value);
-                have_double = true;
-                break;
-            }
-            case arrow::Type::STRING: {
-                auto str_array = std::static_pointer_cast<arrow::StringArray>(array);
-                string_value = str_array->GetString(0);
-                raw_value = string_value;
-                have_string = true;
-                break;
-            }
-            case arrow::Type::DATE32: {
-                auto date_array = std::static_pointer_cast<arrow::Date32Array>(array);
-                int32_value = date_array->Value(0);  // days since epoch
-                raw_value = std::to_string(int32_value);
-                have_int32 = true;
-                break;
-            }
-            case arrow::Type::TIMESTAMP: {
-                auto ts_array = std::static_pointer_cast<arrow::TimestampArray>(array);
-                int64_value = ts_array->Value(0);  // timestamp value
-                raw_value = std::to_string(int64_value);
-                have_int64 = true;
-                break;
-            }
-            default:
-                return common::Error(common::ErrorCode::NotImplemented,
-                                     "Unsupported partition field type: " + array->type()->ToString());
-        }
+    // Add to pending files
+    pending_files_.push_back(data_file);
 
-        // Apply transform to get partition value
-        std::string partition_value;
+    LOG_STATUS("Wrote %d records to %s", num_records, file_path.c_str());
 
-        switch (partition_field.transform) {
-            case catalog::Transform::IDENTITY: {
-                // Use raw value as-is
-                partition_value = raw_value;
-                break;
-            }
-            case catalog::Transform::BUCKET: {
-                // Apply a hash function and take modulo with num_buckets
-                size_t hash_value = 0;
-
-                if (have_int32) {
-                    hash_value = std::hash<int32_t>{}(int32_value);
-                } else if (have_int64) {
-                    hash_value = std::hash<int64_t>{}(int64_value);
-                } else if (have_double) {
-                    hash_value = std::hash<double>{}(double_value);
-                } else if (have_string) {
-                    hash_value = std::hash<std::string>{}(string_value);
-                }
-
-                // Take modulo and ensure non-negative result
-                size_t bucket = hash_value % partition_field.GetTransformParam();
-                partition_value = std::to_string(bucket);
-                break;
-            }
-            case catalog::Transform::TRUNCATE: {
-                // Truncate numeric value to specified precision
-                if (have_int32) {
-                    // Truncate to nearest multiple of mod_n
-                    int32_t truncated =
-                        (int32_value / partition_field.GetTransformParam()) * partition_field.GetTransformParam();
-                    partition_value = std::to_string(truncated);
-                } else if (have_int64) {
-                    int64_t truncated =
-                        (int64_value / partition_field.GetTransformParam()) * partition_field.GetTransformParam();
-                    partition_value = std::to_string(truncated);
-                } else if (have_double) {
-                    double truncated = std::floor(double_value / partition_field.GetTransformParam())
-                                       * partition_field.GetTransformParam();
-                    partition_value = std::to_string(static_cast<int64_t>(truncated));
-                } else {
-                    return common::Error(common::ErrorCode::InvalidOperation,
-                                         "TRUNCATE transform only applies to numeric types");
-                }
-                break;
-            }
-            case catalog::Transform::YEAR: {
-                // Extract year from timestamp or date
-                if (array->type_id() == arrow::Type::DATE32) {
-                    // Convert days since epoch to year
-                    time_t epoch_seconds = int32_value * 86400;  // days to seconds
-                    struct tm* date_tm = gmtime(&epoch_seconds);
-                    partition_value = std::to_string(date_tm->tm_year + 1900);
-                } else if (array->type_id() == arrow::Type::TIMESTAMP) {
-                    // Convert timestamp to year
-                    time_t epoch_seconds = int64_value / 1000000000;  // nanoseconds to seconds
-                    struct tm* date_tm = gmtime(&epoch_seconds);
-                    partition_value = std::to_string(date_tm->tm_year + 1900);
-                } else if (have_string) {
-                    // Assuming ISO format YYYY-MM-DD or similar
-                    if (string_value.length() >= 4) {
-                        partition_value = string_value.substr(0, 4);
-                    } else {
-                        return common::Error(common::ErrorCode::InvalidOperation,
-                                             "String value not in expected date format");
-                    }
-                } else {
-                    return common::Error(common::ErrorCode::InvalidOperation,
-                                         "YEAR transform only applies to date/timestamp types");
-                }
-                break;
-            }
-            case catalog::Transform::MONTH: {
-                // Extract month from timestamp or date
-                if (array->type_id() == arrow::Type::DATE32) {
-                    // Convert days since epoch to month
-                    time_t epoch_seconds = int32_value * 86400;  // days to seconds
-                    struct tm* date_tm = gmtime(&epoch_seconds);
-                    partition_value = std::to_string(date_tm->tm_mon + 1);
-                } else if (array->type_id() == arrow::Type::TIMESTAMP) {
-                    // Convert timestamp to month
-                    time_t epoch_seconds = int64_value / 1000000000;  // nanoseconds to seconds
-                    struct tm* date_tm = gmtime(&epoch_seconds);
-                    partition_value = std::to_string(date_tm->tm_mon + 1);
-                } else if (have_string) {
-                    // Assuming ISO format YYYY-MM-DD or similar
-                    if (string_value.length() >= 7 && string_value[4] == '-') {
-                        partition_value = string_value.substr(5, 2);
-                    } else {
-                        return common::Error(common::ErrorCode::InvalidOperation,
-                                             "String value not in expected date format");
-                    }
-                } else {
-                    return common::Error(common::ErrorCode::InvalidOperation,
-                                         "MONTH transform only applies to date/timestamp types");
-                }
-                break;
-            }
-            case catalog::Transform::DAY: {
-                // Extract day from timestamp or date
-                if (array->type_id() == arrow::Type::DATE32) {
-                    // Convert days since epoch to day
-                    time_t epoch_seconds = int32_value * 86400;  // days to seconds
-                    struct tm* date_tm = gmtime(&epoch_seconds);
-                    partition_value = std::to_string(date_tm->tm_mday);
-                } else if (array->type_id() == arrow::Type::TIMESTAMP) {
-                    // Convert timestamp to day
-                    time_t epoch_seconds = int64_value / 1000000000;  // nanoseconds to seconds
-                    struct tm* date_tm = gmtime(&epoch_seconds);
-                    partition_value = std::to_string(date_tm->tm_mday);
-                } else if (have_string) {
-                    // Assuming ISO format YYYY-MM-DD or similar
-                    if (string_value.length() >= 10 && string_value[4] == '-' && string_value[7] == '-') {
-                        partition_value = string_value.substr(8, 2);
-                    } else {
-                        return common::Error(common::ErrorCode::InvalidOperation,
-                                             "String value not in expected date format");
-                    }
-                } else {
-                    return common::Error(common::ErrorCode::InvalidOperation,
-                                         "DAY transform only applies to date/timestamp types");
-                }
-                break;
-            }
-            default:
-                return common::Error(
-                    common::ErrorCode::NotImplemented,
-                    "Unsupported transform type: " + std::to_string(static_cast<int>(partition_field.transform)));
-        }
-
-        // Add to partition values map
-        partition_values[partition_field.name] = partition_value;
-    }
-
-    return ReturnType::success(partition_values);
+    return ReturnType::success(data_file);
 }
 
 }  // namespace pond::catalog

@@ -58,17 +58,6 @@ public:
      */
     common::Result<bool> Commit();
 
-public:
-    /**
-     * Extracts partition values from a record batch (only uses the first row).
-     * This is assume the record batch is already partitioned with the same partition specs as the table.
-     * @param metadata The table metadata containing partition specifications
-     * @param batch The record batch to extract values from
-     * @return A map of partition field names to their string values
-     */
-    static common::Result<std::unordered_map<std::string, std::string>> ExtractPartitionValues(
-        const TableMetadata& metadata, const std::shared_ptr<arrow::RecordBatch>& batch);
-
 private:
     DataIngestor(std::shared_ptr<Catalog> catalog,
                  std::shared_ptr<common::IAppendOnlyFileSystem> fs,
@@ -84,6 +73,9 @@ private:
 
     // Add new helper method for schema validation
     common::Result<void> ValidateSchema(const std::shared_ptr<arrow::Schema>& input_schema) const;
+
+    common::Result<DataFile> WriteBatchToFile(const std::shared_ptr<arrow::RecordBatch>& batch,
+                                              const std::unordered_map<std::string, std::string>& partition_values);
 
     std::shared_ptr<Catalog> catalog_;
     std::shared_ptr<common::IAppendOnlyFileSystem> fs_;

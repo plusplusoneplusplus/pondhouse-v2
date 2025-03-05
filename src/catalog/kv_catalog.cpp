@@ -529,6 +529,9 @@ common::Result<TableMetadata> KVCatalog::CreateSnapshot(const std::string& name,
 
     LOG_STATUS(
         "Created snapshot %d for table '%s' with %zu files.", new_snapshot_id, name.c_str(), snapshot_files.size());
+    for (const auto& file : snapshot_files) {
+        LOG_STATUS("  %s", file.file_path.c_str());
+    }
 
     return common::Result<TableMetadata>::success(metadata);
 }
