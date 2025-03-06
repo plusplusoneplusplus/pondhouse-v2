@@ -47,27 +47,46 @@ public:
     std::shared_ptr<Catalog> catalog_;
     TableMetadata table_metadata_;
 
-    std::shared_ptr<arrow::RecordBatch> CreateTestBatch() {
+    std::shared_ptr<arrow::RecordBatch> CreateTestBatch(std::optional<std::vector<int32_t>> ids = std::nullopt,
+                                                        std::optional<std::vector<std::string>> names = std::nullopt,
+                                                        std::optional<std::vector<double>> values = std::nullopt) {
         // Create test data
         std::vector<std::shared_ptr<arrow::Array>> arrays;
 
+        if (ids.has_value()) {
+            EXPECT_EQ(ids.value().size(), names.value().size());
+            EXPECT_EQ(ids.value().size(), values.value().size());
+        }
+
         // Create ID column
         arrow::Int32Builder id_builder;
-        EXPECT_TRUE(id_builder.AppendValues({1, 2, 3}).ok());
+        if (ids.has_value()) {
+            EXPECT_TRUE(id_builder.AppendValues(ids.value()).ok());
+        } else {
+            EXPECT_TRUE(id_builder.AppendValues({1, 2, 3}).ok());
+        }
         arrays.push_back(id_builder.Finish().ValueOrDie());
 
         // Create name column
         arrow::StringBuilder name_builder;
-        EXPECT_TRUE(name_builder.AppendValues({"one", "two", "three"}).ok());
+        if (names.has_value()) {
+            EXPECT_TRUE(name_builder.AppendValues(names.value()).ok());
+        } else {
+            EXPECT_TRUE(name_builder.AppendValues({"one", "two", "three"}).ok());
+        }
         arrays.push_back(name_builder.Finish().ValueOrDie());
 
         // Create value column
         arrow::DoubleBuilder value_builder;
-        EXPECT_TRUE(value_builder.AppendValues({1.1, 2.2, 3.3}).ok());
+        if (values.has_value()) {
+            EXPECT_TRUE(value_builder.AppendValues(values.value()).ok());
+        } else {
+            EXPECT_TRUE(value_builder.AppendValues({1.1, 2.2, 3.3}).ok());
+        }
         arrays.push_back(value_builder.Finish().ValueOrDie());
 
         auto arrow_schema = format::SchemaConverter::ToArrowSchema(*schema_).value();
-        return arrow::RecordBatch::Make(arrow_schema, 3, arrays);
+        return arrow::RecordBatch::Make(arrow_schema, ids.has_value() ? ids.value().size() : 3, arrays);
     }
 
     // Add new helper method to verify data in a Parquet file

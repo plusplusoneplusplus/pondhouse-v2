@@ -1069,4 +1069,162 @@ TEST_F(DataIngestorUtilTest, ExtractPartitionValuesVectorizedInvalidTransform) {
     VERIFY_ERROR_CODE(result, common::ErrorCode::InvalidOperation);
 }
 
+//
+// Test Setup:
+//      Test ExtractPartitionValuesVectorized with BUCKET transform on numeric types
+// Test Result:
+//      Should correctly bucket numeric values consistently
+//
+TEST_F(DataIngestorUtilTest, ExtractPartitionValuesVectorizedBucketNumeric) {
+    // Create arrays with different numeric types
+    arrow::Int32Builder int32_builder;
+    EXPECT_TRUE(int32_builder.AppendValues({1, 11, 21, 31, 41}).ok());
+    auto int32_array = int32_builder.Finish().ValueOrDie();
+
+    arrow::Int64Builder int64_builder;
+    EXPECT_TRUE(int64_builder.AppendValues({100, 200, 300, 400, 500}).ok());
+    auto int64_array = int64_builder.Finish().ValueOrDie();
+
+    arrow::DoubleBuilder double_builder;
+    EXPECT_TRUE(double_builder.AppendValues({1.5, 2.5, 3.5, 4.5, 5.5}).ok());
+    auto double_array = double_builder.Finish().ValueOrDie();
+
+    // Create partition specs with BUCKET transform (3 buckets)
+    PartitionSpec spec(1);
+    spec.fields.emplace_back(0, 100, "bucket", Transform::BUCKET, 3);
+
+    // Test with Int32 array
+    auto result_int32 = DataIngestorUtil::ExtractPartitionValuesVectorized(spec.fields[0], int32_array);
+    VERIFY_RESULT(result_int32);
+    auto values_int32 = result_int32.value();
+    ASSERT_EQ(values_int32->length(), 5);
+
+    // Verify specific bucket values for Int32 array
+    std::vector<std::string> expected_int32_buckets = {"1", "2", "0", "1", "2"};
+    for (int i = 0; i < values_int32->length(); i++) {
+        EXPECT_EQ(values_int32->GetString(i), expected_int32_buckets[i]);
+    }
+
+    // Test with Int64 array
+    auto result_int64 = DataIngestorUtil::ExtractPartitionValuesVectorized(spec.fields[0], int64_array);
+    VERIFY_RESULT(result_int64);
+    auto values_int64 = result_int64.value();
+    ASSERT_EQ(values_int64->length(), 5);
+
+    // Verify specific bucket values for Int64 array
+    std::vector<std::string> expected_int64_buckets = {"1", "2", "0", "1", "2"};
+    for (int i = 0; i < values_int64->length(); i++) {
+        EXPECT_EQ(values_int64->GetString(i), expected_int64_buckets[i]);
+    }
+
+    // Test with Double array
+    auto result_double = DataIngestorUtil::ExtractPartitionValuesVectorized(spec.fields[0], double_array);
+    VERIFY_RESULT(result_double);
+    auto values_double = result_double.value();
+    ASSERT_EQ(values_double->length(), 5);
+
+    // Verify specific bucket values for Double array
+    std::vector<std::string> expected_double_buckets = {"1", "2", "0", "1", "2"};
+    for (int i = 0; i < values_double->length(); i++) {
+        EXPECT_EQ(values_double->GetString(i), expected_double_buckets[i]);
+    }
+}
+
+//
+// Test Setup:
+//      Test ExtractPartitionValuesVectorized with TRUNCATE transform
+// Test Result:
+//      Should correctly truncate numeric and string values
+//
+TEST_F(DataIngestorUtilTest, ExtractPartitionValuesVectorizedTruncate) {
+    // Test numeric truncation
+    arrow::Int64Builder int_builder;
+    EXPECT_TRUE(int_builder.AppendValues({12345, 67890, 11111, 22222}).ok());
+    auto int_array = int_builder.Finish().ValueOrDie();
+
+    // Test string truncation
+    arrow::StringBuilder str_builder;
+    EXPECT_TRUE(str_builder.AppendValues({"hello", "world", "test", "long_string"}).ok());
+    auto str_array = str_builder.Finish().ValueOrDie();
+
+    // Create partition specs with TRUNCATE transform
+    PartitionSpec spec_num(1);
+    spec_num.fields.emplace_back(0, 100, "trunc_num", Transform::TRUNCATE, 3);  // Truncate to 1000s
+
+    PartitionSpec spec_str(1);
+    spec_str.fields.emplace_back(0, 100, "trunc_str", Transform::TRUNCATE, 4);  // Truncate to 4 chars
+
+    // Test numeric truncation
+    auto result_num = DataIngestorUtil::ExtractPartitionValuesVectorized(spec_num.fields[0], int_array);
+    VERIFY_RESULT(result_num);
+    auto values_num = result_num.value();
+    ASSERT_EQ(values_num->length(), 4);
+    EXPECT_EQ(values_num->GetString(0), "12000");
+    EXPECT_EQ(values_num->GetString(1), "67000");
+    EXPECT_EQ(values_num->GetString(2), "11000");
+    EXPECT_EQ(values_num->GetString(3), "22000");
+
+    // Test string truncation
+    auto result_str = DataIngestorUtil::ExtractPartitionValuesVectorized(spec_str.fields[0], str_array);
+    VERIFY_RESULT(result_str);
+    auto values_str = result_str.value();
+    ASSERT_EQ(values_str->length(), 4);
+    EXPECT_EQ(values_str->GetString(0), "hell");
+    EXPECT_EQ(values_str->GetString(1), "worl");
+    EXPECT_EQ(values_str->GetString(2), "test");
+    EXPECT_EQ(values_str->GetString(3), "long");
+}
+
+//
+// Test Setup:
+//      Test ExtractPartitionValuesVectorized with IDENTITY transform on different types
+// Test Result:
+//      Should correctly preserve values while converting to strings
+//
+TEST_F(DataIngestorUtilTest, ExtractPartitionValuesVectorizedIdentity) {
+    // Create arrays with different types
+    arrow::Int32Builder int_builder;
+    EXPECT_TRUE(int_builder.AppendValues({123, 456, 789}).ok());
+    auto int_array = int_builder.Finish().ValueOrDie();
+
+    arrow::DoubleBuilder double_builder;
+    EXPECT_TRUE(double_builder.AppendValues({1.23, 4.56, 7.89}).ok());
+    auto double_array = double_builder.Finish().ValueOrDie();
+
+    arrow::StringBuilder string_builder;
+    EXPECT_TRUE(string_builder.AppendValues({"abc", "def", "ghi"}).ok());
+    auto string_array = string_builder.Finish().ValueOrDie();
+
+    // Create partition spec with IDENTITY transform
+    PartitionSpec spec(1);
+    spec.fields.emplace_back(0, 100, "identity", Transform::IDENTITY);
+
+    // Test with Int32 array
+    auto result_int = DataIngestorUtil::ExtractPartitionValuesVectorized(spec.fields[0], int_array);
+    VERIFY_RESULT(result_int);
+    auto values_int = result_int.value();
+    ASSERT_EQ(values_int->length(), 3);
+    EXPECT_EQ(values_int->GetString(0), "123");
+    EXPECT_EQ(values_int->GetString(1), "456");
+    EXPECT_EQ(values_int->GetString(2), "789");
+
+    // Test with Double array
+    auto result_double = DataIngestorUtil::ExtractPartitionValuesVectorized(spec.fields[0], double_array);
+    VERIFY_RESULT(result_double);
+    auto values_double = result_double.value();
+    ASSERT_EQ(values_double->length(), 3);
+    EXPECT_EQ(values_double->GetString(0), "1.23");
+    EXPECT_EQ(values_double->GetString(1), "4.56");
+    EXPECT_EQ(values_double->GetString(2), "7.89");
+
+    // Test with String array
+    auto result_string = DataIngestorUtil::ExtractPartitionValuesVectorized(spec.fields[0], string_array);
+    VERIFY_RESULT(result_string);
+    auto values_string = result_string.value();
+    ASSERT_EQ(values_string->length(), 3);
+    EXPECT_EQ(values_string->GetString(0), "abc");
+    EXPECT_EQ(values_string->GetString(1), "def");
+    EXPECT_EQ(values_string->GetString(2), "ghi");
+}
+
 }  // namespace pond::catalog

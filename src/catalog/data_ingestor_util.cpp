@@ -539,7 +539,7 @@ namespace pond::catalog {
 
             int32_t num_buckets = field.transform_param.value();
 
-            // For BUCKET transform, we'll manually compute a hash and modulo
+            // For BUCKET transform, we'll directly hash the values based on their type
             arrow::Int32Builder int_builder;
             auto reserve_status = int_builder.Reserve(array->length());
             if (!reserve_status.ok()) {
@@ -547,48 +547,140 @@ namespace pond::catalog {
                                      "Failed to reserve memory: " + reserve_status.ToString());
             }
 
-            // First convert the array to a string array
-            std::shared_ptr<arrow::StringArray> string_array;
-            if (array->type_id() != arrow::Type::STRING) {
-                auto cast_options = arrow::compute::CastOptions::Safe(arrow::utf8());
-                auto cast_result = arrow::compute::Cast(array, arrow::utf8(), cast_options);
-                if (!cast_result.ok()) {
-                    return common::Error(common::ErrorCode::InvalidArgument,
-                                         "Failed to cast array to string: " + cast_result.status().ToString());
-                }
-                string_array = std::static_pointer_cast<arrow::StringArray>(cast_result.ValueOrDie().make_array());
-            } else {
-                string_array = std::static_pointer_cast<arrow::StringArray>(array);
-            }
+            // Process values based on their type
+            switch (array->type_id()) {
+                case arrow::Type::INT32: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int32Array>(array);
+                    for (int64_t i = 0; i < array->length(); i++) {
+                        if (array->IsNull(i)) {
+                            auto status = int_builder.AppendNull();
+                            if (!status.ok()) {
+                                return common::Error(common::ErrorCode::InvalidArgument,
+                                                     "Failed to append null: " + status.ToString());
+                            }
+                            continue;
+                        }
 
-            // Simple string hash for all values
-            for (int64_t i = 0; i < string_array->length(); i++) {
-                if (string_array->IsNull(i)) {
-                    auto status = int_builder.AppendNull();
-                    if (!status.ok()) {
-                        return common::Error(common::ErrorCode::InvalidArgument,
-                                             "Failed to append null: " + status.ToString());
+                        int32_t value = typed_array->Value(i);
+                        // Direct modulo for integer types - no hashing needed
+                        int32_t bucket = value % num_buckets;
+                        // Ensure non-negative result
+                        if (bucket < 0)
+                            bucket += num_buckets;
+
+                        LOG_STATUS("BUCKET for INT32 value '%d': bucket=%d", value, bucket);
+
+                        auto status = int_builder.Append(bucket);
+                        if (!status.ok()) {
+                            return common::Error(common::ErrorCode::InvalidArgument,
+                                                 "Failed to append value: " + status.ToString());
+                        }
                     }
-                    continue;
+                    break;
                 }
+                case arrow::Type::INT64: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int64Array>(array);
+                    for (int64_t i = 0; i < array->length(); i++) {
+                        if (array->IsNull(i)) {
+                            auto status = int_builder.AppendNull();
+                            if (!status.ok()) {
+                                return common::Error(common::ErrorCode::InvalidArgument,
+                                                     "Failed to append null: " + status.ToString());
+                            }
+                            continue;
+                        }
 
-                std::string value = string_array->GetString(i);
-                // Simple string hash - consistent for same string values
-                size_t hash_value = 0;
-                for (char c : value) {
-                    hash_value = hash_value * 31 + c;
+                        int64_t value = typed_array->Value(i);
+                        // Direct modulo for integer types - no hashing needed
+                        int32_t bucket = value % num_buckets;
+                        // Ensure non-negative result
+                        if (bucket < 0)
+                            bucket += num_buckets;
+
+                        LOG_STATUS("BUCKET for INT64 value '%lld': bucket=%d", static_cast<long long>(value), bucket);
+
+                        auto status = int_builder.Append(bucket);
+                        if (!status.ok()) {
+                            return common::Error(common::ErrorCode::InvalidArgument,
+                                                 "Failed to append value: " + status.ToString());
+                        }
+                    }
+                    break;
                 }
+                case arrow::Type::DOUBLE: {
+                    auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(array);
+                    for (int64_t i = 0; i < array->length(); i++) {
+                        if (array->IsNull(i)) {
+                            auto status = int_builder.AppendNull();
+                            if (!status.ok()) {
+                                return common::Error(common::ErrorCode::InvalidArgument,
+                                                     "Failed to append null: " + status.ToString());
+                            }
+                            continue;
+                        }
 
-                // Apply modulo to get bucket number (always non-negative)
-                int32_t bucket = hash_value % num_buckets;
+                        double value = typed_array->Value(i);
+                        // For doubles, convert to integer and then apply modulo
+                        // This avoids direct floating-point modulo which can be problematic
+                        int64_t int_value = static_cast<int64_t>(value);
+                        int32_t bucket = int_value % num_buckets;
+                        // Ensure non-negative result
+                        if (bucket < 0)
+                            bucket += num_buckets;
 
-                // Debug log to see hash and bucket values
-                LOG_STATUS("BUCKET hash for value '%s': hash=%zu, bucket=%d", value.c_str(), hash_value, bucket);
+                        LOG_STATUS("BUCKET for DOUBLE value '%f': bucket=%d", value, bucket);
 
-                auto status = int_builder.Append(bucket);
-                if (!status.ok()) {
-                    return common::Error(common::ErrorCode::InvalidArgument,
-                                         "Failed to append value: " + status.ToString());
+                        auto status = int_builder.Append(bucket);
+                        if (!status.ok()) {
+                            return common::Error(common::ErrorCode::InvalidArgument,
+                                                 "Failed to append value: " + status.ToString());
+                        }
+                    }
+                    break;
+                }
+                default: {
+                    // For all other types, fall back to string-based hashing
+                    std::shared_ptr<arrow::StringArray> string_array;
+                    if (array->type_id() != arrow::Type::STRING) {
+                        auto cast_options = arrow::compute::CastOptions::Safe(arrow::utf8());
+                        auto cast_result = arrow::compute::Cast(array, arrow::utf8(), cast_options);
+                        if (!cast_result.ok()) {
+                            return common::Error(common::ErrorCode::InvalidArgument,
+                                                 "Failed to cast array to string: " + cast_result.status().ToString());
+                        }
+                        string_array =
+                            std::static_pointer_cast<arrow::StringArray>(cast_result.ValueOrDie().make_array());
+                    } else {
+                        string_array = std::static_pointer_cast<arrow::StringArray>(array);
+                    }
+
+                    // Simple string hash for all values
+                    for (int64_t i = 0; i < string_array->length(); i++) {
+                        if (string_array->IsNull(i)) {
+                            auto status = int_builder.AppendNull();
+                            if (!status.ok()) {
+                                return common::Error(common::ErrorCode::InvalidArgument,
+                                                     "Failed to append null: " + status.ToString());
+                            }
+                            continue;
+                        }
+
+                        std::string value = string_array->GetString(i);
+                        // Use std::hash for string values as well
+                        size_t hash_value = std::hash<std::string>{}(value);
+                        int32_t bucket = hash_value % num_buckets;
+
+                        LOG_STATUS("BUCKET hash for STRING value '%s': hash=%zu, bucket=%d",
+                                   value.c_str(),
+                                   hash_value,
+                                   bucket);
+
+                        auto status = int_builder.Append(bucket);
+                        if (!status.ok()) {
+                            return common::Error(common::ErrorCode::InvalidArgument,
+                                                 "Failed to append value: " + status.ToString());
+                        }
+                    }
                 }
             }
 

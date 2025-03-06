@@ -144,7 +144,7 @@ TEST_F(DataAccessorTest, GetTableSchemaNonExistent) {
 // Test Result:
 //      Should return all data files with correct partition values and record counts
 //
-TEST_F(DataAccessorTest, DISABLED_ListTableFiles) {
+TEST_F(DataAccessorTest, ListTableFiles) {
     auto files_result = data_accessor_->ListTableFiles("test_table");
     VERIFY_RESULT(files_result);
 
@@ -181,7 +181,7 @@ TEST_F(DataAccessorTest, DISABLED_ListTableFiles) {
 // Test Result:
 //      Should successfully read the data with correct values and partition values
 //
-TEST_F(DataAccessorTest, DISABLED_GetReaderAndReadData) {
+TEST_F(DataAccessorTest, GetReaderAndReadData) {
     // Get the files
     auto files_result = data_accessor_->ListTableFiles("test_table");
     VERIFY_RESULT(files_result);
@@ -221,7 +221,7 @@ TEST_F(DataAccessorTest, DISABLED_GetReaderAndReadData) {
 // Test Result:
 //      Should return files from that snapshot with correct partition values and record counts
 //
-TEST_F(DataAccessorTest, DISABLED_ListTableFilesWithSnapshot) {
+TEST_F(DataAccessorTest, ListTableFilesWithSnapshot) {
     // First snapshot contains our test data
     auto files_result = data_accessor_->ListTableFiles("test_table", 1);
     VERIFY_RESULT(files_result);
@@ -246,7 +246,18 @@ TEST_F(DataAccessorTest, DISABLED_ListTableFilesWithSnapshot) {
     for (const auto& file : files_result.value()) {
         total_records += file.record_count;
     }
-    EXPECT_EQ(7, total_records);  // Total records across both files
+    EXPECT_EQ(5, total_records);  // Total records in second snapshot files
+
+    files_result = data_accessor_->ListTableFiles("test_table", 3);
+    VERIFY_RESULT(files_result);
+    ASSERT_EQ(3, files_result.value().size());
+
+    // Verify record counts in third snapshot
+    total_records = 0;
+    for (const auto& file : files_result.value()) {
+        total_records += file.record_count;
+    }
+    EXPECT_EQ(7, total_records);  // Total records in third snapshot files
 }
 
 }  // namespace pond::query
