@@ -23,6 +23,16 @@ protected:
         // Create catalog and data accessor
         catalog_ = std::make_shared<catalog::KVCatalog>(db_);
         data_accessor_ = std::make_unique<CatalogDataAccessor>(catalog_, fs_);
+        schema_ = common::CreateSchemaBuilder()
+                      .AddField("id", common::ColumnType::INT32)
+                      .AddField("name", common::ColumnType::STRING)
+                      .AddField("age", common::ColumnType::INT32)
+                      .AddField("year", common::ColumnType::INT32)  // Added for partitioning
+                      .Build();
+
+        spec_ = catalog::PartitionSpec(1);
+        spec_.fields.emplace_back(2, 100, "age_bucket", catalog::Transform::BUCKET, 10);  // Partition by age bucket
+        spec_.fields.emplace_back(3, 100, "year", catalog::Transform::IDENTITY);          // Partition by year
 
         // Create test table with schema and data
         SetupTestTable();
@@ -30,20 +40,8 @@ protected:
     }
 
     void SetupTestTable() {
-        // Create schema
-        auto schema = std::make_shared<common::Schema>();
-        schema->AddField("id", common::ColumnType::INT32);
-        schema->AddField("name", common::ColumnType::STRING);
-        schema->AddField("age", common::ColumnType::INT32);
-        schema->AddField("year", common::ColumnType::INT32);  // Added for partitioning
-
-        // Create partition spec with two partition fields
-        catalog::PartitionSpec spec(1);
-        spec.fields.emplace_back(2, 100, "age_bucket", catalog::Transform::BUCKET, 10);  // Partition by age bucket
-        spec.fields.emplace_back(3, 100, "year", catalog::Transform::IDENTITY);          // Partition by year
-
         // Create table
-        auto create_result = catalog_->CreateTable("test_table", schema, spec, "/test_table");
+        auto create_result = catalog_->CreateTable("test_table", schema_, spec_, "/test_table");
         VERIFY_RESULT(create_result);
     }
 
@@ -106,6 +104,8 @@ protected:
     std::shared_ptr<kv::DB> db_;
     std::shared_ptr<catalog::KVCatalog> catalog_;
     std::unique_ptr<DataAccessor> data_accessor_;
+    std::shared_ptr<common::Schema> schema_;
+    catalog::PartitionSpec spec_;
 };
 
 //
@@ -258,6 +258,150 @@ TEST_F(DataAccessorTest, ListTableFilesWithSnapshot) {
         total_records += file.record_count;
     }
     EXPECT_EQ(7, total_records);  // Total records in third snapshot files
+}
+
+//
+// Test Setup:
+//      Create a large volume of data (thousands of rows) and ingest it in batches
+//      Data is partitioned by age_bucket and year to test partitioning at scale
+// Test Result:
+//      All data should be correctly ingested and retrievable
+//      File count, record counts, and partition values should match expectations
+//
+TEST_F(DataAccessorTest, DataIngestorStressTest) {
+    // Create a new table for stress testing
+    auto create_result = catalog_->CreateTable("stress_test_table", schema_, spec_, "/stress_test_table");
+    VERIFY_RESULT(create_result);
+
+    // Create a new DataIngestor for stress testing
+    auto ingestor_result = catalog::DataIngestor::Create(catalog_, fs_, "stress_test_table");
+    VERIFY_RESULT(ingestor_result);
+    auto ingestor = std::move(ingestor_result).value();
+
+    // Configuration for stress test
+    const int kNumBatches = 10;
+    const int kRowsPerBatch = 500;  // 5,000 rows total
+    const int kYearStart = 2020;
+    const int kYearEnd = 2023;
+    const int kMaxAge = 80;
+
+    // Keep track of expected counts per partition
+    std::unordered_map<std::string, std::unordered_map<std::string, int>> expected_partition_counts;
+    int total_rows = 0;
+
+    // Generate and ingest batches
+    LOG_STATUS("Starting stress test with %d batches of %d rows each", kNumBatches, kRowsPerBatch);
+    for (int batch_idx = 0; batch_idx < kNumBatches; batch_idx++) {
+        std::vector<int32_t> ids;
+        std::vector<std::string> names;
+        std::vector<int32_t> ages;
+        std::vector<int32_t> years;
+
+        // Generate data for this batch
+        for (int row_idx = 0; row_idx < kRowsPerBatch; row_idx++) {
+            int id = batch_idx * kRowsPerBatch + row_idx + 1;
+            std::string name = "User" + std::to_string(id);
+            int age = id % kMaxAge + 1;  // Age from 1 to kMaxAge
+            int year = kYearStart + (id % (kYearEnd - kYearStart + 1));
+
+            ids.push_back(id);
+            names.push_back(name);
+            ages.push_back(age);
+            years.push_back(year);
+
+            // Calculate expected partition
+            int age_bucket = age % 10;  // Using modulo 10 to match partition spec
+            std::string bucket_str = std::to_string(age_bucket);
+            std::string year_str = std::to_string(year);
+
+            // Update expected counts
+            expected_partition_counts[bucket_str][year_str]++;
+            total_rows++;
+        }
+
+        // Create Arrow arrays
+        arrow::Int32Builder id_builder;
+        arrow::StringBuilder name_builder;
+        arrow::Int32Builder age_builder;
+        arrow::Int32Builder year_builder;
+
+        EXPECT_TRUE(id_builder.AppendValues(ids).ok());
+        EXPECT_TRUE(name_builder.AppendValues(names).ok());
+        EXPECT_TRUE(age_builder.AppendValues(ages).ok());
+        EXPECT_TRUE(year_builder.AppendValues(years).ok());
+
+        std::shared_ptr<arrow::Array> id_array, name_array, age_array, year_array;
+        EXPECT_TRUE(id_builder.Finish(&id_array).ok());
+        EXPECT_TRUE(name_builder.Finish(&name_array).ok());
+        EXPECT_TRUE(age_builder.Finish(&age_array).ok());
+        EXPECT_TRUE(year_builder.Finish(&year_array).ok());
+
+        // Create record batch
+        auto schema = arrow::schema({arrow::field("id", arrow::int32()),
+                                     arrow::field("name", arrow::utf8()),
+                                     arrow::field("age", arrow::int32()),
+                                     arrow::field("year", arrow::int32())});
+        auto batch = arrow::RecordBatch::Make(schema, ids.size(), {id_array, name_array, age_array, year_array});
+
+        // Ingest batch without committing yet
+        auto ingest_result = ingestor->IngestBatch(batch, false);
+        VERIFY_RESULT(ingest_result);
+
+        LOG_STATUS("Ingested batch %d/%d with %d rows", batch_idx + 1, kNumBatches, kRowsPerBatch);
+    }
+
+    // Commit all changes at once
+    auto commit_result = ingestor->Commit();
+    VERIFY_RESULT(commit_result);
+    LOG_STATUS("Committed all changes");
+
+    // Now verify using data accessor
+    auto files_result = data_accessor_->ListTableFiles("stress_test_table");
+    VERIFY_RESULT(files_result);
+    auto files = files_result.value();
+
+    // Estimate how many files we should have based on distinct partitions
+    size_t expected_partition_count = 0;
+    for (const auto& bucket_entry : expected_partition_counts) {
+        expected_partition_count += bucket_entry.second.size();
+    }
+
+    LOG_STATUS("Found %zu data files across %zu partitions", files.size(), expected_partition_count);
+    EXPECT_GE(files.size(), expected_partition_count) << "Should have at least as many files as distinct partitions";
+
+    // Verify total record count
+    int total_records = 0;
+    for (const auto& file : files) {
+        total_records += file.record_count;
+    }
+    EXPECT_EQ(total_rows, total_records) << "Total records should match ingested row count";
+
+    // Verify reading from a random file
+    if (!files.empty()) {
+        const auto& random_file = files[files.size() / 2];  // Pick middle file
+        LOG_STATUS("Reading file: %s", random_file.file_path.c_str());
+        auto reader_result = data_accessor_->GetReader(random_file);
+        VERIFY_RESULT(reader_result);
+        auto reader = std::move(reader_result).value();
+
+        // Read the data
+        auto table_result = reader->read();
+        VERIFY_RESULT(table_result);
+        auto table = table_result.value();
+
+        // Verify the data has expected schema
+        ASSERT_EQ(4, table->num_columns());  // id, name, age, year
+        ASSERT_GT(table->num_rows(), 0);     // Should have at least 1 row
+
+        // Verify schema
+        auto schema = table->schema();
+        ASSERT_EQ("id", schema->field(0)->name());
+        ASSERT_EQ("name", schema->field(1)->name());
+        ASSERT_EQ("age", schema->field(2)->name());
+        ASSERT_EQ("year", schema->field(3)->name());
+    }
+
+    LOG_STATUS("Stress test completed successfully with %d total rows", total_rows);
 }
 
 }  // namespace pond::query
