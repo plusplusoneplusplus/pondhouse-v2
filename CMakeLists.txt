@@ -162,6 +162,7 @@ add_library(pondhouse_common
     src/format/sstable/sstable_reader.cpp
     src/format/sstable/sstable_format.cpp
     src/format/parquet/schema_converter.cpp
+    src/query/data/arrow_util.cpp
     src/query/data/catalog_data_accessor.cpp
     src/query/planner/logical_optimizer.cpp
     src/query/planner/logical_plan_node.cpp
@@ -170,6 +171,7 @@ add_library(pondhouse_common
     src/query/planner/physical_plan_node.cpp
     src/query/planner/physical_plan_printer.cpp
     src/query/planner/physical_planner.cpp
+    src/query/executor/simple_executor.cpp
     src/rsm/rsm.cpp
     src/rsm/snapshot_manager.cpp
     ${PROTO_SRCS}
@@ -272,10 +274,12 @@ add_executable(
     tests/kv/table_test.cpp
     tests/kv/versioned_value_test.cpp
     tests/main.cpp
+    tests/query/arrow_util_test.cpp
     tests/query/data_accessor_test.cpp
     tests/query/logical_planner_test.cpp
     tests/query/logical_optimizer_test.cpp
     tests/query/physical_planner_test.cpp
+    tests/query/simple_executor_test.cpp
     tests/sql/hyrise_parser_test.cpp
     tests/test_helper.cpp
     tests/proto/metadata_test.cpp

@@ -9,6 +9,7 @@
 #include <variant>
 
 #include "error.h"
+#include "log.h"
 
 #define RETURN_IF_ERROR(expr)        \
     do {                             \
