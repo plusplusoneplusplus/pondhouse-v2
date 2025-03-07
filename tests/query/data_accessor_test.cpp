@@ -195,7 +195,7 @@ TEST_F(DataAccessorTest, GetReaderAndReadData) {
     auto reader = std::move(reader_result).value();
 
     // Read the data
-    auto table_result = reader->read();
+    auto table_result = reader->Read();
     VERIFY_RESULT(table_result);
     auto table = table_result.value();
 
@@ -385,7 +385,7 @@ TEST_F(DataAccessorTest, DataIngestorStressTest) {
         auto reader = std::move(reader_result).value();
 
         // Read the data
-        auto table_result = reader->read();
+        auto table_result = reader->Read();
         VERIFY_RESULT(table_result);
         auto table = table_result.value();
 

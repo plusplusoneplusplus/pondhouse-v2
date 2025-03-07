@@ -8,23 +8,22 @@ namespace pond::format {
 using namespace pond::common;
 
 ParquetWriter::ParquetWriter(std::shared_ptr<arrow::io::OutputStream> output,
-                           std::unique_ptr<parquet::arrow::FileWriter> writer)
+                             std::unique_ptr<parquet::arrow::FileWriter> writer)
     : output_(std::move(output)), writer_(std::move(writer)), closed_(false), total_rows_(0) {}
 
 ParquetWriter::~ParquetWriter() {
     if (!closed_) {
-        auto result = close();
+        auto result = Close();
         if (!result.ok()) {
             LOG_ERROR("Failed to close Parquet writer: %s", result.error().message().c_str());
         }
     }
 }
 
-Result<std::unique_ptr<ParquetWriter>> ParquetWriter::create(
-    std::shared_ptr<IAppendOnlyFileSystem> fs,
-    const std::string& path,
-    const std::shared_ptr<arrow::Schema>& schema,
-    parquet::WriterProperties::Builder properties) {
+Result<std::unique_ptr<ParquetWriter>> ParquetWriter::Create(std::shared_ptr<IAppendOnlyFileSystem> fs,
+                                                             const std::string& path,
+                                                             const std::shared_ptr<arrow::Schema>& schema,
+                                                             parquet::WriterProperties::Builder properties) {
     // Open the file for writing
     auto file_result = fs->OpenFile(path, true);
     if (!file_result.ok()) {
@@ -33,8 +32,7 @@ Result<std::unique_ptr<ParquetWriter>> ParquetWriter::create(
 
     // verify schema
     if (schema->num_fields() == 0) {
-        return Result<std::unique_ptr<ParquetWriter>>::failure(
-            ErrorCode::InvalidArgument, "Schema must not be empty");
+        return Result<std::unique_ptr<ParquetWriter>>::failure(ErrorCode::InvalidArgument, "Schema must not be empty");
     }
 
     // Create output stream
@@ -43,13 +41,9 @@ Result<std::unique_ptr<ParquetWriter>> ParquetWriter::create(
     // Create Parquet writer
     auto writer_props = properties.build();
     auto arrow_props = parquet::ArrowWriterProperties::Builder().build();
-    
-    auto writer_result = parquet::arrow::FileWriter::Open(
-        *schema,
-        arrow::default_memory_pool(),
-        output,
-        writer_props,
-        arrow_props);
+
+    auto writer_result =
+        parquet::arrow::FileWriter::Open(*schema, arrow::default_memory_pool(), output, writer_props, arrow_props);
 
     if (!writer_result.ok()) {
         return Result<std::unique_ptr<ParquetWriter>>::failure(
@@ -61,46 +55,42 @@ Result<std::unique_ptr<ParquetWriter>> ParquetWriter::create(
         std::unique_ptr<ParquetWriter>(new ParquetWriter(output, std::move(writer_result).ValueOrDie())));
 }
 
-Result<bool> ParquetWriter::write(const std::shared_ptr<arrow::Table>& table) {
+Result<bool> ParquetWriter::Write(const std::shared_ptr<arrow::Table>& table) {
     if (closed_) {
         return Result<bool>::failure(ErrorCode::InvalidOperation, "Writer is closed");
     }
 
     auto status = writer_->WriteTable(*table, table->num_rows());
     if (!status.ok()) {
-        return Result<bool>::failure(
-            ErrorCode::ParquetWriteFailed,
-            "Failed to write table: " + status.ToString());
+        return Result<bool>::failure(ErrorCode::ParquetWriteFailed, "Failed to write table: " + status.ToString());
     }
 
     total_rows_ += table->num_rows();
     return Result<bool>::success(true);
 }
 
-Result<bool> ParquetWriter::write(const std::shared_ptr<arrow::RecordBatch>& batch) {
+Result<bool> ParquetWriter::Write(const std::shared_ptr<arrow::RecordBatch>& batch) {
     if (closed_) {
         return Result<bool>::failure(ErrorCode::InvalidOperation, "Writer is closed");
     }
 
     auto status = writer_->WriteRecordBatch(*batch);
     if (!status.ok()) {
-        return Result<bool>::failure(
-            ErrorCode::ParquetWriteFailed,
-            "Failed to write record batch: " + status.ToString());
+        return Result<bool>::failure(ErrorCode::ParquetWriteFailed,
+                                     "Failed to write record batch: " + status.ToString());
     }
 
     total_rows_ += batch->num_rows();
     return Result<bool>::success(true);
 }
 
-Result<bool> ParquetWriter::write(
-    const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches) {
+Result<bool> ParquetWriter::Write(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches) {
     if (closed_) {
         return Result<bool>::failure(ErrorCode::InvalidOperation, "Writer is closed");
     }
 
     for (const auto& batch : batches) {
-        auto result = write(batch);
+        auto result = Write(batch);
         if (!result.ok()) {
             return result;
         }
@@ -109,24 +99,22 @@ Result<bool> ParquetWriter::write(
     return Result<bool>::success(true);
 }
 
-Result<bool> ParquetWriter::close() {
+Result<bool> ParquetWriter::Close() {
     if (closed_) {
         return Result<bool>::success(true);
     }
 
     auto status = writer_->Close();
     if (!status.ok()) {
-        return Result<bool>::failure(
-            ErrorCode::ParquetWriteFailed,
-            "Failed to close writer: " + status.ToString());
+        return Result<bool>::failure(ErrorCode::ParquetWriteFailed, "Failed to close writer: " + status.ToString());
     }
 
     closed_ = true;
     return Result<bool>::success(true);
 }
 
-std::shared_ptr<arrow::Schema> ParquetWriter::schema() const {
+std::shared_ptr<arrow::Schema> ParquetWriter::Schema() const {
     return writer_->schema();
 }
 
-} // namespace pond::format
+}  // namespace pond::format

@@ -151,7 +151,7 @@ TEST_F(DataIngestorTest, TestMultipleBatchesPersistence) {
 //      Should return appropriate error
 //
 TEST_F(DataIngestorTest, TestNonExistentFile) {
-    auto reader_result = format::ParquetReader::create(fs_, "/tmp/non_existent.parquet");
+    auto reader_result = format::ParquetReader::Create(fs_, "/tmp/non_existent.parquet");
     EXPECT_FALSE(reader_result.ok());
     EXPECT_EQ(reader_result.error().code(), common::ErrorCode::FileOpenFailed);
 }

@@ -94,12 +94,12 @@ public:
                                    const std::vector<int32_t>& expected_ids,
                                    const std::vector<std::string>& expected_names_or_dates,
                                    const std::vector<double>& expected_values) {
-        auto reader_result = format::ParquetReader::create(fs_, file_path);
+        auto reader_result = format::ParquetReader::Create(fs_, file_path);
         VERIFY_RESULT(reader_result);
         auto reader = std::move(reader_result).value();
 
         // Read the data
-        auto table_result = reader->read();
+        auto table_result = reader->Read();
         VERIFY_RESULT(table_result);
         auto table = table_result.value();
 

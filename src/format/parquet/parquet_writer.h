@@ -14,7 +14,7 @@ namespace pond::format {
 class ParquetWriter {
 public:
     // Create a new ParquetWriter instance
-    static common::Result<std::unique_ptr<ParquetWriter>> create(
+    static common::Result<std::unique_ptr<ParquetWriter>> Create(
         std::shared_ptr<common::IAppendOnlyFileSystem> fs,
         const std::string& path,
         const std::shared_ptr<arrow::Schema>& schema,
@@ -23,26 +23,25 @@ public:
     ~ParquetWriter();
 
     // Write a table to the Parquet file
-    common::Result<bool> write(const std::shared_ptr<arrow::Table>& table);
+    common::Result<bool> Write(const std::shared_ptr<arrow::Table>& table);
 
     // Write a record batch to the Parquet file
-    common::Result<bool> write(const std::shared_ptr<arrow::RecordBatch>& batch);
+    common::Result<bool> Write(const std::shared_ptr<arrow::RecordBatch>& batch);
 
     // Write multiple record batches to the Parquet file
-    common::Result<bool> write(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches);
+    common::Result<bool> Write(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches);
 
     // Close the writer and finalize the file
-    common::Result<bool> close();
+    common::Result<bool> Close();
 
     // Get the current number of rows written
-    int64_t num_rows() const { return total_rows_; }
+    int64_t NumRows() const { return total_rows_; }
 
     // Get the schema of the writer
-    std::shared_ptr<arrow::Schema> schema() const;
+    std::shared_ptr<arrow::Schema> Schema() const;
 
 private:
-    ParquetWriter(std::shared_ptr<arrow::io::OutputStream> output,
-                 std::unique_ptr<parquet::arrow::FileWriter> writer);
+    ParquetWriter(std::shared_ptr<arrow::io::OutputStream> output, std::unique_ptr<parquet::arrow::FileWriter> writer);
 
     std::shared_ptr<arrow::io::OutputStream> output_;
     std::unique_ptr<parquet::arrow::FileWriter> writer_;
@@ -50,4 +49,4 @@ private:
     int64_t total_rows_;
 };
 
-} // namespace pond::format
+}  // namespace pond::format

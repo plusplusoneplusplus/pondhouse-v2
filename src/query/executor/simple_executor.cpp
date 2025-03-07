@@ -100,7 +100,7 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
     auto reader = std::move(reader_result).value();
 
     // Read the first batch by reading the entire table and converting to a record batch
-    auto table_result = reader->read();
+    auto table_result = reader->Read();
     if (!table_result.ok()) {
         current_result_ = common::Result<DataBatchSharedPtr>::failure(table_result.error());
         return;

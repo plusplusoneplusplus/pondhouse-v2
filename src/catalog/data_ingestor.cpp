@@ -263,7 +263,7 @@ common::Result<std::string> DataIngestor::GenerateDataFilePath(
 common::Result<std::unique_ptr<format::ParquetWriter>> DataIngestor::CreateWriter(const std::string& file_path) {
     auto arrow_schema_result = format::SchemaConverter::ToArrowSchema(*current_metadata_.schema);
     RETURN_IF_ERROR_T(common::Result<std::unique_ptr<format::ParquetWriter>>, arrow_schema_result);
-    return format::ParquetWriter::create(fs_, file_path, arrow_schema_result.value());
+    return format::ParquetWriter::Create(fs_, file_path, arrow_schema_result.value());
 }
 
 common::Result<DataFile> DataIngestor::FinalizeDataFile(
@@ -326,12 +326,12 @@ common::Result<DataFile> DataIngestor::WriteBatchToFile(
     auto writer = std::move(writer_result).value();
 
     // Write the batch
-    auto write_result = writer->write({batch});
+    auto write_result = writer->Write({batch});
     RETURN_IF_ERROR_T(ReturnType, write_result);
-    auto num_records = writer->num_rows();
+    auto num_records = writer->NumRows();
 
     // Close the writer
-    auto close_result = writer->close();
+    auto close_result = writer->Close();
     RETURN_IF_ERROR_T(ReturnType, close_result);
 
     // Finalize the data file

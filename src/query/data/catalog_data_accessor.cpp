@@ -6,7 +6,7 @@ namespace pond::query {
 
 common::Result<std::unique_ptr<format::ParquetReader>> CatalogDataAccessor::GetReader(const catalog::DataFile& file) {
     // Create a ParquetReader for the file using the filesystem
-    auto reader_result = format::ParquetReader::create(fs_, file.file_path);
+    auto reader_result = format::ParquetReader::Create(fs_, file.file_path);
     if (!reader_result.ok()) {
         return common::Error(common::ErrorCode::Failure,
                              "Failed to create ParquetReader for file: " + file.file_path
