@@ -10,6 +10,7 @@
 #include "catalog/kv_catalog.h"
 #include "common/memory_append_only_fs.h"
 #include "kv/db.h"
+#include "query/data/arrow_util.h"
 #include "query/data/catalog_data_accessor.h"
 #include "query_test_helper.h"
 #include "test_helper.h"
@@ -27,6 +28,11 @@ protected:
 
         // Create the executor
         executor_ = std::make_unique<SimpleExecutor>(query_context_->catalog_, data_accessor_);
+
+        schema_arrow_ = arrow::schema({arrow::field("id", arrow::int32()),
+                                       arrow::field("name", arrow::utf8()),
+                                       arrow::field("age", arrow::int32()),
+                                       arrow::field("salary", arrow::float64())});
 
         // Setup the test table and ingest data
         SetupTestTable();
@@ -70,16 +76,65 @@ protected:
         ASSERT_OK(age_builder.Finish(&age_array));
         ASSERT_OK(salary_builder.Finish(&salary_array));
 
-        auto schema = arrow::schema({arrow::field("id", arrow::int32()),
-                                     arrow::field("name", arrow::utf8()),
-                                     arrow::field("age", arrow::int32()),
-                                     arrow::field("salary", arrow::float64())});
-
-        auto record_batch = arrow::RecordBatch::Make(schema, 5, {id_array, name_array, age_array, salary_array});
+        auto record_batch = arrow::RecordBatch::Make(schema_arrow_, 5, {id_array, name_array, age_array, salary_array});
 
         // Ingest the batch
         auto ingest_result = ingestor->IngestBatch(record_batch);
         VERIFY_RESULT(ingest_result);
+    }
+
+    // Sets up multiple test files with sequential data
+    void SetupMultipleFiles(int num_files, int rows_per_file) {
+        // Create a table "multi_users" in the catalog with the same schema as "users"
+        auto create_result = query_context_->catalog_->CreateTable(
+            "multi_users", schema_, query_context_->partition_spec_, "test_catalog/multi_users");
+        VERIFY_RESULT(create_result);
+
+        // For each file, create a data ingestor and ingest a batch with unique data
+        for (int file_id = 0; file_id < num_files; file_id++) {
+            // Create a data ingestor for the multi_users table
+            auto ingestor_result =
+                catalog::DataIngestor::Create(query_context_->catalog_, query_context_->fs_, "multi_users");
+            VERIFY_RESULT(ingestor_result);
+            auto ingestor = std::move(ingestor_result).value();
+
+            // Create record batch with data for this file
+            arrow::Int32Builder id_builder;
+            arrow::StringBuilder name_builder;
+            arrow::Int32Builder age_builder;
+            arrow::DoubleBuilder value_builder;
+
+            // Each file has rows_per_file rows with sequential IDs and file-specific data
+            for (int i = 0; i < rows_per_file; i++) {
+                int id = file_id * rows_per_file + i;
+                std::string name = "user_" + std::to_string(file_id) + "_" + std::to_string(i);
+                int age = 20 + ((file_id * rows_per_file + i) % 30);  // Ages between 20-49
+                double value = (file_id * rows_per_file + i) * 1.5;
+
+                ASSERT_OK(id_builder.Append(id));
+                ASSERT_OK(name_builder.Append(name));
+                ASSERT_OK(age_builder.Append(age));
+                ASSERT_OK(value_builder.Append(value));
+            }
+
+            std::shared_ptr<arrow::Array> id_array = id_builder.Finish().ValueOrDie();
+            std::shared_ptr<arrow::Array> name_array = name_builder.Finish().ValueOrDie();
+            std::shared_ptr<arrow::Array> age_array = age_builder.Finish().ValueOrDie();
+            std::shared_ptr<arrow::Array> value_array = value_builder.Finish().ValueOrDie();
+
+            auto record_batch =
+                arrow::RecordBatch::Make(schema_arrow_, rows_per_file, {id_array, name_array, age_array, value_array});
+
+            // Ingest the batch
+            auto ingest_result = ingestor->IngestBatch(record_batch);
+            VERIFY_RESULT(ingest_result);
+        }
+    }
+
+    // Creates a scan plan for multi-file table
+    std::shared_ptr<PhysicalPlanNode> CreateMultiFileScanPlan() {
+        // Create a simple sequential scan plan for the multi_users table
+        return std::make_shared<PhysicalSequentialScanNode>("multi_users", *schema_);
     }
 
     std::shared_ptr<PhysicalPlanNode> CreateScanPlan() {
@@ -90,6 +145,7 @@ protected:
     std::shared_ptr<DataAccessor> data_accessor_;
     std::unique_ptr<SimpleExecutor> executor_;
     std::shared_ptr<common::Schema> schema_;
+    std::shared_ptr<arrow::Schema> schema_arrow_;
     std::unique_ptr<QueryTestContext> query_context_;
 };
 
@@ -314,6 +370,77 @@ TEST_F(SimpleExecutorTest, ExecuteSQLQueryWithFilter) {
     ASSERT_TRUE(has_charlie) << "Charlie (age 35) should be in the filtered result";
     ASSERT_TRUE(has_david) << "David (age 40) should be in the filtered result";
     ASSERT_TRUE(has_eve) << "Eve (age 45) should be in the filtered result";
+}
+
+//
+// Test Setup:
+//      Create multiple files with sequential data and execute a query that spans all files
+// Test Result:
+//      Execute returns a DataBatch with data from all files with correct concatenation
+//
+TEST_F(SimpleExecutorTest, MultiFileQuery) {
+    // Setup 3 files with 5 rows each
+    SetupMultipleFiles(3, 5);
+
+    // Create a simple scan plan
+    auto plan = CreateMultiFileScanPlan();
+
+    // Execute the plan
+    auto result = executor_->execute(plan);
+    ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents - should have 15 rows (3 files * 5 rows)
+    ASSERT_EQ(batch->num_rows(), 15) << "Batch should have 15 rows";
+    ASSERT_EQ(batch->num_columns(), schema_->Fields().size())
+        << "Batch should have " << schema_->Fields().size() << " columns";
+
+    // Verify the id column (assuming first column is 'id') has sequential values
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+    for (int i = 0; i < 15; i++) {
+        ASSERT_EQ(id_array->Value(i), i) << "ID at index " << i << " should be " << i;
+    }
+}
+
+//
+// Test Setup:
+//      Create multiple files and execute a query with a filter predicate
+// Test Result:
+//      Execute returns a DataBatch with only the rows matching the filter from all files
+//
+TEST_F(SimpleExecutorTest, MultiFileQueryWithFilter) {
+    // Setup 3 files with 5 rows each
+    SetupMultipleFiles(3, 5);
+
+    // Add a filter: id > 7 (should return the last 7 rows)
+    auto id_column = common::MakeColumn("", "id");
+    auto constant = common::MakeIntegerConstant(7);
+    auto predicate = common::MakeComparison(common::BinaryOpType::Greater, id_column, constant);
+
+    // Create a scan plan
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("multi_users", *schema_, predicate);
+
+    // Execute the plan
+    auto result = executor_->execute(scan_node);
+    VERIFY_RESULT(result);
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents - should have 7 rows (id > 7 from total of 15 rows)
+    ASSERT_EQ(batch->num_rows(), 7) << "Batch should have 7 rows";
+    ASSERT_EQ(batch->num_columns(), schema_->Fields().size())
+        << "Batch should have " << schema_->Fields().size() << " columns";
+
+    // Verify data - IDs should be 8-14
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+    for (int i = 0; i < 7; i++) {
+        ASSERT_EQ(id_array->Value(i), i + 8) << "ID at index " << i << " should be " << (i + 8);
+    }
 }
 
 }  // namespace pond::query
