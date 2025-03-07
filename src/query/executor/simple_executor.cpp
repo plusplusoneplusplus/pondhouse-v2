@@ -71,7 +71,7 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
         return;
     }
 
-    // If there are no files, return an empty result
+    // If the table has no files, return an empty result
     if (files_result.value().empty()) {
         // Create empty batch with the schema using ArrowUtil
         auto empty_batch_result = ArrowUtil::CreateEmptyBatch(node.OutputSchema());
@@ -86,50 +86,70 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
         return;
     }
 
-    // Use the first file for this simple implementation
-    const auto& file = files_result.value()[0];
+    // Process all files in the table
+    const auto& files = files_result.value();
 
-    // Create a reader for the file
-    auto reader_result = data_accessor_->GetReader(file);
-    if (!reader_result.ok()) {
-        current_result_ = common::Result<DataBatchSharedPtr>::failure(reader_result.error());
-        return;
-    }
+    // Create vectors to collect all arrays and row counts
+    std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+    int64_t total_rows = 0;
 
-    // Get the reader
-    auto reader = std::move(reader_result).value();
-
-    // Read the first batch by reading the entire table and converting to a record batch
-    auto table_result = reader->Read();
-    if (!table_result.ok()) {
-        current_result_ = common::Result<DataBatchSharedPtr>::failure(table_result.error());
-        return;
-    }
-
-    // Convert the table to a record batch
-    std::shared_ptr<arrow::Table> table = table_result.value();
-    if (table->num_rows() > 0) {
-        arrow::TableBatchReader reader(*table);
-        std::shared_ptr<arrow::RecordBatch> batch;
-        auto status = reader.ReadNext(&batch);
-        if (!status.ok()) {
-            current_result_ = common::Error(common::ErrorCode::Failure,
-                                            "Failed to convert table to record batch: " + status.ToString());
+    // Process each file
+    for (const auto& file : files) {
+        // Create a reader for the file
+        auto reader_result = data_accessor_->GetReader(file);
+        if (!reader_result.ok()) {
+            current_result_ = common::Result<DataBatchSharedPtr>::failure(reader_result.error());
             return;
         }
-        current_batch_ = batch;
 
-        // If the scan node has a predicate, apply it directly here (predicate pushdown)
-        if (node.Predicate()) {
-            auto filter_result = ArrowUtil::ApplyPredicate(current_batch_, node.Predicate());
-            if (!filter_result.ok()) {
-                current_result_ = common::Result<DataBatchSharedPtr>::failure(filter_result.error());
-                return;
-            }
-            current_batch_ = filter_result.value();
+        // Get the reader
+        auto reader = std::move(reader_result).value();
+
+        // Use the batch reader interface
+        auto batch_reader_result = reader->GetBatchReader();
+        if (!batch_reader_result.ok()) {
+            current_result_ = common::Result<DataBatchSharedPtr>::failure(batch_reader_result.error());
+            return;
         }
-    } else {
-        // Create empty batch with the schema using ArrowUtil
+
+        auto batch_reader = std::move(batch_reader_result).value();
+
+        // Read all batches from this file
+        std::shared_ptr<arrow::RecordBatch> batch;
+        auto status = batch_reader->ReadNext(&batch);
+
+        while (status.ok() && batch != nullptr) {
+            // Skip empty batches
+            if (batch->num_rows() > 0) {
+                // Apply predicate if present (predicate pushdown)
+                if (node.Predicate()) {
+                    auto filter_result = ArrowUtil::ApplyPredicate(batch, node.Predicate());
+                    if (!filter_result.ok()) {
+                        current_result_ = common::Result<DataBatchSharedPtr>::failure(filter_result.error());
+                        return;
+                    }
+                    batch = filter_result.value();
+                }
+
+                // If the batch still has rows after filtering, add it to our collection
+                if (batch->num_rows() > 0) {
+                    batches.push_back(batch);
+                    total_rows += batch->num_rows();
+                }
+            }
+
+            // Read the next batch
+            status = batch_reader->ReadNext(&batch);
+        }
+
+        if (!status.ok()) {
+            current_result_ = common::Error(common::ErrorCode::Failure, "Failed to read batch: " + status.ToString());
+            return;
+        }
+    }
+
+    // If we didn't collect any data, return an empty batch
+    if (batches.empty() || total_rows == 0) {
         auto empty_batch_result = ArrowUtil::CreateEmptyBatch(node.OutputSchema());
         if (!empty_batch_result.ok()) {
             current_result_ = common::Error(common::ErrorCode::Failure,
@@ -138,6 +158,16 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
         }
 
         current_batch_ = empty_batch_result.value();
+    } else {
+        // Use ArrowUtil to concatenate all the batches
+        auto concat_result = ArrowUtil::ConcatenateBatches(batches);
+        if (!concat_result.ok()) {
+            current_result_ = common::Result<DataBatchSharedPtr>::failure(concat_result.error());
+            return;
+        }
+
+        current_batch_ = concat_result.value();
+        LOG_VERBOSE("Concatenated %d batches with total of %d rows", batches.size(), current_batch_->num_rows());
     }
 
     current_result_ = common::Result<DataBatchSharedPtr>::success(current_batch_);

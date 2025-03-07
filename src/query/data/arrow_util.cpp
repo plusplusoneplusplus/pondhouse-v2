@@ -6,6 +6,7 @@
 #include <arrow/type_traits.h>
 
 #include "common/error.h"
+#include "common/log.h"
 #include "format/parquet/schema_converter.h"
 
 namespace pond::query {
@@ -95,8 +96,8 @@ arrow::Result<std::shared_ptr<arrow::Array>> ArrowUtil::CreateEmptyArray(common:
     return it->second();
 }
 
-common::Result<std::shared_ptr<arrow::RecordBatch>> ArrowUtil::CreateEmptyBatch(const common::Schema& schema) {
-    using ResultType = common::Result<std::shared_ptr<arrow::RecordBatch>>;
+common::Result<DataBatchSharedPtr> ArrowUtil::CreateEmptyBatch(const common::Schema& schema) {
+    using ResultType = common::Result<DataBatchSharedPtr>;
 
     // Create empty arrays for each field
     std::vector<std::shared_ptr<arrow::Array>> columns;
@@ -116,6 +117,12 @@ common::Result<std::shared_ptr<arrow::RecordBatch>> ArrowUtil::CreateEmptyBatch(
 
     // Create record batch
     return arrow::RecordBatch::Make(arrow_schema_result.value(), 0, columns);
+}
+
+DataBatchSharedPtr ArrowUtil::CreateEmptyBatch() {
+    auto empty_schema = arrow::schema({});
+    std::vector<std::shared_ptr<arrow::Array>> empty_columns;
+    return arrow::RecordBatch::Make(empty_schema, 0, empty_columns);
 }
 
 common::Result<DataBatchSharedPtr> ArrowUtil::ApplyPredicate(const DataBatchSharedPtr& batch,
@@ -243,6 +250,59 @@ common::Result<DataBatchSharedPtr> ArrowUtil::ApplyPredicate(const DataBatchShar
     }
 
     return common::Error(common::ErrorCode::NotImplemented, "Unsupported predicate expression type");
+}
+
+common::Result<DataBatchSharedPtr> ArrowUtil::ConcatenateBatches(const std::vector<DataBatchSharedPtr>& batches) {
+    using ResultType = common::Result<DataBatchSharedPtr>;
+
+    // Handle empty input case
+    if (batches.empty()) {
+        return ResultType::success(CreateEmptyBatch());
+    }
+
+    // If there's only one batch, return it directly
+    if (batches.size() == 1) {
+        return ResultType::success(batches[0]);
+    }
+
+    // Get total number of rows
+    int64_t total_rows = 0;
+    for (const auto& batch : batches) {
+        total_rows += batch->num_rows();
+    }
+
+    // First, ensure all batches have the same schema
+    for (size_t i = 1; i < batches.size(); i++) {
+        if (!batches[0]->schema()->Equals(*batches[i]->schema())) {
+            return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                       "Cannot concatenate batches with different schemas");
+        }
+    }
+
+    // Create arrays to hold the concatenated columns
+    std::vector<std::shared_ptr<arrow::Array>> concatenated_arrays;
+    concatenated_arrays.resize(batches[0]->num_columns());
+
+    // For each column, concatenate the arrays from all batches
+    for (int col = 0; col < batches[0]->num_columns(); col++) {
+        // Collect arrays for this column from all batches
+        std::vector<std::shared_ptr<arrow::Array>> arrays_to_concat;
+        for (const auto& batch : batches) {
+            arrays_to_concat.push_back(batch->column(col));
+        }
+
+        // Concatenate the arrays
+        arrow::Result<std::shared_ptr<arrow::Array>> concat_result = arrow::Concatenate(arrays_to_concat);
+        if (!concat_result.ok()) {
+            return ResultType::failure(common::ErrorCode::Failure,
+                                       "Failed to concatenate arrays: " + concat_result.status().ToString());
+        }
+
+        concatenated_arrays[col] = concat_result.ValueOrDie();
+    }
+
+    // Create a new record batch with the concatenated arrays
+    return ResultType::success(arrow::RecordBatch::Make(batches[0]->schema(), total_rows, concatenated_arrays));
 }
 
 }  // namespace pond::query
