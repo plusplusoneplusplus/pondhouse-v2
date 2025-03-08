@@ -1,8 +1,8 @@
-#include <memory>
+
 
 #include "query/planner/logical_plan_printer.h"
 #include "query/planner/logical_planner.h"
-#include "query_test_helper.h"
+#include "query_test_context.h"
 #include "SQLParser.h"
 #include "test_helper.h"
 
@@ -11,31 +11,15 @@ using namespace pond::query;
 
 namespace pond::query {
 
-class LogicalOptimizerTest : public ::testing::Test {
+class LogicalOptimizerTest : public QueryTestContext {
 public:
-    void SetUp() override {
-        context_ = std::make_unique<QueryTestContext>("test_catalog");
-        context_->SetupUsersTable();
-        context_->SetupOrdersTable();
-    }
-
-    Result<std::shared_ptr<LogicalPlanNode>> PlanLogical(const std::string& query, bool optimize = false) {
-        return context_->PlanLogical(query, optimize);
-    }
-
-    Result<std::shared_ptr<LogicalPlanNode>> Optimize(std::shared_ptr<LogicalPlanNode> plan) {
-        return context_->Optimize(plan);
-    }
-
-    Catalog* catalog() { return context_->catalog_.get(); }
-
-    std::unique_ptr<QueryTestContext> context_;
+    LogicalOptimizerTest() : QueryTestContext("test_catalog") {}
 };
 
 TEST_F(LogicalOptimizerTest, PredicatePushdown) {
     LOG_STATUS("Running testLogicalPlanPredicatePushdown...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
     LogicalOptimizer optimizer(LogicalOptimizerOptions::OnlyPredicatePushdown());
 
     // Query with filter that can be pushed down
@@ -204,7 +188,7 @@ TEST_F(LogicalOptimizerTest, JoinPredicatePushdown) {
 TEST_F(LogicalOptimizerTest, ColumnPruning) {
     LOG_STATUS("Running testLogicalPlanColumnPruning...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
     LogicalOptimizer optimizer(LogicalOptimizerOptions::OnlyColumnPruning());
 
     // Query that only needs some columns
@@ -240,7 +224,7 @@ TEST_F(LogicalOptimizerTest, ColumnPruning) {
 TEST_F(LogicalOptimizerTest, ConstantFolding) {
     LOG_STATUS("Running testLogicalPlanConstantFolding...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
     LogicalOptimizer optimizer(LogicalOptimizerOptions::OnlyConstantFolding());
 
     // Query with constant expression in filter
@@ -277,7 +261,7 @@ TEST_F(LogicalOptimizerTest, ConstantFolding) {
 TEST_F(LogicalOptimizerTest, JoinReordering) {
     LOG_STATUS("Running testLogicalPlanJoinReordering...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
     LogicalOptimizer optimizer(LogicalOptimizerOptions{
         .enable_predicate_pushdown = true,
         .enable_column_pruning = false,
@@ -341,7 +325,7 @@ TEST_F(LogicalOptimizerTest, JoinReordering) {
 TEST_F(LogicalOptimizerTest, ConjunctivePredicatePushdown) {
     LOG_STATUS("Running testLogicalPlanConjunctivePredicatePushdown...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
     LogicalOptimizer optimizer(LogicalOptimizerOptions{
         .enable_projection_pushdown = false,
     });
@@ -413,7 +397,7 @@ TEST_F(LogicalOptimizerTest, ConjunctivePredicatePushdown) {
 TEST_F(LogicalOptimizerTest, ColumnPruningWithJoin) {
     LOG_STATUS("Running testLogicalPlanColumnPruningWithJoin...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
     LogicalOptimizer optimizer(LogicalOptimizerOptions::OnlyColumnPruning());
 
     // Query that only needs specific columns from both tables
@@ -471,7 +455,7 @@ TEST_F(LogicalOptimizerTest, ColumnPruningWithJoin) {
 TEST_F(LogicalOptimizerTest, LikeConstantFolding) {
     LOG_STATUS("Running testLogicalPlanLikeConstantFolding...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
     LogicalOptimizer optimizer(LogicalOptimizerOptions::OnlyConstantFolding());
 
     // Test cases for LIKE constant folding
@@ -521,7 +505,7 @@ TEST_F(LogicalOptimizerTest, LikeConstantFolding) {
 TEST_F(LogicalOptimizerTest, ProjectionPushdown) {
     LOG_STATUS("Running testLogicalPlanProjectionPushdown...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
     LogicalOptimizer optimizer(LogicalOptimizerOptions::OnlyProjectionPushdown());
 
     // Test cases for projection pushdown
@@ -599,7 +583,7 @@ TEST_F(LogicalOptimizerTest, ProjectionPushdown) {
 TEST_F(LogicalOptimizerTest, MultipleOptimizations) {
     LOG_STATUS("Running testLogicalPlanMultipleOptimizations...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
     LogicalOptimizer optimizer(LogicalOptimizerOptions{});
 
     // Query that can benefit from multiple optimizations
@@ -658,7 +642,7 @@ TEST_F(LogicalOptimizerTest, MultipleOptimizations) {
 TEST_F(LogicalOptimizerTest, Printer) {
     LOG_STATUS("Running testLogicalPlanPrinter...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
 
     // Test a complex query that exercises all node types
     const std::string query = "SELECT users.name, orders.amount "
@@ -692,7 +676,7 @@ TEST_F(LogicalOptimizerTest, Printer) {
 TEST_F(LogicalOptimizerTest, LimitPushdown) {
     LOG_STATUS("Running testLogicalPlanLimitPushdown...");
 
-    LogicalPlanner planner(*catalog());
+    LogicalPlanner planner(*catalog_);
     LogicalOptimizer optimizer(LogicalOptimizerOptions::OnlyLimitPushdown());
 
     // Query with limit that can be pushed down through projection

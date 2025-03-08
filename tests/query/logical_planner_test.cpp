@@ -2,7 +2,7 @@
 
 #include "common/schema.h"
 #include "query/planner/logical_optimizer.h"
-#include "query/query_test_helper.h"
+#include "query/query_test_context.h"
 #include "test_helper.h"
 
 using namespace pond::catalog;
@@ -11,21 +11,9 @@ using namespace pond::common;
 
 namespace pond::query {
 
-class LogicalPlannerTest : public ::testing::Test {
+class LogicalPlannerTest : public QueryTestContext {
 protected:
-    void SetUp() override {
-        context_ = std::make_unique<QueryTestContext>("test_catalog");
-        context_->SetupUsersTable();
-        context_->SetupOrdersTable();
-    }
-
-    Result<std::shared_ptr<LogicalPlanNode>> PlanLogical(const std::string& query, bool optimize = false) {
-        return context_->PlanLogical(query, optimize);
-    }
-
-    Catalog* catalog() { return context_->catalog_.get(); }
-
-    std::unique_ptr<QueryTestContext> context_;
+    LogicalPlannerTest() : QueryTestContext("test_catalog") {}
 };
 
 //

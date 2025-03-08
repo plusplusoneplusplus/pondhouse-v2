@@ -12,27 +12,23 @@
 #include "kv/db.h"
 #include "query/data/arrow_util.h"
 #include "query/data/catalog_data_accessor.h"
-#include "query_test_helper.h"
+#include "query/query_test_context.h"
 #include "test_helper.h"
 
 namespace pond::query {
 
-class SimpleExecutorTest : public ::testing::Test {
+class SimpleExecutorTest : public QueryTestContext {
 protected:
+    SimpleExecutorTest() : QueryTestContext("test_catalog") {}
+
     void SetUp() override {
-        // Create the query test context
-        query_context_ = std::make_unique<QueryTestContext>("test_catalog");
+        QueryTestContext::SetUp();
 
         // Create data accessor using the context's catalog
-        data_accessor_ = std::make_shared<CatalogDataAccessor>(query_context_->catalog_, query_context_->fs_);
+        data_accessor_ = std::make_shared<CatalogDataAccessor>(catalog_, fs_);
 
         // Create the executor
-        executor_ = std::make_unique<SimpleExecutor>(query_context_->catalog_, data_accessor_);
-
-        schema_arrow_ = arrow::schema({arrow::field("id", arrow::int32()),
-                                       arrow::field("name", arrow::utf8()),
-                                       arrow::field("age", arrow::int32()),
-                                       arrow::field("salary", arrow::float64())});
+        executor_ = std::make_unique<SimpleExecutor>(catalog_, data_accessor_);
 
         // Setup the test table and ingest data
         SetupTestTable();
@@ -40,21 +36,12 @@ protected:
     }
 
     void SetupTestTable() {
-        // Use the QueryTestContext to set up the users table with the schema we need
-        query_context_->SetupUsersTable();
-
         // Get the table schema from the context
-        auto schema_result = query_context_->catalog_->LoadTable("users");
+        auto schema_result = catalog_->LoadTable("users");
         ASSERT_TRUE(schema_result.ok()) << "Failed to load table schema: " << schema_result.error().message();
-        schema_ = schema_result.value().schema;
     }
 
     void IngestTestData() {
-        // Create data ingestor using the context's catalog
-        auto ingestor_result = catalog::DataIngestor::Create(query_context_->catalog_, query_context_->fs_, "users");
-        VERIFY_RESULT(ingestor_result);
-        auto ingestor = std::move(ingestor_result).value();
-
         // Create test data
         arrow::Int32Builder id_builder;
         arrow::StringBuilder name_builder;
@@ -76,28 +63,17 @@ protected:
         ASSERT_OK(age_builder.Finish(&age_array));
         ASSERT_OK(salary_builder.Finish(&salary_array));
 
-        auto record_batch = arrow::RecordBatch::Make(schema_arrow_, 5, {id_array, name_array, age_array, salary_array});
+        auto record_batch =
+            arrow::RecordBatch::Make(GetArrowSchema("users"), 5, {id_array, name_array, age_array, salary_array});
 
         // Ingest the batch
-        auto ingest_result = ingestor->IngestBatch(record_batch);
-        VERIFY_RESULT(ingest_result);
+        IngestData("users", record_batch);
     }
 
     // Sets up multiple test files with sequential data
     void SetupMultipleFiles(int num_files, int rows_per_file) {
-        // Create a table "multi_users" in the catalog with the same schema as "users"
-        auto create_result = query_context_->catalog_->CreateTable(
-            "multi_users", schema_, query_context_->partition_spec_, "test_catalog/multi_users");
-        VERIFY_RESULT(create_result);
-
         // For each file, create a data ingestor and ingest a batch with unique data
         for (int file_id = 0; file_id < num_files; file_id++) {
-            // Create a data ingestor for the multi_users table
-            auto ingestor_result =
-                catalog::DataIngestor::Create(query_context_->catalog_, query_context_->fs_, "multi_users");
-            VERIFY_RESULT(ingestor_result);
-            auto ingestor = std::move(ingestor_result).value();
-
             // Create record batch with data for this file
             arrow::Int32Builder id_builder;
             arrow::StringBuilder name_builder;
@@ -122,31 +98,27 @@ protected:
             std::shared_ptr<arrow::Array> age_array = age_builder.Finish().ValueOrDie();
             std::shared_ptr<arrow::Array> value_array = value_builder.Finish().ValueOrDie();
 
-            auto record_batch =
-                arrow::RecordBatch::Make(schema_arrow_, rows_per_file, {id_array, name_array, age_array, value_array});
+            auto record_batch = arrow::RecordBatch::Make(
+                GetArrowSchema("multi_users"), rows_per_file, {id_array, name_array, age_array, value_array});
 
             // Ingest the batch
-            auto ingest_result = ingestor->IngestBatch(record_batch);
-            VERIFY_RESULT(ingest_result);
+            IngestData("multi_users", record_batch);
         }
     }
 
     // Creates a scan plan for multi-file table
     std::shared_ptr<PhysicalPlanNode> CreateMultiFileScanPlan() {
         // Create a simple sequential scan plan for the multi_users table
-        return std::make_shared<PhysicalSequentialScanNode>("multi_users", *schema_);
+        return std::make_shared<PhysicalSequentialScanNode>("multi_users", *GetSchema("multi_users"));
     }
 
     std::shared_ptr<PhysicalPlanNode> CreateScanPlan() {
         // Create a simple sequential scan plan for the users table using the schema from the context
-        return std::make_shared<PhysicalSequentialScanNode>("users", *schema_);
+        return std::make_shared<PhysicalSequentialScanNode>("users", *GetSchema("users"));
     }
 
     std::shared_ptr<DataAccessor> data_accessor_;
     std::unique_ptr<SimpleExecutor> executor_;
-    std::shared_ptr<common::Schema> schema_;
-    std::shared_ptr<arrow::Schema> schema_arrow_;
-    std::unique_ptr<QueryTestContext> query_context_;
 };
 
 //
@@ -199,8 +171,8 @@ TEST_F(SimpleExecutorTest, SelectFromEmptyTable) {
                             .AddField("col2", common::ColumnType::STRING)
                             .Build();
 
-    auto create_result = query_context_->catalog_->CreateTable(
-        "empty_table", empty_schema, query_context_->partition_spec_, "test_catalog/empty_table");
+    auto create_result =
+        catalog_->CreateTable("empty_table", empty_schema, partition_spec_, "test_catalog/empty_table");
     VERIFY_RESULT(create_result);
 
     // Create a scan plan for the empty table
@@ -226,7 +198,7 @@ TEST_F(SimpleExecutorTest, SelectFromEmptyTable) {
 //
 TEST_F(SimpleExecutorTest, InvalidTable) {
     // Create a scan plan for a non-existent table
-    auto plan = std::make_shared<PhysicalSequentialScanNode>("non_existent_table", *schema_);
+    auto plan = std::make_shared<PhysicalSequentialScanNode>("non_existent_table", *GetSchema("users"));
 
     // Execute the plan
     auto result = executor_->execute(plan);
@@ -245,7 +217,7 @@ TEST_F(SimpleExecutorTest, ExecuteSQLQuery) {
     std::string sql_query = "SELECT * FROM users";
 
     // Plan the query and get the physical plan
-    auto physical_plan_result = query_context_->PlanPhysical(sql_query);
+    auto physical_plan_result = PlanPhysical(sql_query);
     ASSERT_TRUE(physical_plan_result.ok()) << "Physical planning failed: " << physical_plan_result.error().message();
     auto physical_plan = physical_plan_result.value();
 
@@ -292,7 +264,7 @@ TEST_F(SimpleExecutorTest, ExecuteSQLQueryWithFilter) {
     std::string sql_query = "SELECT * FROM users WHERE age > 30";
 
     // Plan the query and get the physical plan
-    auto physical_plan_result = query_context_->PlanPhysical(sql_query);
+    auto physical_plan_result = PlanPhysical(sql_query);
     ASSERT_TRUE(physical_plan_result.ok()) << "Physical planning failed: " << physical_plan_result.error().message();
     auto physical_plan = physical_plan_result.value();
 
@@ -384,6 +356,7 @@ TEST_F(SimpleExecutorTest, MultiFileQuery) {
 
     // Create a simple scan plan
     auto plan = CreateMultiFileScanPlan();
+    auto schema = GetSchema("multi_users");
 
     // Execute the plan
     auto result = executor_->execute(plan);
@@ -395,8 +368,7 @@ TEST_F(SimpleExecutorTest, MultiFileQuery) {
 
     // Verify batch contents - should have 15 rows (3 files * 5 rows)
     ASSERT_EQ(batch->num_rows(), 15) << "Batch should have 15 rows";
-    ASSERT_EQ(batch->num_columns(), schema_->Fields().size())
-        << "Batch should have " << schema_->Fields().size() << " columns";
+    ASSERT_EQ(batch->num_columns(), schema->FieldCount()) << "Batch should have " << schema->FieldCount() << " columns";
 
     // Verify the id column (assuming first column is 'id') has sequential values
     auto id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
@@ -420,8 +392,10 @@ TEST_F(SimpleExecutorTest, MultiFileQueryWithFilter) {
     auto constant = common::MakeIntegerConstant(7);
     auto predicate = common::MakeComparison(common::BinaryOpType::Greater, id_column, constant);
 
+    auto schema = GetSchema("multi_users");
+
     // Create a scan plan
-    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("multi_users", *schema_, predicate);
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("multi_users", *schema, predicate);
 
     // Execute the plan
     auto result = executor_->execute(scan_node);
@@ -433,8 +407,7 @@ TEST_F(SimpleExecutorTest, MultiFileQueryWithFilter) {
 
     // Verify batch contents - should have 7 rows (id > 7 from total of 15 rows)
     ASSERT_EQ(batch->num_rows(), 7) << "Batch should have 7 rows";
-    ASSERT_EQ(batch->num_columns(), schema_->Fields().size())
-        << "Batch should have " << schema_->Fields().size() << " columns";
+    ASSERT_EQ(batch->num_columns(), schema->FieldCount()) << "Batch should have " << schema->FieldCount() << " columns";
 
     // Verify data - IDs should be 8-14
     auto id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));

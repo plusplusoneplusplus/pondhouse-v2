@@ -2,32 +2,16 @@
 
 #include <memory>
 
-#include "query/query_test_helper.h"
+#include "query/query_test_context.h"
 #include "test_helper.h"
 
 using namespace pond::catalog;
 
 namespace pond::query {
 
-class PhysicalPlannerTest : public ::testing::Test {
+class PhysicalPlannerTest : public QueryTestContext {
 public:
-    void SetUp() override {
-        context_ = std::make_unique<QueryTestContext>("test_catalog");
-        context_->SetupUsersTable();
-        context_->SetupOrdersTable();
-    }
-
-    Result<std::shared_ptr<LogicalPlanNode>> PlanLogical(const std::string& query, bool optimize = true) {
-        return context_->PlanLogical(query, optimize);
-    }
-
-    Result<std::shared_ptr<PhysicalPlanNode>> PlanPhysical(const std::string& query, bool optimize = true) {
-        return context_->PlanPhysical(query, optimize);
-    }
-
-    Catalog* catalog() { return context_->catalog_.get(); }
-
-    std::unique_ptr<QueryTestContext> context_;
+    PhysicalPlannerTest() : QueryTestContext("test_catalog") {}
 };
 
 TEST_F(PhysicalPlannerTest, PhysicalPlanBasicSelect) {
@@ -36,7 +20,7 @@ TEST_F(PhysicalPlannerTest, PhysicalPlanBasicSelect) {
     // Parse SQL
     const std::string query = "SELECT name, age FROM users WHERE age > 30";
 
-    auto physical_plan = PlanPhysical(query);
+    auto physical_plan = PlanPhysical(query, true /* optimize */);
     VERIFY_RESULT(physical_plan);
 
     // Verify physical plan structure
@@ -72,7 +56,7 @@ TEST_F(PhysicalPlannerTest, PhysicalPlanPrinter) {
                               "ORDER BY total DESC "
                               "LIMIT 10";
 
-    auto physical_plan = PlanPhysical(query);
+    auto physical_plan = PlanPhysical(query, true /* optimize */);
     VERIFY_RESULT(physical_plan);
 
     // Print the physical plan
@@ -94,12 +78,12 @@ TEST_F(PhysicalPlannerTest, PredicatePushdown) {
     // Parse SQL with multiple predicates
     const std::string query = "SELECT * FROM users WHERE age > 30 AND salary < 100000";
 
-    auto logical_plan = PlanLogical(query);
+    auto logical_plan = PlanLogical(query, true /* optimize */);
     VERIFY_RESULT(logical_plan);
 
     std::cout << "Logical plan: " << GetLogicalPlanUserFriendlyString(*logical_plan.value()) << std::endl;
 
-    auto physical_plan = PlanPhysical(query);
+    auto physical_plan = PlanPhysical(query, true /* optimize */);
     VERIFY_RESULT(physical_plan);
 
     std::cout << "Physical plan: " << GetPhysicalPlanUserFriendlyString(*physical_plan.value()) << std::endl;
@@ -127,7 +111,7 @@ TEST_F(PhysicalPlannerTest, ProjectionPushdown) {
     // Parse SQL with specific column projections
     const std::string query = "SELECT name, age FROM users";
 
-    auto physical_plan = PlanPhysical(query);
+    auto physical_plan = PlanPhysical(query, true /* optimize */);
     VERIFY_RESULT(physical_plan);
 
     // Print the physical plan
@@ -157,12 +141,12 @@ TEST_F(PhysicalPlannerTest, PhysicalPlanHashJoin) {
     // Parse SQL with inner join
     const std::string query = "SELECT * FROM users JOIN orders ON users.id = orders.user_id";
 
-    auto logical_plan = PlanLogical(query);
+    auto logical_plan = PlanLogical(query, true /* optimize */);
     VERIFY_RESULT(logical_plan);
 
     std::cout << "Logical plan: " << GetLogicalPlanUserFriendlyString(*logical_plan.value()) << std::endl;
 
-    auto physical_plan = PlanPhysical(query);
+    auto physical_plan = PlanPhysical(query, true /* optimize */);
     VERIFY_RESULT(physical_plan);
 
     // Verify physical plan structure
@@ -219,7 +203,7 @@ TEST_F(PhysicalPlannerTest, PredicatePushdownWithJoin) {
                               "JOIN orders ON users.id = orders.user_id "
                               "WHERE users.age > 30 AND orders.amount > 100";
 
-    auto physical_plan = PlanPhysical(query);
+    auto physical_plan = PlanPhysical(query, true /* optimize */);
     VERIFY_RESULT(physical_plan);
 
     // Verify physical plan structure
@@ -267,7 +251,7 @@ TEST_F(PhysicalPlannerTest, PhysicalPlanAggregation) {
     {
         const std::string query = "SELECT user_id, SUM(amount) FROM orders GROUP BY user_id";
 
-        auto physical_plan = PlanPhysical(query);
+        auto physical_plan = PlanPhysical(query, true /* optimize */);
         VERIFY_RESULT(physical_plan);
 
         // Print the physical plan
