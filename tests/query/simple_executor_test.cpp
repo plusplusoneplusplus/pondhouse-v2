@@ -416,4 +416,252 @@ TEST_F(SimpleExecutorTest, MultiFileQueryWithFilter) {
     }
 }
 
+//
+// Test Setup:
+//      Create a test table and execute a query with a projection
+// Test Result:
+//      Execute returns a DataBatch with only the selected columns
+//
+TEST_F(SimpleExecutorTest, ProjectionTest) {
+    auto schema = GetSchema("users");
+
+    // Create a scan plan
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *schema);
+
+    // Add a projection to select only id and name columns
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("users", "id"),
+                                                                    common::MakeColumn("users", "name")};
+
+    // Create a schema for the projection
+    auto proj_schema = std::make_shared<common::Schema>(
+        std::vector<common::ColumnSchema>{{"id", common::ColumnType::INT32}, {"name", common::ColumnType::STRING}});
+
+    auto projection_node = std::make_shared<PhysicalProjectionNode>(projections, *proj_schema);
+    projection_node->AddChild(scan_node);
+
+    // Execute the plan
+    auto result = executor_->execute(projection_node);
+    ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents
+    ASSERT_EQ(batch->num_rows(), 5) << "Batch should have 5 rows";
+    ASSERT_EQ(batch->num_columns(), 2) << "Batch should have 2 columns";
+
+    // Verify column names
+    ASSERT_EQ(batch->schema()->field(0)->name(), "id");
+    ASSERT_EQ(batch->schema()->field(1)->name(), "name");
+
+    // Verify data
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(batch->column(1));
+
+    std::vector<std::pair<int, std::string>> expected_data = {
+        {1, "Alice"}, {2, "Bob"}, {3, "Charlie"}, {4, "David"}, {5, "Eve"}};
+
+    for (int i = 0; i < batch->num_rows(); i++) {
+        ASSERT_EQ(id_array->Value(i), expected_data[i].first);
+        ASSERT_EQ(name_array->GetString(i), expected_data[i].second);
+    }
+}
+
+//
+// Test Setup:
+//      Create a test table and execute a query with a projection on a single column
+// Test Result:
+//      Execute returns a DataBatch with only the selected column
+//
+TEST_F(SimpleExecutorTest, ProjectionSingleColumnTest) {
+    auto schema = GetSchema("users");
+
+    // Create a scan plan
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *schema);
+
+    // Add a projection to select only the age column
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("", "age")};
+
+    // Create a schema for the projection
+    auto proj_schema =
+        std::make_shared<common::Schema>(std::vector<common::ColumnSchema>{{"age", common::ColumnType::INT32}});
+
+    auto projection_node = std::make_shared<PhysicalProjectionNode>(projections, *proj_schema);
+    projection_node->AddChild(scan_node);
+
+    // Execute the plan
+    auto result = executor_->execute(projection_node);
+    ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents
+    ASSERT_EQ(batch->num_rows(), 5) << "Batch should have 5 rows";
+    ASSERT_EQ(batch->num_columns(), 1) << "Batch should have 1 column";
+
+    // Verify column name
+    ASSERT_EQ(batch->schema()->field(0)->name(), "age");
+
+    // Verify data
+    auto age_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+
+    std::vector<int> expected_data = {25, 30, 35, 40, 45};
+
+    for (int i = 0; i < batch->num_rows(); i++) {
+        ASSERT_EQ(age_array->Value(i), expected_data[i]);
+    }
+}
+
+//
+// Test Setup:
+//      Create a test table and execute a query with projection after filter
+// Test Result:
+//      Execute returns a filtered DataBatch with only the selected columns
+//
+TEST_F(SimpleExecutorTest, ProjectionAfterFilterTest) {
+    auto schema = GetSchema("users");
+
+    // Create a scan plan
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *schema);
+
+    // Add a filter: age > 30
+    auto age_column = common::MakeColumn("users", "age");
+    auto constant = common::MakeIntegerConstant(30);
+    auto predicate = common::MakeComparison(common::BinaryOpType::Greater, age_column, constant);
+
+    // Create a filter node
+    auto filter_node = std::make_shared<PhysicalFilterNode>(predicate, scan_node->OutputSchema());
+    filter_node->AddChild(scan_node);
+
+    // Add a projection to select id and name columns
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("users", "id"),
+                                                                    common::MakeColumn("users", "name")};
+
+    // Create a schema for the projection
+    auto proj_schema = std::make_shared<common::Schema>(
+        std::vector<common::ColumnSchema>{{"id", common::ColumnType::INT32}, {"name", common::ColumnType::STRING}});
+
+    auto projection_node = std::make_shared<PhysicalProjectionNode>(projections, *proj_schema);
+    projection_node->AddChild(filter_node);
+
+    // Execute the plan
+    auto result = executor_->execute(projection_node);
+    ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents - should only have Eve (age 45) since she's the only one with age > 30
+    ASSERT_EQ(batch->num_rows(), 3) << "Batch should have 3 rows";
+    ASSERT_EQ(batch->num_columns(), 2) << "Batch should have 2 columns";
+
+    // Verify column names
+    ASSERT_EQ(batch->schema()->field(0)->name(), "id");
+    ASSERT_EQ(batch->schema()->field(1)->name(), "name");
+
+    // Verify data
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(batch->column(1));
+
+    std::vector<std::pair<int, std::string>> expected_data = {{3, "Charlie"}, {4, "David"}, {5, "Eve"}};
+
+    for (int i = 0; i < batch->num_rows(); i++) {
+        ASSERT_EQ(id_array->Value(i), expected_data[i].first);
+        ASSERT_EQ(name_array->GetString(i), expected_data[i].second);
+    }
+}
+
+//
+// Test Setup:
+//      Create multiple files and execute a query with projection
+// Test Result:
+//      Execute returns a DataBatch with only the selected columns from all files
+//
+TEST_F(SimpleExecutorTest, MultiFileQueryWithProjection) {
+    // Setup 3 files with 5 rows each
+    SetupMultipleFiles(3, 5);
+    auto schema = GetSchema("multi_users");
+
+    // Create a scan plan
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("multi_users", *schema);
+
+    // Add a projection to select only id and name columns
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("", "id"),
+                                                                    common::MakeColumn("", "name")};
+
+    // Create a schema for the projection
+    auto proj_schema = std::make_shared<common::Schema>(
+        std::vector<common::ColumnSchema>{{"id", common::ColumnType::INT32}, {"name", common::ColumnType::STRING}});
+
+    auto projection_node = std::make_shared<PhysicalProjectionNode>(projections, *proj_schema);
+    projection_node->AddChild(scan_node);
+
+    // Execute the plan
+    auto result = executor_->execute(projection_node);
+    ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents
+    ASSERT_EQ(batch->num_rows(), 15) << "Batch should have 15 rows";
+    ASSERT_EQ(batch->num_columns(), 2) << "Batch should have 2 columns";
+
+    // Verify column names
+    ASSERT_EQ(batch->schema()->field(0)->name(), "id");
+    ASSERT_EQ(batch->schema()->field(1)->name(), "name");
+
+    // Verify data - check a few sample points
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(batch->column(1));
+
+    // Check first row
+    ASSERT_EQ(id_array->Value(0), 0);
+    ASSERT_EQ(name_array->GetString(0), "user_0_0");
+
+    // Check middle row (file 1, row 2)
+    ASSERT_EQ(id_array->Value(7), 7);
+    ASSERT_EQ(name_array->GetString(7), "user_1_2");
+
+    // Check last row
+    ASSERT_EQ(id_array->Value(14), 14);
+    ASSERT_EQ(name_array->GetString(14), "user_2_4");
+}
+
+//
+// Test Setup:
+//      Create a test table and execute a query with invalid column in projection
+// Test Result:
+//      Execute returns an error
+//
+TEST_F(SimpleExecutorTest, ProjectionInvalidColumnTest) {
+    auto schema = GetSchema("users");
+
+    // Create a scan plan
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *schema);
+
+    // Add a projection with a non-existent column
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("", "id"),
+                                                                    common::MakeColumn("", "non_existent_column")};
+
+    // Create a schema for the projection (with a non-existent column)
+    auto proj_schema = std::make_shared<common::Schema>(std::vector<common::ColumnSchema>{
+        {"id", common::ColumnType::INT32}, {"non_existent_column", common::ColumnType::STRING}});
+
+    auto projection_node = std::make_shared<PhysicalProjectionNode>(projections, *proj_schema);
+    projection_node->AddChild(scan_node);
+
+    // Execute the plan
+    auto result = executor_->execute(projection_node);
+
+    // Should fail because of the invalid column
+    VERIFY_ERROR_CODE(result, common::ErrorCode::InvalidArgument);
+    ASSERT_TRUE(result.error().message().find("Column not found") != std::string::npos);
+}
+
 }  // namespace pond::query

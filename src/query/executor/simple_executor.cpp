@@ -206,7 +206,105 @@ void SimpleExecutor::Visit(PhysicalIndexScanNode& node) {
 }
 
 void SimpleExecutor::Visit(PhysicalProjectionNode& node) {
-    current_result_ = common::Error(common::ErrorCode::NotImplemented, "Projection not implemented in simple executor");
+    // Execute the child node first
+    auto child_result = ExecuteChildren(node);
+    if (!child_result.ok()) {
+        current_result_ = std::move(child_result);
+        return;
+    }
+
+    // Get input batch from child
+    auto input_batch = child_result.value();
+    if (!input_batch) {
+        current_result_ = common::Result<DataBatchSharedPtr>::failure(
+            common::Error(common::ErrorCode::InvalidArgument, "Input batch is null"));
+        return;
+    }
+
+    // Get the projection expressions
+    const auto& projections = node.Projections();
+    if (projections.empty()) {
+        // No projections, just return the input batch
+        current_batch_ = input_batch;
+        current_result_ = common::Result<DataBatchSharedPtr>::success(current_batch_);
+        return;
+    }
+
+    // Create the output schema based on projection expressions
+    std::vector<std::shared_ptr<arrow::Field>> output_fields;
+    for (const auto& expr : projections) {
+        // For column references, use the original field name
+        if (expr->Type() == common::ExprType::Column) {
+            auto col_expr = std::static_pointer_cast<common::ColumnExpression>(expr);
+            const std::string& col_name = col_expr->ColumnName();
+
+            // Find the field in the input schema
+            int col_idx = -1;
+            auto input_schema = input_batch->schema();
+            for (int i = 0; i < input_schema->num_fields(); ++i) {
+                if (input_schema->field(i)->name() == col_name) {
+                    col_idx = i;
+                    break;
+                }
+            }
+
+            if (col_idx == -1) {
+                current_result_ = common::Result<DataBatchSharedPtr>::failure(
+                    common::Error(common::ErrorCode::InvalidArgument, "Column not found: " + col_name));
+                return;
+            }
+
+            // Add the field to output schema
+            output_fields.push_back(input_schema->field(col_idx));
+        } else {
+            // For now, only support column references
+            current_result_ = common::Result<DataBatchSharedPtr>::failure(common::Error(
+                common::ErrorCode::NotImplemented, "Only column references are supported in projections"));
+            return;
+        }
+    }
+
+    // Create output schema
+    auto output_schema = arrow::schema(output_fields);
+
+    // Create arrays for the output batch
+    std::vector<std::shared_ptr<arrow::Array>> output_arrays;
+    for (const auto& expr : projections) {
+        // Only handle column references for now
+        if (expr->Type() == common::ExprType::Column) {
+            auto col_expr = std::static_pointer_cast<common::ColumnExpression>(expr);
+            const std::string& col_name = col_expr->ColumnName();
+
+            // Find the column in the input batch
+            int col_idx = -1;
+            auto input_schema = input_batch->schema();
+            for (int i = 0; i < input_schema->num_fields(); ++i) {
+                if (input_schema->field(i)->name() == col_name) {
+                    col_idx = i;
+                    break;
+                }
+            }
+
+            // This should never happen because we already checked above
+            if (col_idx == -1) {
+                current_result_ = common::Result<DataBatchSharedPtr>::failure(
+                    common::Error(common::ErrorCode::InvalidArgument, "Column not found: " + col_name));
+                return;
+            }
+
+            // Add the column to the output arrays
+            output_arrays.push_back(input_batch->column(col_idx));
+        } else {
+            // For now, only support column references
+            current_result_ = common::Result<DataBatchSharedPtr>::failure(common::Error(
+                common::ErrorCode::NotImplemented, "Only column references are supported in projections"));
+            return;
+        }
+    }
+
+    // Create the output batch
+    current_batch_ = arrow::RecordBatch::Make(output_schema, input_batch->num_rows(), output_arrays);
+    current_result_ = common::Result<DataBatchSharedPtr>::success(current_batch_);
 }
 
 void SimpleExecutor::Visit(PhysicalHashJoinNode& node) {

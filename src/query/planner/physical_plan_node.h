@@ -164,18 +164,18 @@ private:
  */
 class PhysicalProjectionNode : public PhysicalPlanNode {
 public:
-    PhysicalProjectionNode(std::vector<std::shared_ptr<common::Expression>> expressions, common::Schema schema)
+    PhysicalProjectionNode(std::vector<std::shared_ptr<common::Expression>> projections, common::Schema schema)
         : PhysicalPlanNode(PhysicalNodeType::Projection),
-          expressions_(std::move(expressions)),
+          projections_(std::move(projections)),
           schema_(std::move(schema)) {}
 
-    const std::vector<std::shared_ptr<common::Expression>>& expressions() const { return expressions_; }
+    const std::vector<std::shared_ptr<common::Expression>>& Projections() const { return projections_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
     common::Result<DataBatchSharedPtr> Execute(Executor& executor) override;
 
 private:
-    std::vector<std::shared_ptr<common::Expression>> expressions_;
+    std::vector<std::shared_ptr<common::Expression>> projections_;
     common::Schema schema_;
 };
 
