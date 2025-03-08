@@ -664,4 +664,44 @@ TEST_F(SimpleExecutorTest, ProjectionInvalidColumnTest) {
     ASSERT_TRUE(result.error().message().find("Column not found") != std::string::npos);
 }
 
+//
+// Test Setup:
+//      Create a sequential scan plan with a projection list
+//      Scan node has projections directly (not a separate projection node)
+// Test Result:
+//      Should return only the projected columns in the result
+//
+TEST_F(SimpleExecutorTest, SequentialScanWithProjections) {
+    // Set up expected schema for the projected columns
+    auto projected_schema = std::make_shared<common::Schema>(
+        std::vector<common::ColumnSchema>{{"id", common::ColumnType::INT32}, {"name", common::ColumnType::STRING}});
+
+    // Create a sequential scan node
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>(
+        "users", *GetSchema("users"), nullptr /* prediate */, *projected_schema);
+
+    // Execute the plan
+    auto result = executor_->execute(scan_node);
+    VERIFY_RESULT(result);
+
+    auto batch = result.value();
+
+    // Verify the schema has only the projected columns
+    ASSERT_EQ(2, batch->schema()->num_fields());
+    EXPECT_EQ("id", batch->schema()->field(0)->name());
+    EXPECT_EQ("name", batch->schema()->field(1)->name());
+
+    // Verify we have data in the result
+    ASSERT_GT(batch->num_rows(), 0);
+
+    // Verify the batch contains the expected data types
+    EXPECT_TRUE(batch->column(0)->type()->Equals(arrow::int32()));
+    EXPECT_TRUE(batch->column(1)->type()->Equals(arrow::utf8()));
+
+    // Print the first few rows for verification
+    LOG_STATUS("First row values - id: %d, name: %s",
+               std::static_pointer_cast<arrow::Int32Array>(batch->column(0))->Value(0),
+               std::static_pointer_cast<arrow::StringArray>(batch->column(1))->GetString(0).c_str());
+}
+
 }  // namespace pond::query

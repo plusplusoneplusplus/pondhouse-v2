@@ -160,6 +160,14 @@ public:
         return columns_[it->second];
     }
 
+    std::vector<std::string> GetColumnNames() const {
+        std::vector<std::string> names;
+        for (const auto& column : columns_) {
+            names.push_back(column.name);
+        }
+        return names;
+    }
+
     DataChunk Serialize() const override {
         rapidjson::StringBuffer buffer;
         rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);

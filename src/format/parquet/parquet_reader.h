@@ -32,17 +32,28 @@ public:
     // Read specific columns from a row group
     common::Result<std::shared_ptr<arrow::Table>> ReadRowGroup(int row_group, const std::vector<int>& column_indices);
 
+    // Read specific column names from a row group
+    common::Result<std::shared_ptr<arrow::Table>> ReadRowGroup(int row_group,
+                                                               const std::vector<std::string>& column_names);
+
     // Read the entire file into an Arrow table
     common::Result<std::shared_ptr<arrow::Table>> Read();
 
     // Read specific columns from the entire file
     common::Result<std::shared_ptr<arrow::Table>> Read(const std::vector<int>& column_indices);
 
+    // Read specific columns by name from the entire file
+    common::Result<std::shared_ptr<arrow::Table>> Read(const std::vector<std::string>& column_names);
+
     // Get a RecordBatchReader that can iterate through the entire file
     common::Result<std::shared_ptr<arrow::RecordBatchReader>> GetBatchReader();
 
     // Get a RecordBatchReader for specific columns
     common::Result<std::shared_ptr<arrow::RecordBatchReader>> GetBatchReader(const std::vector<int>& column_indices);
+
+    // Get a RecordBatchReader for specific column names
+    common::Result<std::shared_ptr<arrow::RecordBatchReader>> GetBatchReader(
+        const std::vector<std::string>& column_names);
 
     // Read a specific row group as a RecordBatch
     common::Result<std::shared_ptr<arrow::RecordBatch>> ReadRowGroupAsBatch(int row_group);
@@ -51,9 +62,16 @@ public:
     common::Result<std::shared_ptr<arrow::RecordBatch>> ReadRowGroupAsBatch(int row_group,
                                                                             const std::vector<int>& column_indices);
 
+    // Read specific column names from a row group as a RecordBatch
+    common::Result<std::shared_ptr<arrow::RecordBatch>> ReadRowGroupAsBatch(
+        int row_group, const std::vector<std::string>& column_names);
+
 private:
     ParquetReader(std::shared_ptr<arrow::io::RandomAccessFile> input,
                   std::unique_ptr<parquet::arrow::FileReader> reader);
+
+    // Convert column names to indices, returns an error if no valid columns are found
+    common::Result<std::vector<int>> ConvertColumnNamesToIndices(const std::vector<std::string>& column_names);
 
     std::shared_ptr<arrow::io::RandomAccessFile> input_;
     std::unique_ptr<parquet::arrow::FileReader> reader_;

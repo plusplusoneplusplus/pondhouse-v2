@@ -429,4 +429,162 @@ TEST_F(ParquetTest, RowGroupAsBatch) {
     ASSERT_DOUBLE_EQ(value_array->Value(0), 0.0);
 }
 
+TEST_F(ParquetTest, ColumnSelectionByName) {
+    const std::string path = "column_selection_by_name.parquet";
+    auto _ = fs_->DeleteFiles({path});
+
+    // Write the table
+    auto writer_result = ParquetWriter::Create(fs_, path, schema_);
+    VERIFY_RESULT_MSG(writer_result, "Failed to create writer");
+    auto writer = std::move(writer_result).value();
+
+    auto write_result = writer->Write(table_);
+    VERIFY_RESULT_MSG(write_result, "Failed to write table");
+    writer->Close();
+
+    // Read specific columns by name
+    auto reader_result = ParquetReader::Create(fs_, path);
+    VERIFY_RESULT_MSG(reader_result, "Failed to create reader");
+    auto reader = std::move(reader_result).value();
+
+    // Test Read with column names
+    std::vector<std::string> column_names = {"id", "value"};  // Read 'id' and 'value' columns by name
+    auto read_result = reader->Read(column_names);
+    VERIFY_RESULT_MSG(read_result, "Failed to read columns by name");
+    auto read_table = std::move(read_result).value();
+
+    // Verify the data
+    ASSERT_EQ(table_->num_rows(), read_table->num_rows());
+    ASSERT_EQ(column_names.size(), read_table->num_columns());
+
+    // Compare selected columns
+    ASSERT_TRUE(table_->column(0)->Equals(read_table->column(0)));  // id
+    ASSERT_TRUE(table_->column(2)->Equals(read_table->column(1)));  // value
+
+    // Test GetBatchReader with column names
+    auto batch_reader_result = reader->GetBatchReader(column_names);
+    VERIFY_RESULT_MSG(batch_reader_result, "Failed to create batch reader with column names");
+    auto batch_reader = std::move(batch_reader_result).value();
+
+    std::shared_ptr<arrow::RecordBatch> batch;
+    ASSERT_OK(batch_reader->ReadNext(&batch));
+    ASSERT_NE(nullptr, batch);
+
+    // Verify batch data
+    ASSERT_EQ(table_->num_rows(), batch->num_rows());
+    ASSERT_EQ(column_names.size(), batch->num_columns());
+    ASSERT_EQ("id", batch->schema()->field(0)->name());
+    ASSERT_EQ("value", batch->schema()->field(1)->name());
+
+    // Test reading non-existent columns
+    std::vector<std::string> invalid_columns = {"id", "non_existent_column"};
+    auto invalid_read_result = reader->Read(invalid_columns);
+    VERIFY_RESULT_MSG(invalid_read_result, "Failed to handle non-existent columns");
+    auto invalid_read_table = std::move(invalid_read_result).value();
+
+    // Should only have the valid column
+    ASSERT_EQ(1, invalid_read_table->num_columns());
+    ASSERT_EQ("id", invalid_read_table->schema()->field(0)->name());
+
+    // Test with all non-existent columns
+    std::vector<std::string> all_invalid_columns = {"non_existent1", "non_existent2"};
+    auto all_invalid_result = reader->Read(all_invalid_columns);
+    ASSERT_FALSE(all_invalid_result.ok());
+    ASSERT_EQ(ErrorCode::InvalidArgument, all_invalid_result.error().code());
+}
+
+TEST_F(ParquetTest, RowGroupOperationsWithColumnNames) {
+    const std::string path = "row_group_column_names.parquet";
+    auto _ = fs_->DeleteFiles({path});
+
+    // Create a table with three row groups
+    const int rows_per_group = 3;
+    const int num_groups = 3;
+
+    auto writer_props = parquet::WriterProperties::Builder();
+    writer_props.write_batch_size(rows_per_group);
+    writer_props.max_row_group_length(rows_per_group);
+    writer_props.build();
+
+    // Write the data with multiple row groups
+    auto writer_result = ParquetWriter::Create(fs_, path, schema_, writer_props);
+    VERIFY_RESULT_MSG(writer_result, "Failed to create writer");
+    auto writer = std::move(writer_result).value();
+
+    for (int i = 0; i < num_groups; i++) {
+        // Create data for this row group
+        arrow::Int64Builder id_builder;
+        arrow::StringBuilder name_builder;
+        arrow::DoubleBuilder value_builder;
+
+        // Each row group has different data
+        int base = i * 10;
+        ASSERT_OK(id_builder.AppendValues({base + 1, base + 2, base + 3}));
+        ASSERT_OK(name_builder.AppendValues({"group" + std::to_string(i) + "_1",
+                                             "group" + std::to_string(i) + "_2",
+                                             "group" + std::to_string(i) + "_3"}));
+        ASSERT_OK(value_builder.AppendValues({base + 1.1, base + 2.2, base + 3.3}));
+
+        std::vector<std::shared_ptr<arrow::Array>> arrays = {
+            id_builder.Finish().ValueOrDie(), name_builder.Finish().ValueOrDie(), value_builder.Finish().ValueOrDie()};
+
+        auto group_table = arrow::Table::Make(schema_, arrays);
+
+        auto write_result = writer->Write(group_table);
+        VERIFY_RESULT_MSG(write_result, "Failed to write row group " + std::to_string(i));
+    }
+
+    writer->Close();
+
+    // Read and verify row groups by column names
+    auto reader_result = ParquetReader::Create(fs_, path);
+    VERIFY_RESULT_MSG(reader_result, "Failed to create reader");
+    auto reader = std::move(reader_result).value();
+
+    auto num_groups_result = reader->NumRowGroups();
+    VERIFY_RESULT_MSG(num_groups_result, "Failed to get number of row groups");
+    ASSERT_EQ(num_groups, num_groups_result.value());
+
+    // Test ReadRowGroup with column names
+    std::vector<std::string> column_names = {"id", "name"};
+    auto row_group_result = reader->ReadRowGroup(1, column_names);  // Read second row group
+    VERIFY_RESULT_MSG(row_group_result, "Failed to read row group with column names");
+    auto group_table = std::move(row_group_result).value();
+
+    // Verify data in the row group
+    ASSERT_EQ(rows_per_group, group_table->num_rows());
+    ASSERT_EQ(column_names.size(), group_table->num_columns());
+
+    // Second row group (index 1) should have base value of 10
+    auto id_array = std::static_pointer_cast<arrow::Int64Array>(group_table->column(0)->chunk(0));
+    ASSERT_EQ(11, id_array->Value(0));
+    ASSERT_EQ(12, id_array->Value(1));
+    ASSERT_EQ(13, id_array->Value(2));
+
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(group_table->column(1)->chunk(0));
+    ASSERT_EQ("group1_1", name_array->GetString(0));
+    ASSERT_EQ("group1_2", name_array->GetString(1));
+    ASSERT_EQ("group1_3", name_array->GetString(2));
+
+    // Test ReadRowGroupAsBatch with column names
+    auto batch_result = reader->ReadRowGroupAsBatch(2, column_names);  // Read third row group
+    VERIFY_RESULT_MSG(batch_result, "Failed to read row group as batch with column names");
+    auto batch = std::move(batch_result).value();
+
+    // Verify batch data
+    ASSERT_EQ(rows_per_group, batch->num_rows());
+    ASSERT_EQ(column_names.size(), batch->num_columns());
+
+    // Third row group (index 2) should have base value of 20
+    auto batch_id_array = std::static_pointer_cast<arrow::Int64Array>(batch->column(0));
+    ASSERT_EQ(21, batch_id_array->Value(0));
+    ASSERT_EQ(22, batch_id_array->Value(1));
+    ASSERT_EQ(23, batch_id_array->Value(2));
+
+    auto batch_name_array = std::static_pointer_cast<arrow::StringArray>(batch->column(1));
+    ASSERT_EQ("group2_1", batch_name_array->GetString(0));
+    ASSERT_EQ("group2_2", batch_name_array->GetString(1));
+    ASSERT_EQ("group2_3", batch_name_array->GetString(2));
+}
+
 }  // namespace pond::test

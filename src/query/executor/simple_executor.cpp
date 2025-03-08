@@ -105,8 +105,11 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
         // Get the reader
         auto reader = std::move(reader_result).value();
 
+        // get projection column names
+        auto projection_column_names = node.OutputSchema().GetColumnNames();
+
         // Use the batch reader interface
-        auto batch_reader_result = reader->GetBatchReader();
+        auto batch_reader_result = reader->GetBatchReader(projection_column_names);
         if (!batch_reader_result.ok()) {
             current_result_ = common::Result<DataBatchSharedPtr>::failure(batch_reader_result.error());
             return;

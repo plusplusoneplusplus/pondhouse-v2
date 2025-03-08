@@ -74,6 +74,54 @@ Result<std::shared_ptr<arrow::Table>> ParquetReader::ReadRowGroup(int row_group,
     return Result<std::shared_ptr<arrow::Table>>::success(table);
 }
 
+Result<std::vector<int>> ParquetReader::ConvertColumnNamesToIndices(const std::vector<std::string>& column_names) {
+    // If empty list provided, return empty vector (means all columns)
+    if (column_names.empty()) {
+        return Result<std::vector<int>>::success(std::vector<int>());
+    }
+
+    // Get the schema first
+    auto schema_result = Schema();
+    if (!schema_result.ok()) {
+        return Result<std::vector<int>>::failure(
+            schema_result.error().code(),
+            "Failed to get schema for column name mapping: " + schema_result.error().message());
+    }
+
+    auto schema = schema_result.value();
+
+    // Convert column names to indices
+    std::vector<int> column_indices;
+    for (const auto& name : column_names) {
+        int idx = schema->GetFieldIndex(name);
+        if (idx != -1) {  // -1 means column not found
+            column_indices.push_back(idx);
+        } else {
+            LOG_WARNING("Column not found in schema: %s", name.c_str());
+        }
+    }
+
+    // If no valid columns were found, return an error
+    if (column_indices.empty()) {
+        return Result<std::vector<int>>::failure(ErrorCode::InvalidArgument,
+                                                 "None of the specified column names were found in the schema");
+    }
+
+    return Result<std::vector<int>>::success(column_indices);
+}
+
+Result<std::shared_ptr<arrow::Table>> ParquetReader::ReadRowGroup(int row_group,
+                                                                  const std::vector<std::string>& column_names) {
+    // Convert column names to indices
+    auto indices_result = ConvertColumnNamesToIndices(column_names);
+    if (!indices_result.ok()) {
+        return Result<std::shared_ptr<arrow::Table>>::failure(indices_result.error());
+    }
+
+    // Call the existing method with the indices
+    return ReadRowGroup(row_group, indices_result.value());
+}
+
 Result<std::shared_ptr<arrow::Table>> ParquetReader::Read() {
     std::shared_ptr<arrow::Table> table;
     auto status = reader_->ReadTable(&table);
@@ -92,6 +140,17 @@ Result<std::shared_ptr<arrow::Table>> ParquetReader::Read(const std::vector<int>
                                                               "Failed to read table columns: " + status.ToString());
     }
     return Result<std::shared_ptr<arrow::Table>>::success(table);
+}
+
+Result<std::shared_ptr<arrow::Table>> ParquetReader::Read(const std::vector<std::string>& column_names) {
+    // Convert column names to indices
+    auto indices_result = ConvertColumnNamesToIndices(column_names);
+    if (!indices_result.ok()) {
+        return Result<std::shared_ptr<arrow::Table>>::failure(indices_result.error());
+    }
+
+    // Call the existing method with the indices
+    return Read(indices_result.value());
 }
 
 Result<std::shared_ptr<arrow::RecordBatchReader>> ParquetReader::GetBatchReader() {
@@ -143,6 +202,18 @@ Result<std::shared_ptr<arrow::RecordBatchReader>> ParquetReader::GetBatchReader(
     return Result<std::shared_ptr<arrow::RecordBatchReader>>::success(reader);
 }
 
+Result<std::shared_ptr<arrow::RecordBatchReader>> ParquetReader::GetBatchReader(
+    const std::vector<std::string>& column_names) {
+    // Convert column names to indices
+    auto indices_result = ConvertColumnNamesToIndices(column_names);
+    if (!indices_result.ok()) {
+        return Result<std::shared_ptr<arrow::RecordBatchReader>>::failure(indices_result.error());
+    }
+
+    // Call the existing method with the indices
+    return GetBatchReader(indices_result.value());
+}
+
 Result<std::shared_ptr<arrow::RecordBatch>> ParquetReader::ReadRowGroupAsBatch(int row_group) {
     std::shared_ptr<arrow::Table> table;
     auto status = reader_->ReadRowGroup(row_group, &table);
@@ -192,6 +263,18 @@ Result<std::shared_ptr<arrow::RecordBatch>> ParquetReader::ReadRowGroupAsBatch(i
     }
 
     return Result<std::shared_ptr<arrow::RecordBatch>>::success(batch);
+}
+
+Result<std::shared_ptr<arrow::RecordBatch>> ParquetReader::ReadRowGroupAsBatch(
+    int row_group, const std::vector<std::string>& column_names) {
+    // Convert column names to indices
+    auto indices_result = ConvertColumnNamesToIndices(column_names);
+    if (!indices_result.ok()) {
+        return Result<std::shared_ptr<arrow::RecordBatch>>::failure(indices_result.error());
+    }
+
+    // Call the existing method with the indices
+    return ReadRowGroupAsBatch(row_group, indices_result.value());
 }
 
 }  // namespace pond::format
