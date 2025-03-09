@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,33 +11,39 @@
             padding-top: 2rem;
             background-color: #f8f9fa;
         }
+
         .result {
             margin-top: 1rem;
             padding: 1rem;
             background-color: #e9ecef;
             border-radius: 0.25rem;
         }
+
         .key-list {
             margin-top: 1rem;
             max-height: 300px;
             overflow-y: auto;
         }
+
         .key-item {
             padding: 0.5rem;
             border-bottom: 1px solid #dee2e6;
         }
+
         .key-item:last-child {
             border-bottom: none;
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="row justify-content-center">
             <div class="col-md-8">
                 <div class="card">
-                    <div class="card-header">
-                        <h2 class="text-center mb-0">PondHouse KV Store</h2>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h2 class="mb-0">PondHouse KV Store</h2>
+                        <a href="/files" class="btn btn-outline-primary btn-sm">View File System</a>
                     </div>
                     <div class="card-body">
                         <div class="row g-3">
@@ -52,7 +59,8 @@
                                 <form action="/put" method="post" class="mb-3">
                                     <div class="input-group">
                                         <input type="text" name="key" class="form-control" placeholder="Key" required>
-                                        <input type="text" name="value" class="form-control" placeholder="Value" required>
+                                        <input type="text" name="value" class="form-control" placeholder="Value"
+                                            required>
                                         <button type="submit" class="btn btn-primary">Put</button>
                                     </div>
                                 </form>
@@ -68,9 +76,12 @@
                             <div class="col-12">
                                 <form action="/list" method="post">
                                     <div class="input-group">
-                                        <input type="text" name="start_key" class="form-control" placeholder="Start Key (optional)">
-                                        <input type="text" name="end_key" class="form-control" placeholder="End Key (optional)">
-                                        <input type="number" name="limit" class="form-control" placeholder="Limit (optional)" min="1">
+                                        <input type="text" name="start_key" class="form-control"
+                                            placeholder="Start Key (optional)">
+                                        <input type="text" name="end_key" class="form-control"
+                                            placeholder="End Key (optional)">
+                                        <input type="number" name="limit" class="form-control"
+                                            placeholder="Limit (optional)" min="1">
                                         <button type="submit" class="btn btn-info">List Keys</button>
                                     </div>
                                 </form>
@@ -103,4 +114,5 @@
         </div>
     </div>
 </body>
-</html> 
+
+</html>

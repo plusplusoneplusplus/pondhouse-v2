@@ -15,6 +15,12 @@ service PondService {
   
   // Scan a range of keys
   rpc Scan(ScanRequest) returns (stream ScanResponse) {}
+
+  // List files in a directory
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse) {}
+  
+  // Get directory information
+  rpc GetDirectoryInfo(DirectoryInfoRequest) returns (DirectoryInfoResponse) {}
 }
 
 // Request message for Get operation
@@ -65,4 +71,32 @@ message ScanResponse {
   bytes value = 2;
   bool has_more = 3;
   string error = 4;
+}
+
+// Request message for ListFiles operation
+message ListFilesRequest {
+  string path = 1;
+  bool recursive = 2;
+}
+
+// Response message for ListFiles operation
+message ListFilesResponse {
+  repeated string file_paths = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+// Request message for GetDirectoryInfo operation
+message DirectoryInfoRequest {
+  string path = 1;
+}
+
+// Response message for GetDirectoryInfo operation
+message DirectoryInfoResponse {
+  bool exists = 1;
+  bool is_directory = 2;
+  uint64 num_files = 3;
+  uint64 total_size = 4;
+  bool success = 5;
+  string error = 6;
 } 

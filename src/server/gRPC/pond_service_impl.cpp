@@ -14,7 +14,9 @@ namespace pond::server {
 // Default table name for key-value operations
 static const char* DEFAULT_TABLE = "default";
 
-PondServiceImpl::PondServiceImpl(std::shared_ptr<pond::kv::DB> db) : db_(std::move(db)) {
+PondServiceImpl::PondServiceImpl(std::shared_ptr<pond::kv::DB> db,
+                                 std::shared_ptr<pond::common::IAppendOnlyFileSystem> fs)
+    : db_(std::move(db)), fs_(std::move(fs)) {
     // Ensure default table exists
     auto schema = std::make_shared<pond::common::Schema>(
         std::vector<pond::common::ColumnSchema>{{"value", pond::common::ColumnType::STRING}});
@@ -200,6 +202,55 @@ grpc::Status PondServiceImpl::Scan(grpc::ServerContext* context,
         pond::proto::ScanResponse scan_response;
         scan_response.set_has_more(false);
         writer->Write(scan_response);
+    }
+
+    return grpc::Status::OK;
+}
+
+grpc::Status PondServiceImpl::ListFiles(grpc::ServerContext* context,
+                                        const pond::proto::ListFilesRequest* request,
+                                        pond::proto::ListFilesResponse* response) {
+    LOG_STATUS("Received ListFiles request for path: %s", request->path().c_str());
+
+    std::string path = request->path();
+    bool recursive = request->recursive();
+
+    // Call the file system's List method
+    auto result = fs_->List(path, recursive);
+
+    if (result.ok()) {
+        response->set_success(true);
+        for (const auto& file_path : result.value()) {
+            response->add_file_paths(file_path);
+        }
+    } else {
+        response->set_success(false);
+        response->set_error(result.error().message());
+    }
+
+    return grpc::Status::OK;
+}
+
+grpc::Status PondServiceImpl::GetDirectoryInfo(grpc::ServerContext* context,
+                                               const pond::proto::DirectoryInfoRequest* request,
+                                               pond::proto::DirectoryInfoResponse* response) {
+    LOG_STATUS("Received GetDirectoryInfo request for path: %s", request->path().c_str());
+
+    std::string path = request->path();
+
+    // Call the file system's GetDirectoryInfo method
+    auto result = fs_->GetDirectoryInfo(path);
+
+    if (result.ok()) {
+        const auto& dir_info = result.value();
+        response->set_success(true);
+        response->set_exists(dir_info.exists);
+        response->set_is_directory(dir_info.is_directory);
+        response->set_num_files(dir_info.num_files);
+        response->set_total_size(dir_info.total_size);
+    } else {
+        response->set_success(false);
+        response->set_error(result.error().message());
     }
 
     return grpc::Status::OK;

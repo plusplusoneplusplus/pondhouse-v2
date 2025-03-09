@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 import grpc
 import os
 import sys
-from typing import Optional
+from typing import Optional, List
 from dataclasses import dataclass
 
 # Import generated gRPC modules
@@ -28,6 +28,14 @@ GRPC_PORT = os.getenv("GRPC_PORT", "8080")
 class KeyValue:
     key: str
     value: Optional[str] = None
+
+@dataclass
+class DirectoryInfo:
+    exists: bool
+    is_directory: bool
+    num_files: int
+    total_size: int
+    error: Optional[str] = None
 
 class PondClient:
     def __init__(self, host: str, port: str):
@@ -88,6 +96,45 @@ class PondClient:
             return keys, None
         except Exception as e:
             return [], str(e)
+
+    def list_files(self, path: str = "", recursive: bool = False) -> tuple[List[str], Optional[str]]:
+        try:
+            request = pb2.ListFilesRequest(path=path, recursive=recursive)
+            response = self.stub.ListFiles(request)
+            
+            if response.success:
+                return list(response.file_paths), None
+            return [], response.error
+        except Exception as e:
+            return [], str(e)
+            
+    def get_directory_info(self, path: str) -> DirectoryInfo:
+        try:
+            request = pb2.DirectoryInfoRequest(path=path)
+            response = self.stub.GetDirectoryInfo(request)
+            
+            if response.success:
+                return DirectoryInfo(
+                    exists=response.exists,
+                    is_directory=response.is_directory,
+                    num_files=response.num_files,
+                    total_size=response.total_size
+                )
+            return DirectoryInfo(
+                exists=False, 
+                is_directory=False, 
+                num_files=0, 
+                total_size=0, 
+                error=response.error
+            )
+        except Exception as e:
+            return DirectoryInfo(
+                exists=False, 
+                is_directory=False, 
+                num_files=0, 
+                total_size=0,
+                error=str(e)
+            )
 
 # Create a global client instance
 pond_client = PondClient(GRPC_HOST, GRPC_PORT)
@@ -157,6 +204,53 @@ async def list_keys(
             "request": request,
             "result": result,
             "keys": keys
+        }
+    )
+
+@app.get("/files", response_class=HTMLResponse)
+async def file_explorer(request: Request, path: str = ""):
+    files, error = pond_client.list_files(path)
+    dir_info = pond_client.get_directory_info(path)
+    
+    result = None
+    if error:
+        result = f"Error listing files: {error}"
+    elif dir_info.error:
+        result = f"Error getting directory info: {dir_info.error}"
+    
+    return templates.TemplateResponse(
+        "files.html",
+        {
+            "request": request,
+            "path": path,
+            "files": files,
+            "dir_info": dir_info,
+            "result": result
+        }
+    )
+
+@app.post("/files/list", response_class=HTMLResponse)
+async def list_files(
+    request: Request,
+    path: str = Form(""),
+    recursive: bool = Form(False)
+):
+    files, error = pond_client.list_files(path, recursive)
+    dir_info = pond_client.get_directory_info(path)
+    
+    if error:
+        result = f"Error: {error}"
+    else:
+        result = f"Found {len(files)} files/directories"
+    
+    return templates.TemplateResponse(
+        "files.html",
+        {
+            "request": request,
+            "path": path,
+            "files": files,
+            "dir_info": dir_info,
+            "result": result
         }
     )
 

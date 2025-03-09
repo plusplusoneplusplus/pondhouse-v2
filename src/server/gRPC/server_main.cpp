@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
     auto db = std::move(db_result.value());
 
     // Create the service implementation
-    auto service = std::make_unique<pond::server::PondServiceImpl>(db);
+    auto service = std::make_unique<pond::server::PondServiceImpl>(db, fs);
 
     // Build the server
     grpc::ServerBuilder builder;
