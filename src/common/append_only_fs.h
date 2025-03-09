@@ -51,6 +51,16 @@ struct DirectoryInfo {
     size_t num_files;
     size_t total_size;
 };
+
+/**
+ * Represents a file system entry with information about its type
+ */
+struct FileSystemEntry {
+    std::string path;
+    bool is_directory;
+    // Can be extended with more metadata in the future
+};
+
 // Concept for file system implementations
 template <typename T>
 concept FileSystem = requires(T fs,
@@ -118,6 +128,16 @@ public:
     // Returns a list of relative paths
     [[nodiscard]] virtual Result<std::vector<std::string>> List(const std::string& path, bool recursive = false) = 0;
 
+    /**
+     * Lists both files and directories in a specified path with detailed information
+     * @param path The directory path to list
+     * @param recursive Whether to list recursively
+     * @return A Result containing either a vector of FileSystemEntry objects or an Error
+     */
+    [[nodiscard]] virtual Result<std::vector<FileSystemEntry>> ListDetailed(
+        const std::string& path, 
+        bool recursive = false) = 0;
+
     // Delete multiple files
     // If any deletion fails, continue with remaining files but return error
     [[nodiscard]] virtual Result<bool> DeleteFiles(const std::vector<std::string>& paths) = 0;
@@ -151,6 +171,9 @@ public:
     [[nodiscard]] bool Exists(const std::string& path) const override;
     [[nodiscard]] Result<bool> RenameFiles(const std::vector<RenameOperation>& renames) override;
     [[nodiscard]] Result<std::vector<std::string>> List(const std::string& path, bool recursive = false) override;
+    [[nodiscard]] Result<std::vector<FileSystemEntry>> ListDetailed(
+        const std::string& path, 
+        bool recursive = false) override;
     [[nodiscard]] Result<bool> DeleteFiles(const std::vector<std::string>& paths) override;
 
     // Directory operations implementation

@@ -294,6 +294,30 @@ void MemoryAppendOnlyFileSystem::listRecursive(const DirectoryData* dir,
     }
 }
 
+void MemoryAppendOnlyFileSystem::listRecursive(const DirectoryData* dir,
+                                               const std::string& base_path,
+                                               std::vector<FileSystemEntry>& result,
+                                               bool recursive) const {
+    // Add files
+    for (const auto& [name, file] : dir->files) {
+        std::string path = base_path.empty() ? name : base_path + "/" + name;
+        result.push_back({path, false});
+    }
+
+    // Add directories
+    for (const auto& [name, subdir] : dir->subdirs) {
+        std::string new_base = base_path.empty() ? name : base_path + "/" + name;
+        
+        // Add this directory to the result
+        result.push_back({new_base, true});
+        
+        // Recursively process this directory if requested
+        if (recursive) {
+            listRecursive(subdir.get(), new_base, result, true);
+        }
+    }
+}
+
 Result<std::vector<std::string>> MemoryAppendOnlyFileSystem::List(const std::string& path, bool recursive) {
     std::lock_guard lock(mutex_);
 
@@ -315,6 +339,29 @@ Result<std::vector<std::string>> MemoryAppendOnlyFileSystem::List(const std::str
     std::vector<std::string> result;
     listRecursive(dir, "", result, recursive);
     return Result<std::vector<std::string>>::success(std::move(result));
+}
+
+Result<std::vector<FileSystemEntry>> MemoryAppendOnlyFileSystem::ListDetailed(const std::string& path, bool recursive) {
+    std::lock_guard lock(mutex_);
+
+    auto [dir, name] = getDirectoryAndName(path, false);
+    if (!dir) {
+        return Result<std::vector<FileSystemEntry>>::failure(common::ErrorCode::DirectoryNotFound,
+                                                            "Directory not found: " + path);
+    }
+
+    if (!name.empty()) {
+        auto it = dir->subdirs.find(name);
+        if (it == dir->subdirs.end()) {
+            return Result<std::vector<FileSystemEntry>>::failure(common::ErrorCode::DirectoryNotFound,
+                                                                "Directory not found: " + path);
+        }
+        dir = it->second.get();
+    }
+
+    std::vector<FileSystemEntry> result;
+    listRecursive(dir, "", result, recursive);
+    return Result<std::vector<FileSystemEntry>>::success(std::move(result));
 }
 
 Result<bool> MemoryAppendOnlyFileSystem::DeleteFiles(const std::vector<std::string>& paths) {

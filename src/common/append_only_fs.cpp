@@ -348,6 +348,43 @@ Result<std::vector<std::string>> LocalAppendOnlyFileSystem::List(const std::stri
     }
 }
 
+Result<std::vector<FileSystemEntry>> LocalAppendOnlyFileSystem::ListDetailed(const std::string& path, bool recursive) {
+    try {
+        std::vector<FileSystemEntry> entries;
+        std::filesystem::path base_path = path;
+
+        if (!std::filesystem::exists(base_path)) {
+            return Result<std::vector<FileSystemEntry>>::failure(common::ErrorCode::DirectoryNotFound,
+                                                                "Directory does not exist: " + path);
+        }
+
+        if (!std::filesystem::is_directory(base_path)) {
+            return Result<std::vector<FileSystemEntry>>::failure(common::ErrorCode::NotADirectory,
+                                                                "Path is not a directory: " + path);
+        }
+
+        // Convert base_path to canonical form for proper relative path calculation
+        base_path = std::filesystem::canonical(base_path);
+
+        if (recursive) {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(base_path)) {
+                std::filesystem::path relative_path = std::filesystem::relative(entry.path(), base_path);
+                entries.push_back({relative_path.string(), entry.is_directory()});
+            }
+        } else {
+            for (const auto& entry : std::filesystem::directory_iterator(base_path)) {
+                // For non-recursive listing, just use the filename
+                entries.push_back({entry.path().filename().string(), entry.is_directory()});
+            }
+        }
+
+        return Result<std::vector<FileSystemEntry>>::success(std::move(entries));
+    } catch (const std::filesystem::filesystem_error& e) {
+        return Result<std::vector<FileSystemEntry>>::failure(common::ErrorCode::FileOpenFailed,
+                                                            std::string("Failed to list directory: ") + e.what());
+    }
+}
+
 Result<bool> LocalAppendOnlyFileSystem::DeleteFiles(const std::vector<std::string>& paths) {
     return impl_->deleteFiles(paths);
 }

@@ -34,6 +34,9 @@ public:
     [[nodiscard]] bool Exists(const std::string& path) const override;
     [[nodiscard]] Result<bool> RenameFiles(const std::vector<RenameOperation>& renames) override;
     [[nodiscard]] Result<std::vector<std::string>> List(const std::string& path, bool recursive = false) override;
+    [[nodiscard]] Result<std::vector<FileSystemEntry>> ListDetailed(
+        const std::string& path, 
+        bool recursive = false) override;
     [[nodiscard]] Result<bool> DeleteFiles(const std::vector<std::string>& paths) override;
 
     // Directory operations implementation
@@ -68,6 +71,12 @@ private:
                        const std::string& base_path,
                        std::vector<std::string>& result,
                        bool recursive) const;
+
+    void listRecursive(const DirectoryData* dir,
+                       const std::string& base_path,
+                       std::vector<FileSystemEntry>& result,
+                       bool recursive) const;
+
 protected:
     bool exists(bool lock_held, const std::string& path) const;
 

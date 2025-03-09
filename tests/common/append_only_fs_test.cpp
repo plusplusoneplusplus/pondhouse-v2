@@ -168,6 +168,41 @@ TEST_P(AppendOnlyFSTypeTest, DirectoryOperations) {
     VERIFY_RESULT_MSG(recursiveList, "Failed to list directory recursively");
     ASSERT_EQ(recursiveList.value().size(), 2) << "Recursive listing should show all items";
 
+    // Test detailed directory listing
+    auto detailedList = fs->ListDetailed("test_dir", false);
+    VERIFY_RESULT_MSG(detailedList, "Failed to get detailed directory listing");
+    ASSERT_EQ(detailedList.value().size(), 2) << "Detailed listing should contain both file and directory";
+    
+    // Verify that we have both files and directories in the detailed listing
+    bool foundFile = false;
+    bool foundDir = false;
+    for (const auto& entry : detailedList.value()) {
+        if (entry.path == "file1.txt") {
+            ASSERT_FALSE(entry.is_directory) << "File should not be marked as directory";
+            foundFile = true;
+        } else if (entry.path == "subdir") {
+            ASSERT_TRUE(entry.is_directory) << "Directory should be marked as directory";
+            foundDir = true;
+        }
+    }
+    ASSERT_TRUE(foundFile) << "File should be in detailed listing";
+    ASSERT_TRUE(foundDir) << "Directory should be in detailed listing";
+
+    // Test recursive detailed listing
+    auto recursiveDetailedList = fs->ListDetailed("test_dir", true);
+    VERIFY_RESULT_MSG(recursiveDetailedList, "Failed to get recursive detailed listing");
+    ASSERT_GE(recursiveDetailedList.value().size(), 3) << "Recursive detailed listing should include all entries";
+    
+    // Verify that recursive detailed listing includes subdirectory entries
+    bool foundSubdirFile = false;
+    for (const auto& entry : recursiveDetailedList.value()) {
+        if (entry.path == "subdir/file3.txt") {
+            ASSERT_FALSE(entry.is_directory) << "File in subdirectory should not be marked as directory";
+            foundSubdirFile = true;
+        }
+    }
+    ASSERT_TRUE(foundSubdirFile) << "File in subdirectory should be in recursive detailed listing";
+
     // Test directory info
     auto infoResult = fs->GetDirectoryInfo("test_dir");
     VERIFY_RESULT_MSG(infoResult, "Failed to get directory info");
@@ -185,13 +220,74 @@ TEST_P(AppendOnlyFSTypeTest, DirectoryOperations) {
     ASSERT_FALSE(fs->Exists("test_dir_moved")) << "Directory should not exist after deletion";
 }
 
-TEST_P(AppendOnlyFSTypeTest, NestedDirectoryOperations) {
+// Test specifically focused on the new ListDetailed functionality
+TEST_P(AppendOnlyFSTypeTest, ListDetailedTest) {
     auto fs = createFS();
     ASSERT_NE(fs, nullptr);
 
-    // Create nested directories
-    VERIFY_RESULT_MSG(fs->CreateDirectory("test_dir/subdir/subsubdir"), "Failed to create nested directory");
-    ASSERT_TRUE(fs->IsDirectory("test_dir/subdir/subsubdir")) << "Created nested path should be a directory";
+    //
+    // Test Setup:
+    //      Create a test directory structure with files and subdirectories
+    // Test Result:
+    //      ListDetailed should correctly identify files and directories
+    //
+
+    // Create test structure
+    VERIFY_RESULT_MSG(fs->CreateDirectory("test_detailed"), "Failed to create test directory");
+    VERIFY_RESULT_MSG(fs->CreateDirectory("test_detailed/subdir1"), "Failed to create subdirectory");
+    VERIFY_RESULT_MSG(fs->CreateDirectory("test_detailed/subdir2"), "Failed to create subdirectory");
+    VERIFY_RESULT_MSG(fs->CreateDirectory("test_detailed/subdir1/nested"), "Failed to create nested subdirectory");
+    
+    // Create some files
+    auto result = fs->OpenFile("test_detailed/file1.txt", true);
+    VERIFY_RESULT_MSG(result, "Failed to create file");
+    VERIFY_RESULT_MSG(fs->CloseFile(result.value()), "Failed to close file");
+    
+    result = fs->OpenFile("test_detailed/subdir1/file2.txt", true);
+    VERIFY_RESULT_MSG(result, "Failed to create file in subdirectory");
+    VERIFY_RESULT_MSG(fs->CloseFile(result.value()), "Failed to close file");
+    
+    result = fs->OpenFile("test_detailed/subdir1/nested/file3.txt", true);
+    VERIFY_RESULT_MSG(result, "Failed to create file in nested subdirectory");
+    VERIFY_RESULT_MSG(fs->CloseFile(result.value()), "Failed to close file");
+    
+    // Test non-recursive detailed listing
+    auto detailedList = fs->ListDetailed("test_detailed", false);
+    VERIFY_RESULT_MSG(detailedList, "Failed to get detailed listing");
+    
+    // Should contain 3 entries: file1.txt and two subdirectories
+    ASSERT_EQ(detailedList.value().size(), 3) << "Detailed listing should contain 3 entries";
+    
+    int fileCount = 0;
+    int dirCount = 0;
+    for (const auto& entry : detailedList.value()) {
+        if (entry.is_directory) {
+            dirCount++;
+        } else {
+            fileCount++;
+        }
+    }
+    ASSERT_EQ(fileCount, 1) << "Should have 1 file in root directory";
+    ASSERT_EQ(dirCount, 2) << "Should have 2 subdirectories in root directory";
+    
+    // Test recursive detailed listing
+    auto recursiveList = fs->ListDetailed("test_detailed", true);
+    VERIFY_RESULT_MSG(recursiveList, "Failed to get recursive detailed listing");
+    
+    // Should contain all entries (3 files + 3 directories = 6 entries)
+    ASSERT_EQ(recursiveList.value().size(), 6) << "Recursive detailed listing should contain 6 entries";
+    
+    fileCount = 0;
+    dirCount = 0;
+    for (const auto& entry : recursiveList.value()) {
+        if (entry.is_directory) {
+            dirCount++;
+        } else {
+            fileCount++;
+        }
+    }
+    ASSERT_EQ(fileCount, 3) << "Should have 3 files in recursive listing";
+    ASSERT_EQ(dirCount, 3) << "Should have 3 directories in recursive listing";
 }
 
 // File Rename Operations Tests
@@ -314,6 +410,15 @@ TEST_P(AppendOnlyFSTypeTest, OpenExistingFile) {
     // Close the file
     auto close_result = fs->CloseFile(result.value());
     ASSERT_TRUE(close_result.ok());
+}
+
+TEST_P(AppendOnlyFSTypeTest, NestedDirectoryOperations) {
+    auto fs = createFS();
+    ASSERT_NE(fs, nullptr);
+
+    // Create nested directories
+    VERIFY_RESULT_MSG(fs->CreateDirectory("test_dir/subdir/subsubdir"), "Failed to create nested directory");
+    ASSERT_TRUE(fs->IsDirectory("test_dir/subdir/subsubdir")) << "Created nested path should be a directory";
 }
 
 INSTANTIATE_TEST_SUITE_P(FSTypes, AppendOnlyFSTypeTest, ::testing::Values("local", "memory"));
