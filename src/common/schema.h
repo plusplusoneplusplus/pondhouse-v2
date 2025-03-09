@@ -120,13 +120,12 @@ public:
     Schema() = default;
 
     // TODO: remove these methods and replace with FieldCount, Fields, Empty
-    const std::vector<ColumnSchema>& columns() const { return columns_; }
-    size_t num_columns() const { return columns_.size(); }
-    bool empty() const { return columns_.empty(); }
+    const std::vector<ColumnSchema>& Columns() const { return columns_; }
+    size_t NumColumns() const { return columns_.size(); }
+    bool Empty() const { return columns_.empty(); }
 
     size_t FieldCount() const { return columns_.size(); }
     const std::vector<ColumnSchema>& Fields() const { return columns_; }
-    bool Empty() const { return columns_.empty(); }
 
     int GetColumnIndex(const std::string& name) const {
         auto it = column_indices_.find(name);

@@ -69,11 +69,11 @@ TEST_F(SchemaConverterTest, TestSchemaRoundTrip) {
     auto converted_schema = pond_schema_result.value();
 
     // Verify schemas are equivalent
-    ASSERT_EQ(original_schema->num_columns(), converted_schema->num_columns());
+    ASSERT_EQ(original_schema->NumColumns(), converted_schema->NumColumns());
 
-    for (size_t i = 0; i < original_schema->num_columns(); i++) {
-        const auto& original_col = original_schema->columns()[i];
-        const auto& converted_col = converted_schema->columns()[i];
+    for (size_t i = 0; i < original_schema->NumColumns(); i++) {
+        const auto& original_col = original_schema->Columns()[i];
+        const auto& converted_col = converted_schema->Columns()[i];
 
         EXPECT_EQ(original_col, converted_col);
 

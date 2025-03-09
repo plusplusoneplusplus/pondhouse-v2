@@ -16,10 +16,10 @@ namespace pond::kv {
 class Record {
 public:
     explicit Record(std::shared_ptr<common::Schema> schema)
-        : schema_(std::move(schema)), values_(schema_->num_columns()) {}
+        : schema_(std::move(schema)), values_(schema_->NumColumns()) {}
 
     void SetNull(size_t col_idx) {
-        if (col_idx >= schema_->num_columns()) {
+        if (col_idx >= schema_->NumColumns()) {
             throw std::out_of_range("Column index out of range");
         }
         values_[col_idx].reset();
@@ -27,11 +27,11 @@ public:
 
     template <typename T>
     void Set(size_t col_idx, const T& value) {
-        if (col_idx >= schema_->num_columns()) {
+        if (col_idx >= schema_->NumColumns()) {
             throw std::out_of_range("Column index out of range");
         }
 
-        const auto& column = schema_->columns()[col_idx];
+        const auto& column = schema_->Columns()[col_idx];
         if constexpr (std::is_same_v<T, common::DataChunk>) {
             // Special case for DataChunk to directly update the value
             values_[col_idx] = PackValue(value);
@@ -46,7 +46,7 @@ public:
     }
 
     bool IsNull(size_t col_idx) const {
-        if (col_idx >= schema_->num_columns()) {
+        if (col_idx >= schema_->NumColumns()) {
             throw std::out_of_range("Column index out of range");
         }
         return !values_[col_idx].has_value();
@@ -59,7 +59,7 @@ public:
         }
 
         if constexpr (!std::is_same_v<T, common::DataChunk>) {
-            const auto& column = schema_->columns()[col_idx];
+            const auto& column = schema_->Columns()[col_idx];
             if (!IsTypeCompatible<T>(column.type)) {
                 throw std::runtime_error("Type mismatch: Attempting to get value with incompatible type");
             }

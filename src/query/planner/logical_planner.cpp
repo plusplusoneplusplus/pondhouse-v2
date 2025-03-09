@@ -295,12 +295,12 @@ Result<common::Schema> LogicalPlanner::CreateJoinSchema(const common::Schema& le
     common::Schema join_schema{};
 
     // Add fields from left schema
-    for (const auto& field : left_schema.columns()) {
+    for (const auto& field : left_schema.Columns()) {
         join_schema.AddField(field.name, field.type, field.nullability);
     }
 
     // Add fields from right schema
-    for (const auto& field : right_schema.columns()) {
+    for (const auto& field : right_schema.Columns()) {
         join_schema.AddField(field.name, field.type, field.nullability);
     }
 
@@ -484,8 +484,8 @@ Result<std::shared_ptr<LogicalPlanNode>> LogicalPlanner::PlanProjection(const st
         // For SELECT *, we create column expressions for each field in the input schema
         std::vector<std::shared_ptr<Expression>> expr_list;
         const auto& input_schema = input->OutputSchema();
-        expr_list.reserve(input_schema.num_columns());
-        for (const auto& field : input_schema.columns()) {
+        expr_list.reserve(input_schema.NumColumns());
+        for (const auto& field : input_schema.Columns()) {
             expr_list.push_back(std::make_shared<ColumnExpression>("", field.name));
         }
         return Result<std::shared_ptr<LogicalPlanNode>>::success(

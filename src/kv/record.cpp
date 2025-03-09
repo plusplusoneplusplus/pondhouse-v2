@@ -109,7 +109,7 @@ common::DataChunk Record::Serialize() const {
     // Format:
     // | num_columns (4B) | null_bitmap | value_lengths | values |
 
-    size_t num_columns = schema_->num_columns();
+    size_t num_columns = schema_->NumColumns();
     std::vector<uint8_t> null_bitmap((num_columns + 7) / 8, 0);
     std::vector<uint32_t> value_lengths(num_columns, 0);
     size_t total_values_size = 0;
@@ -172,7 +172,7 @@ common::Result<std::unique_ptr<Record>> Record::Deserialize(const common::DataCh
     ptr += sizeof(num_columns);
     remaining -= sizeof(num_columns);
 
-    if (num_columns != schema->num_columns()) {
+    if (num_columns != schema->NumColumns()) {
         return common::Result<std::unique_ptr<Record>>::failure(common::ErrorCode::InvalidOperation, "Schema mismatch");
     }
 

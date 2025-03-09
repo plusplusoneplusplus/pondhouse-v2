@@ -92,7 +92,7 @@ TEST_F(RecordTest, SerializationDeserialization) {
     EXPECT_EQ(deserialized->Get<bool>(4).value(), true);
 
     // Verify null status matches
-    for (size_t i = 0; i < schema->num_columns(); i++) {
+    for (size_t i = 0; i < schema->NumColumns(); i++) {
         EXPECT_EQ(original.IsNull(i), deserialized->IsNull(i));
     }
 }
@@ -122,13 +122,13 @@ TEST_F(RecordTest, SchemaOperations) {
     EXPECT_EQ(schema->GetColumnIndex("nonexistent"), -1);
 
     // Test schema column access
-    EXPECT_EQ(schema->columns()[0].name, "id");
-    EXPECT_EQ(schema->columns()[0].type, common::ColumnType::INT32);
-    EXPECT_EQ(schema->columns()[0].nullability, common::Nullability::NOT_NULL);
+    EXPECT_EQ(schema->Columns()[0].name, "id");
+    EXPECT_EQ(schema->Columns()[0].type, common::ColumnType::INT32);
+    EXPECT_EQ(schema->Columns()[0].nullability, common::Nullability::NOT_NULL);
 
-    EXPECT_EQ(schema->columns()[1].name, "name");
-    EXPECT_EQ(schema->columns()[1].type, common::ColumnType::STRING);
-    EXPECT_EQ(schema->columns()[1].nullability, common::Nullability::NULLABLE);
+    EXPECT_EQ(schema->Columns()[1].name, "name");
+    EXPECT_EQ(schema->Columns()[1].type, common::ColumnType::STRING);
+    EXPECT_EQ(schema->Columns()[1].nullability, common::Nullability::NULLABLE);
 }
 
 TEST_F(RecordTest, LargeValues) {

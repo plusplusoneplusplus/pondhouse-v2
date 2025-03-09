@@ -336,7 +336,7 @@ Result<std::shared_ptr<LogicalPlanNode>> ColumnPruning::PruneColumns(std::shared
             common::Schema new_schema{};
             std::set<std::string> unique_columns(required_columns.begin(), required_columns.end());
 
-            for (const auto& field : scan->OutputSchema().columns()) {
+            for (const auto& field : scan->OutputSchema().Columns()) {
                 if (unique_columns.find(field.name) != unique_columns.end()) {
                     new_schema.AddField(field.name, field.type, field.nullability);
                 }
@@ -391,10 +391,10 @@ Result<std::shared_ptr<LogicalPlanNode>> ColumnPruning::PruneColumns(std::shared
 
             // Create new output schema combining pruned children schemas
             common::Schema new_schema{};
-            for (const auto& field : left_result.value()->OutputSchema().columns()) {
+            for (const auto& field : left_result.value()->OutputSchema().Columns()) {
                 new_schema.AddField(field.name, field.type, field.nullability);
             }
-            for (const auto& field : right_result.value()->OutputSchema().columns()) {
+            for (const auto& field : right_result.value()->OutputSchema().Columns()) {
                 new_schema.AddField(field.name, field.type, field.nullability);
             }
 

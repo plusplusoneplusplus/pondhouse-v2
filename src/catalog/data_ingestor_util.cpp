@@ -271,11 +271,11 @@ namespace pond::catalog {
 
             // First, find the field name in the schema by source_id
             std::string field_name;
-            for (size_t i = 0; i < metadata.schema->columns().size(); i++) {
+            for (size_t i = 0; i < metadata.schema->Columns().size(); i++) {
                 // In a real implementation, we would need a way to map field IDs to column indices
                 // For now, we'll assume the field ID matches the column index
                 if (static_cast<int>(i) == field.source_id) {
-                    field_name = metadata.schema->columns()[i].name;
+                    field_name = metadata.schema->Columns()[i].name;
                     break;
                 }
             }

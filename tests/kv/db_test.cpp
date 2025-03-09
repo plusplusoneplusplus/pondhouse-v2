@@ -69,7 +69,7 @@ TEST_F(DBTest, CreateAndGetTable) {
     auto table_result = db_->GetTable("test_table");
     VERIFY_RESULT(table_result);
     auto table = table_result.value();
-    EXPECT_EQ(table->schema()->num_columns(), schema->num_columns());
+    EXPECT_EQ(table->schema()->NumColumns(), schema->NumColumns());
 
     // Try to create the same table again
     auto result = db_->CreateTable("test_table", schema);

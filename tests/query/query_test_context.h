@@ -148,8 +148,6 @@ public:
                     GetArrowSchema("users"), row_count, {id_array, name_array, age_array, salary_array});
 
                 batches.push_back(batch);
-
-                IngestData("users", batch);
             }
         } else {
             throw std::invalid_argument("Unsupported table name: " + table_name);

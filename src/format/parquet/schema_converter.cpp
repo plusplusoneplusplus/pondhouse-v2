@@ -46,9 +46,9 @@ std::shared_ptr<arrow::Field> SchemaConverter::ToArrowField(const common::Column
 
 common::Result<std::shared_ptr<arrow::Schema>> SchemaConverter::ToArrowSchema(const common::Schema& schema) {
     std::vector<std::shared_ptr<arrow::Field>> fields;
-    fields.reserve(schema.num_columns());
+    fields.reserve(schema.NumColumns());
 
-    for (const auto& column : schema.columns()) {
+    for (const auto& column : schema.Columns()) {
         auto arrow_type = ToArrowDataType(column.type);
         if (!arrow_type) {
             return common::Result<std::shared_ptr<arrow::Schema>>::failure(
