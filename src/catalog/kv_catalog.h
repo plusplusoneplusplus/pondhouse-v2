@@ -82,6 +82,9 @@ public:
     // Partition spec evolution
     common::Result<TableMetadata> UpdatePartitionSpec(const std::string& name, const PartitionSpec& new_spec) override;
 
+    // Table listing
+    common::Result<std::vector<std::string>> ListTables() override;
+
 protected:
     // Initialize the catalog tables
     common::Result<void> Initialize();

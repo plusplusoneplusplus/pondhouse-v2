@@ -733,4 +733,34 @@ common::Result<TableMetadata> KVCatalog::UpdateTableProperties(
     return common::Result<TableMetadata>::success(updated);
 }
 
+// Table listing operation
+common::Result<std::vector<std::string>> KVCatalog::ListTables() {
+    using ReturnType = common::Result<std::vector<std::string>>;
+    
+    auto lock = std::unique_lock(mutex_);
+    
+    // Scan all entries in the tables table
+    auto scan_result = tables_table_->ScanPrefix("");
+    if (!scan_result.ok()) {
+        return ReturnType::failure(scan_result.error());
+    }
+    
+    std::vector<std::string> table_names;
+    auto iterator = scan_result.value();
+    
+    // Iterate through all records and collect table names
+    while (iterator->Valid()) {
+        const std::string& key = iterator->key();
+        
+        // Skip any system tables (those starting with __)
+        if (!key.empty() && !key.starts_with("__")) {
+            table_names.push_back(key);
+        }
+        
+        iterator->Next();
+    }
+    
+    return ReturnType::success(std::move(table_names));
+}
+
 }  // namespace pond::catalog

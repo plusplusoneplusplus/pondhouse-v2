@@ -623,4 +623,69 @@ TEST_F(KVCatalogTest, MultipleSnapshotsSerializationDeserialization) {
     EXPECT_EQ(metadata.snapshots[3].parent_snapshot_id, 2);
 }
 
+//
+// Test Setup:
+//      Create several tables and then list them
+// Test Result:
+//      Should return all table names correctly
+//
+TEST_F(KVCatalogTest, ListTables) {
+    auto schema = CreateTestSchema();
+    auto spec = CreateTestPartitionSpec();
+    
+    // Create a few tables
+    VERIFY_RESULT(catalog_->CreateTable("users", schema, spec, "/data/users"));
+    VERIFY_RESULT(catalog_->CreateTable("products", schema, spec, "/data/products"));
+    VERIFY_RESULT(catalog_->CreateTable("orders", schema, spec, "/data/orders"));
+    
+    // List all tables
+    auto result = catalog_->ListTables();
+    VERIFY_RESULT(result);
+    
+    auto tables = result.value();
+    
+    // Check that all tables are listed
+    EXPECT_EQ(tables.size(), 3);
+    
+    // Sort the table names for consistent testing
+    std::sort(tables.begin(), tables.end());
+    
+    // Verify the table names
+    EXPECT_EQ(tables[0], "orders");
+    EXPECT_EQ(tables[1], "products");
+    EXPECT_EQ(tables[2], "users");
+    
+    // Add another table
+    VERIFY_RESULT(catalog_->CreateTable("customers", schema, spec, "/data/customers"));
+    
+    // List tables again
+    result = catalog_->ListTables();
+    VERIFY_RESULT(result);
+    
+    tables = result.value();
+    EXPECT_EQ(tables.size(), 4);
+    
+    // Sort and verify again
+    std::sort(tables.begin(), tables.end());
+    EXPECT_EQ(tables[0], "customers");
+    EXPECT_EQ(tables[1], "orders");
+    EXPECT_EQ(tables[2], "products");
+    EXPECT_EQ(tables[3], "users");
+    
+    // Drop a table and verify it's removed from the list
+    VERIFY_RESULT(catalog_->DropTable("products"));
+    
+    result = catalog_->ListTables();
+    VERIFY_RESULT(result);
+    
+    tables = result.value();
+    EXPECT_EQ(tables.size(), 3);
+    
+    // Sort and verify again
+    std::sort(tables.begin(), tables.end());
+    EXPECT_EQ(tables[0], "customers");
+    EXPECT_EQ(tables[1], "orders");
+    EXPECT_EQ(tables[2], "users");
+}
+
 }  // namespace pond::catalog

@@ -51,6 +51,9 @@ public:
     // Partition spec evolution
     virtual common::Result<TableMetadata> UpdatePartitionSpec(const std::string& name,
                                                               const PartitionSpec& new_spec) = 0;
+
+    // Table listing
+    virtual common::Result<std::vector<std::string>> ListTables() = 0;
 };
 
 }  // namespace pond::catalog
