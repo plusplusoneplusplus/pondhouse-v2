@@ -105,6 +105,59 @@ public:
 
     std::shared_ptr<arrow::Schema> GetArrowSchema(std::string name) { return tables_[name]->ArrowSchema(); }
 
+    std::vector<std::shared_ptr<arrow::RecordBatch>> GetSampleBatches(std::string table_name,
+                                                                      int row_count = 5,
+                                                                      int batch_count = 3) {
+        std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+        if (table_name == "users") {
+            for (int batch_idx = 0; batch_idx < batch_count; batch_idx++) {
+                // Create Arrow arrays
+                arrow::Int32Builder id_builder;
+                arrow::StringBuilder name_builder;
+                arrow::Int32Builder age_builder;
+                arrow::DoubleBuilder salary_builder;
+
+                // Each batch has 5 rows
+                // e.g.
+                // batch 0:
+                // id: [1, 2, 3, 4, 5]
+                // name: ["User1", "User2", "User3", "User4", "User5"]
+                // age: [20, 21, 22, 23, 24]
+                // salary: [10000.0, 20000.0, 30000.0, 40000.0, 50000.0]
+                for (int row_idx = 0; row_idx < row_count; row_idx++) {
+                    int id = batch_idx * row_count + row_idx + 1;
+                    std::string name = "User" + std::to_string(id);
+                    // Ages: batch 0: 20-24, batch 1: 30-34, batch 2: 40-44
+                    int age = (batch_idx + 2) * 10 + row_idx;
+                    double salary = (batch_idx + 2) * 10000.0 + row_idx * 10000.0;
+
+                    EXPECT_TRUE(id_builder.Append(id).ok());
+                    EXPECT_TRUE(name_builder.Append(name).ok());
+                    EXPECT_TRUE(age_builder.Append(age).ok());
+                    EXPECT_TRUE(salary_builder.Append(salary).ok());
+                }
+
+                // Create arrays
+                std::shared_ptr<arrow::Array> id_array, name_array, age_array, salary_array;
+                EXPECT_TRUE(id_builder.Finish(&id_array).ok());
+                EXPECT_TRUE(name_builder.Finish(&name_array).ok());
+                EXPECT_TRUE(age_builder.Finish(&age_array).ok());
+                EXPECT_TRUE(salary_builder.Finish(&salary_array).ok());
+
+                auto batch = arrow::RecordBatch::Make(
+                    GetArrowSchema("users"), row_count, {id_array, name_array, age_array, salary_array});
+
+                batches.push_back(batch);
+
+                IngestData("users", batch);
+            }
+        } else {
+            throw std::invalid_argument("Unsupported table name: " + table_name);
+        }
+
+        return batches;
+    }
+
 public:
     std::string catalog_name_;
     std::unordered_map<std::string, std::unique_ptr<TestTableInfo>> tables_;

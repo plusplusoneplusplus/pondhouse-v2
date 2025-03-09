@@ -46,19 +46,10 @@ common::Result<bool> SequentialScanIterator::PrepareNextFile() {
 
     current_reader_ = std::move(reader_result).value();
 
-    // Get column names from projections if available
-    std::vector<std::string> column_names;
-    if (!projections_.empty()) {
-        for (const auto& proj : projections_) {
-            if (auto col_expr = std::dynamic_pointer_cast<common::ColumnExpression>(proj)) {
-                column_names.push_back(col_expr->ColumnName());
-            }
-        }
-    }
-
     // Get a batch reader with column selection if specified
-    auto batch_reader_result =
-        column_names.empty() ? current_reader_->GetBatchReader() : current_reader_->GetBatchReader(column_names);
+    auto batch_reader_result = projection_column_names_.empty()
+                                   ? current_reader_->GetBatchReader()
+                                   : current_reader_->GetBatchReader(projection_column_names_);
 
     if (!batch_reader_result.ok()) {
         return common::Result<bool>::failure(batch_reader_result.error());

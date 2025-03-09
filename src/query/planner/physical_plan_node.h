@@ -11,6 +11,7 @@
 #include "common/schema.h"
 #include "common/uuid.h"
 #include "logical_plan_node.h"
+#include "query/data/arrow_util.h"
 
 namespace pond::query {
 
@@ -33,7 +34,7 @@ enum class PhysicalNodeType {
     ShuffleExchange
 };
 
-using ArrowDataBatchSharedPtr = std::shared_ptr<arrow::RecordBatch>;
+std::string PhysicalNodeTypeToString(PhysicalNodeType type);
 
 /**
  * @brief Base class for all physical plan nodes
@@ -105,6 +106,8 @@ public:
 
     const std::shared_ptr<common::Expression>& Predicate() const { return predicate_; }
     const std::optional<common::Schema>& ProjectionSchema() const { return projection_schema_; }
+
+    bool HasProjections() const { return projection_schema_.has_value(); }
 
     std::optional<size_t> Limit() const { return limit_; }
     std::optional<size_t> Offset() const { return offset_; }

@@ -74,66 +74,15 @@ protected:
         data_accessor_ = std::make_shared<CatalogDataAccessor>(catalog_, fs_);
 
         // Create sample data for tests
-        CreateSampleData();
-    }
-
-    void CreateSampleData() {
-        // Create three sample batches with test data
-        sample_batches_.clear();
-
-        for (int batch_idx = 0; batch_idx < 3; batch_idx++) {
-            // Create Arrow arrays
-            arrow::Int32Builder id_builder;
-            arrow::StringBuilder name_builder;
-            arrow::Int32Builder age_builder;
-
-            // Each batch has 5 rows
-            // e.g.
-            // batch 0:
-            // id: [1, 2, 3, 4, 5]
-            // name: ["User1", "User2", "User3", "User4", "User5"]
-            // age: [20, 21, 22, 23, 24]
-            for (int row_idx = 0; row_idx < 5; row_idx++) {
-                int id = batch_idx * 5 + row_idx + 1;
-                std::string name = "User" + std::to_string(id);
-                // Ages: batch 0: 20-24, batch 1: 30-34, batch 2: 40-44
-                int age = (batch_idx + 2) * 10 + row_idx;
-
-                EXPECT_TRUE(id_builder.Append(id).ok());
-                EXPECT_TRUE(name_builder.Append(name).ok());
-                EXPECT_TRUE(age_builder.Append(age).ok());
-            }
-
-            // Create arrays
-            std::shared_ptr<arrow::Array> id_array, name_array, age_array;
-            EXPECT_TRUE(id_builder.Finish(&id_array).ok());
-            EXPECT_TRUE(name_builder.Finish(&name_array).ok());
-            EXPECT_TRUE(age_builder.Finish(&age_array).ok());
-
-            // Create record batch
-            auto schema = arrow::schema({arrow::field("id", arrow::int32()),
-                                         arrow::field("name", arrow::utf8()),
-                                         arrow::field("age", arrow::int32())});
-            auto batch = arrow::RecordBatch::Make(schema, 5, {id_array, name_array, age_array});
-
-            sample_batches_.push_back(batch);
-        }
-
-        // Create schema for test data
-        sample_schema_ = common::CreateSchemaBuilder()
-                             .AddField("id", common::ColumnType::INT32)
-                             .AddField("name", common::ColumnType::STRING)
-                             .AddField("age", common::ColumnType::INT32)
-                             .Build();
+        sample_batches_ = GetSampleBatches("users");
     }
 
     std::unique_ptr<MockOperatorIterator> NewMockIterator() {
-        return std::make_unique<MockOperatorIterator>(*sample_schema_, sample_batches_);
+        return std::make_unique<MockOperatorIterator>(*GetSchema("users"), sample_batches_);
     }
 
     std::shared_ptr<DataAccessor> data_accessor_;
     std::vector<std::shared_ptr<arrow::RecordBatch>> sample_batches_;
-    std::shared_ptr<common::Schema> sample_schema_;
 };
 
 //
@@ -157,7 +106,7 @@ TEST_F(OperatorIteratorsTest, MockOperatorIterator) {
     // Get schema and verify
     auto schema_result = mock_iterator->GetSchema();
     ASSERT_TRUE(schema_result.ok());
-    ASSERT_EQ(3, schema_result.value().FieldCount());
+    ASSERT_EQ(4, schema_result.value().FieldCount());
 
     // Get all batches
     int batch_count = 0;
@@ -202,7 +151,7 @@ TEST_F(OperatorIteratorsTest, FilterIterator) {
     auto mock_iterator = NewMockIterator();
 
     // Create the filter iterator
-    auto filter_iterator = std::make_unique<FilterIterator>(std::move(mock_iterator), predicate, *sample_schema_);
+    auto filter_iterator = std::make_unique<FilterIterator>(std::move(mock_iterator), predicate, *GetSchema("users"));
 
     // Initialize the iterator
     auto init_result = filter_iterator->Initialize();
@@ -306,11 +255,7 @@ TEST_F(OperatorIteratorsTest, ProjectionIterator) {
 //
 TEST_F(OperatorIteratorsTest, SequentialScanIterator) {
     // Set up a separate table with multiple files for scanning
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("age", common::ColumnType::INT32)
-                      .Build();
+    auto schema = GetSchema("users");
 
     // Create "scan_test" table
     catalog::PartitionSpec spec;  // empty partition spec
@@ -322,23 +267,11 @@ TEST_F(OperatorIteratorsTest, SequentialScanIterator) {
     VERIFY_RESULT(ingestor_result);
     auto ingestor = std::move(ingestor_result).value();
 
-    // Create and ingest multiple batches to create multiple files
-    for (int i = 0; i < 3; i++) {
-        // Use sample batches we already created
-        auto ingest_result = ingestor->IngestBatch(sample_batches_[i]);
-        VERIFY_RESULT(ingest_result);
-
-        // Commit after each batch to create multiple files
-        auto commit_result = ingestor->Commit();
-        VERIFY_RESULT(commit_result);
-    }
+    ingestor->IngestBatches(sample_batches_);
 
     // Create a scan iterator for the table
-    auto scan_iterator = std::make_unique<SequentialScanIterator>(data_accessor_,
-                                                                  "scan_test",
-                                                                  std::shared_ptr<common::Expression>(),
-                                                                  std::vector<std::shared_ptr<common::Expression>>{},
-                                                                  *schema);
+    auto scan_iterator = std::make_unique<SequentialScanIterator>(
+        data_accessor_, "scan_test", std::shared_ptr<common::Expression>(), std::vector<std::string>{}, *schema);
 
     // Initialize the iterator
     auto init_result = scan_iterator->Initialize();
@@ -369,17 +302,127 @@ TEST_F(OperatorIteratorsTest, SequentialScanIterator) {
 
 //
 // Test Setup:
+//      Create a SequentialScanIterator with specific column projections
+// Test Result:
+//      Should return data with only the projected columns
+//
+TEST_F(OperatorIteratorsTest, SequentialScanWithProjection) {
+    // We'll reuse the "scan_test" table already created in SequentialScanIterator test
+    // This table has schema: id (INT32), name (STRING), age (INT32)
+    // And contains 3 batches of data (total 15 rows)
+
+    // Test 1: Project only id and name columns
+    {
+        // Create a projection schema with only id and name
+        auto projection_schema = common::CreateSchemaBuilder()
+                                     .AddField("id", common::ColumnType::INT32)
+                                     .AddField("name", common::ColumnType::STRING)
+                                     .Build();
+
+        // Create scan iterator with projection
+        auto scan_iterator = std::make_unique<SequentialScanIterator>(data_accessor_,
+                                                                      "users",
+                                                                      std::shared_ptr<common::Expression>(),
+                                                                      std::vector<std::string>{"id", "name"},
+                                                                      *projection_schema);
+
+        // Initialize the iterator
+        auto init_result = scan_iterator->Initialize();
+        VERIFY_RESULT(init_result);
+        ASSERT_TRUE(init_result.value());
+
+        // Verify HasNext works
+        ASSERT_TRUE(scan_iterator->HasNext());
+
+        // Collect all batches
+        std::vector<std::shared_ptr<arrow::RecordBatch>> result_batches;
+        int total_rows = 0;
+
+        while (scan_iterator->HasNext()) {
+            auto batch_result = scan_iterator->Next();
+            ASSERT_TRUE(batch_result.ok());
+            auto batch = batch_result.value();
+            ASSERT_NE(nullptr, batch);
+
+            // Verify each batch has only the projected columns
+            ASSERT_EQ(2, batch->num_columns());
+            ASSERT_EQ("id", batch->schema()->field(0)->name());
+            ASSERT_EQ("name", batch->schema()->field(1)->name());
+
+            result_batches.push_back(batch);
+            total_rows += batch->num_rows();
+        }
+
+        // Verify we got all the data
+        ASSERT_EQ(15, total_rows);  // 3 batches * 5 rows
+
+        // Verify data in the first batch
+        if (!result_batches.empty()) {
+            auto first_batch = result_batches[0];
+            auto id_array = std::static_pointer_cast<arrow::Int32Array>(first_batch->column(0));
+            auto name_array = std::static_pointer_cast<arrow::StringArray>(first_batch->column(1));
+
+            // Check first row of the first batch
+            ASSERT_EQ(1, id_array->Value(0));
+            ASSERT_EQ("User1", name_array->GetString(0));
+        }
+    }
+
+    // Test 2: Project only id and age columns
+    {
+        // Create a projection schema with only id and age
+        auto projection_schema = common::CreateSchemaBuilder()
+                                     .AddField("id", common::ColumnType::INT32)
+                                     .AddField("age", common::ColumnType::INT32)
+                                     .Build();
+
+        // Create scan iterator with projection
+        auto scan_iterator = std::make_unique<SequentialScanIterator>(data_accessor_,
+                                                                      "users",
+                                                                      std::shared_ptr<common::Expression>(),
+                                                                      std::vector<std::string>{"id", "age"},
+                                                                      *projection_schema);
+
+        // Initialize the iterator
+        auto init_result = scan_iterator->Initialize();
+        ASSERT_TRUE(init_result.ok());
+        ASSERT_TRUE(init_result.value());
+
+        // Verify HasNext works
+        ASSERT_TRUE(scan_iterator->HasNext());
+
+        // Get the first batch
+        auto batch_result = scan_iterator->Next();
+        ASSERT_TRUE(batch_result.ok());
+        auto batch = batch_result.value();
+
+        // Verify the batch has only the projected columns
+        ASSERT_EQ(2, batch->num_columns());
+        ASSERT_EQ("id", batch->schema()->field(0)->name());
+        ASSERT_EQ("age", batch->schema()->field(1)->name());
+
+        // Verify content of the first batch
+        auto id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+        auto age_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(1));
+
+        // Check data in the first batch
+        for (int i = 0; i < batch->num_rows(); i++) {
+            // Based on the sample data creation, first batch has ids 1-5 and ages 20-24
+            ASSERT_EQ(i + 1, id_array->Value(i));
+            ASSERT_EQ(20 + i, age_array->Value(i));
+        }
+    }
+}
+
+//
+// Test Setup:
 //      Chain multiple iterators together (scan + filter + project)
 // Test Result:
 //      Should correctly process data through the entire pipeline
 //
 TEST_F(OperatorIteratorsTest, ChainedIterators) {
     // Set up a separate table with test data
-    auto schema = common::CreateSchemaBuilder()
-                      .AddField("id", common::ColumnType::INT32)
-                      .AddField("name", common::ColumnType::STRING)
-                      .AddField("age", common::ColumnType::INT32)
-                      .Build();
+    auto schema = GetSchema("users");
 
     // Create "chain_test" table
     catalog::PartitionSpec spec;  // empty partition spec
@@ -403,11 +446,8 @@ TEST_F(OperatorIteratorsTest, ChainedIterators) {
     }
 
     // Step 1: Create a scan iterator
-    auto scan_iterator = std::make_unique<SequentialScanIterator>(data_accessor_,
-                                                                  "chain_test",
-                                                                  std::shared_ptr<common::Expression>(),
-                                                                  std::vector<std::shared_ptr<common::Expression>>{},
-                                                                  *schema);
+    auto scan_iterator = std::make_unique<SequentialScanIterator>(
+        data_accessor_, "chain_test", std::shared_ptr<common::Expression>(), std::vector<std::string>{}, *schema);
 
     // Step 2: Create a filter iterator (age >= 30)
     auto age_column = common::MakeColumn("", "age");
@@ -471,8 +511,8 @@ TEST_F(OperatorIteratorsTest, ErrorHandling) {
     auto scan_iterator = std::make_unique<SequentialScanIterator>(data_accessor_,
                                                                   "non_existent_table",
                                                                   std::shared_ptr<common::Expression>(),
-                                                                  std::vector<std::shared_ptr<common::Expression>>{},
-                                                                  *sample_schema_);
+                                                                  std::vector<std::string>{},
+                                                                  *GetSchema("users"));
 
     // Initialize should fail
     auto init_result = scan_iterator->Initialize();

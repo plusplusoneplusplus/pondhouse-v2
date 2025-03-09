@@ -66,13 +66,13 @@ public:
     SequentialScanIterator(std::shared_ptr<DataAccessor> data_accessor,
                            const std::string& table_name,
                            std::shared_ptr<common::Expression> predicate,
-                           const std::vector<std::shared_ptr<common::Expression>>& projections,
+                           const std::vector<std::string>& projection_column_names,
                            common::Schema output_schema)
         : BaseOperatorIterator(std::move(output_schema)),
           data_accessor_(std::move(data_accessor)),
           table_name_(table_name),
           predicate_(std::move(predicate)),
-          projections_(projections),
+          projection_column_names_(projection_column_names),
           current_file_index_(0),
           current_batch_reader_(),
           has_more_batches_(false) {}
@@ -96,7 +96,7 @@ private:
     std::shared_ptr<DataAccessor> data_accessor_;
     std::string table_name_;
     std::shared_ptr<common::Expression> predicate_;
-    std::vector<std::shared_ptr<common::Expression>> projections_;
+    std::vector<std::string> projection_column_names_;
 
     // Execution state
     std::vector<catalog::DataFile> files_;

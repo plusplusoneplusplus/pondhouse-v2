@@ -7,6 +7,35 @@ using namespace pond::common;
 
 namespace pond::query {
 
+std::string PhysicalNodeTypeToString(PhysicalNodeType type) {
+    switch (type) {
+        case PhysicalNodeType::SequentialScan:
+            return "SequentialScan";
+        case PhysicalNodeType::IndexScan:
+            return "IndexScan";
+        case PhysicalNodeType::Filter:
+            return "Filter";
+        case PhysicalNodeType::Projection:
+            return "Projection";
+        case PhysicalNodeType::HashJoin:
+            return "HashJoin";
+        case PhysicalNodeType::NestedLoopJoin:
+            return "NestedLoopJoin";
+        case PhysicalNodeType::HashAggregate:
+            return "HashAggregate";
+        case PhysicalNodeType::SortAggregate:
+            return "SortAggregate";
+        case PhysicalNodeType::Sort:
+            return "Sort";
+        case PhysicalNodeType::Limit:
+            return "Limit";
+        case PhysicalNodeType::ShuffleExchange:
+            return "ShuffleExchange";
+        default:
+            return "Unknown";
+    }
+}
+
 void PhysicalSequentialScanNode::Accept(PhysicalPlanVisitor& visitor) {
     visitor.Visit(*this);
 }

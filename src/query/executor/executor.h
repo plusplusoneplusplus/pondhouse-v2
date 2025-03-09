@@ -4,11 +4,10 @@
 
 #include "common/result.h"
 #include "common/schema.h"
+#include "query/data/arrow_util.h"
 #include "query/planner/physical_plan_node.h"
 
 namespace pond::query {
-
-using ArrowDataBatchSharedPtr = std::shared_ptr<arrow::RecordBatch>;
 
 /**
  * @brief Interface for query executors
