@@ -1,4 +1,4 @@
-#include "query/executor/simple_executor.h"
+#include "query/executor/materialized_executor.h"
 
 #include <arrow/api.h>
 #include <arrow/compute/api.h>
@@ -15,12 +15,13 @@
 
 namespace pond::query {
 
-SimpleExecutor::SimpleExecutor(std::shared_ptr<catalog::Catalog> catalog, std::shared_ptr<DataAccessor> data_accessor)
+MaterializedExecutor::MaterializedExecutor(std::shared_ptr<catalog::Catalog> catalog,
+                                           std::shared_ptr<DataAccessor> data_accessor)
     : catalog_(std::move(catalog)),
       data_accessor_(std::move(data_accessor)),
       current_result_(common::Result<ArrowDataBatchSharedPtr>::success(nullptr)) {}
 
-common::Result<ArrowDataBatchSharedPtr> SimpleExecutor::execute(std::shared_ptr<PhysicalPlanNode> plan) {
+common::Result<ArrowDataBatchSharedPtr> MaterializedExecutor::Execute(std::shared_ptr<PhysicalPlanNode> plan) {
     // Reset the current batch and result
     current_batch_ = nullptr;
     current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(nullptr);
@@ -37,11 +38,11 @@ common::Result<ArrowDataBatchSharedPtr> SimpleExecutor::execute(std::shared_ptr<
     return current_result_;
 }
 
-common::Result<ArrowDataBatchSharedPtr> SimpleExecutor::CurrentBatch() const {
+common::Result<ArrowDataBatchSharedPtr> MaterializedExecutor::CurrentBatch() const {
     return current_result_;
 }
 
-common::Result<ArrowDataBatchSharedPtr> SimpleExecutor::ExecuteChildren(PhysicalPlanNode& node) {
+common::Result<ArrowDataBatchSharedPtr> MaterializedExecutor::ExecuteChildren(PhysicalPlanNode& node) {
     // If the node has children, execute them first
     if (!node.Children().empty()) {
         for (const auto& child : node.Children()) {
@@ -55,12 +56,12 @@ common::Result<ArrowDataBatchSharedPtr> SimpleExecutor::ExecuteChildren(Physical
     return current_result_;
 }
 
-common::Result<bool> SimpleExecutor::ProduceResults(const common::Schema& schema) {
+common::Result<bool> MaterializedExecutor::ProduceResults(const common::Schema& schema) {
     // Not needed for this simple implementation
     return common::Result<bool>::success(true);
 }
 
-void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
+void MaterializedExecutor::Visit(PhysicalSequentialScanNode& node) {
     // Get the table name from the node
     const std::string& table_name = node.TableName();
 
@@ -177,7 +178,7 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
     return;
 }
 
-void SimpleExecutor::Visit(PhysicalFilterNode& node) {
+void MaterializedExecutor::Visit(PhysicalFilterNode& node) {
     // Execute the child node first
     auto result = ExecuteChildren(node);
     if (!result.ok()) {
@@ -204,11 +205,11 @@ void SimpleExecutor::Visit(PhysicalFilterNode& node) {
 }
 
 // Minimal implementation for other operators, as we're only supporting simple SELECT *
-void SimpleExecutor::Visit(PhysicalIndexScanNode& node) {
+void MaterializedExecutor::Visit(PhysicalIndexScanNode& node) {
     current_result_ = common::Error(common::ErrorCode::NotImplemented, "Index scan not implemented in simple executor");
 }
 
-void SimpleExecutor::Visit(PhysicalProjectionNode& node) {
+void MaterializedExecutor::Visit(PhysicalProjectionNode& node) {
     // Execute the child node first
     auto child_result = ExecuteChildren(node);
     if (!child_result.ok()) {
@@ -310,29 +311,29 @@ void SimpleExecutor::Visit(PhysicalProjectionNode& node) {
     current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
 }
 
-void SimpleExecutor::Visit(PhysicalHashJoinNode& node) {
+void MaterializedExecutor::Visit(PhysicalHashJoinNode& node) {
     current_result_ = common::Error(common::ErrorCode::NotImplemented, "Hash join not implemented in simple executor");
 }
 
-void SimpleExecutor::Visit(PhysicalNestedLoopJoinNode& node) {
+void MaterializedExecutor::Visit(PhysicalNestedLoopJoinNode& node) {
     current_result_ =
         common::Error(common::ErrorCode::NotImplemented, "Nested loop join not implemented in simple executor");
 }
 
-void SimpleExecutor::Visit(PhysicalHashAggregateNode& node) {
+void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
     current_result_ =
         common::Error(common::ErrorCode::NotImplemented, "Hash aggregate not implemented in simple executor");
 }
 
-void SimpleExecutor::Visit(PhysicalSortNode& node) {
+void MaterializedExecutor::Visit(PhysicalSortNode& node) {
     current_result_ = common::Error(common::ErrorCode::NotImplemented, "Sort not implemented in simple executor");
 }
 
-void SimpleExecutor::Visit(PhysicalLimitNode& node) {
+void MaterializedExecutor::Visit(PhysicalLimitNode& node) {
     current_result_ = common::Error(common::ErrorCode::NotImplemented, "Limit not implemented in simple executor");
 }
 
-void SimpleExecutor::Visit(PhysicalShuffleExchangeNode& node) {
+void MaterializedExecutor::Visit(PhysicalShuffleExchangeNode& node) {
     current_result_ =
         common::Error(common::ErrorCode::NotImplemented, "Shuffle exchange not implemented in simple executor");
 }

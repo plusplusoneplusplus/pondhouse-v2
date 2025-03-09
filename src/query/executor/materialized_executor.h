@@ -15,19 +15,19 @@ namespace pond::query {
  * This implementation supports basic SELECT * FROM table queries
  * by executing sequential scan operations on tables.
  */
-class SimpleExecutor : public Executor {
+class MaterializedExecutor : public Executor, public PhysicalPlanVisitor {
 public:
     /**
-     * @brief Create a new SimpleExecutor
+     * @brief Create a new MaterializedExecutor
      * @param catalog The catalog to use for metadata
      * @param data_accessor The data accessor to use for reading data
      */
-    SimpleExecutor(std::shared_ptr<catalog::Catalog> catalog, std::shared_ptr<DataAccessor> data_accessor);
+    MaterializedExecutor(std::shared_ptr<catalog::Catalog> catalog, std::shared_ptr<DataAccessor> data_accessor);
 
-    ~SimpleExecutor() override = default;
+    ~MaterializedExecutor() override = default;
 
     // Execute a physical plan
-    common::Result<ArrowDataBatchSharedPtr> execute(std::shared_ptr<PhysicalPlanNode> plan) override;
+    common::Result<ArrowDataBatchSharedPtr> Execute(std::shared_ptr<PhysicalPlanNode> plan) override;
 
     // Visitor methods for different physical operators
     void Visit(PhysicalSequentialScanNode& node) override;
@@ -42,12 +42,12 @@ public:
     void Visit(PhysicalShuffleExchangeNode& node) override;
 
     // Get the current batch
-    common::Result<ArrowDataBatchSharedPtr> CurrentBatch() const override;
+    common::Result<ArrowDataBatchSharedPtr> CurrentBatch() const;
 
 protected:
     // Helper methods for execution
-    common::Result<ArrowDataBatchSharedPtr> ExecuteChildren(PhysicalPlanNode& node) override;
-    common::Result<bool> ProduceResults(const common::Schema& schema) override;
+    common::Result<ArrowDataBatchSharedPtr> ExecuteChildren(PhysicalPlanNode& node);
+    common::Result<bool> ProduceResults(const common::Schema& schema);
 
 private:
     std::shared_ptr<catalog::Catalog> catalog_;

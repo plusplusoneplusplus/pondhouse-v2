@@ -1,4 +1,4 @@
-#include "query/executor/simple_executor.h"
+#include "query/executor/materialized_executor.h"
 
 #include <arrow/api.h>
 #include <arrow/builder.h>
@@ -17,9 +17,9 @@
 
 namespace pond::query {
 
-class SimpleExecutorTest : public QueryTestContext {
+class MaterializedExecutorTest : public QueryTestContext {
 protected:
-    SimpleExecutorTest() : QueryTestContext("test_catalog") {}
+    MaterializedExecutorTest() : QueryTestContext("test_catalog") {}
 
     void SetUp() override {
         QueryTestContext::SetUp();
@@ -28,7 +28,7 @@ protected:
         data_accessor_ = std::make_shared<CatalogDataAccessor>(catalog_, fs_);
 
         // Create the executor
-        executor_ = std::make_unique<SimpleExecutor>(catalog_, data_accessor_);
+        executor_ = std::make_unique<MaterializedExecutor>(catalog_, data_accessor_);
 
         // Setup the test table and ingest data
         SetupTestTable();
@@ -118,7 +118,7 @@ protected:
     }
 
     std::shared_ptr<DataAccessor> data_accessor_;
-    std::unique_ptr<SimpleExecutor> executor_;
+    std::unique_ptr<MaterializedExecutor> executor_;
 };
 
 //
@@ -127,12 +127,12 @@ protected:
 // Test Result:
 //      Execute returns a DataBatch with 5 rows and correct column values
 //
-TEST_F(SimpleExecutorTest, SelectAllFromTable) {
+TEST_F(MaterializedExecutorTest, SelectAllFromTable) {
     // Create a simple scan plan
     auto plan = CreateScanPlan();
 
     // Execute the plan
-    auto result = executor_->execute(plan);
+    auto result = executor_->Execute(plan);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -164,7 +164,7 @@ TEST_F(SimpleExecutorTest, SelectAllFromTable) {
 // Test Result:
 //      Execute returns an empty DataBatch with the correct schema
 //
-TEST_F(SimpleExecutorTest, SelectFromEmptyTable) {
+TEST_F(MaterializedExecutorTest, SelectFromEmptyTable) {
     // Create a new empty table using the context
     auto empty_schema = common::CreateSchemaBuilder()
                             .AddField("col1", common::ColumnType::INT32)
@@ -179,7 +179,7 @@ TEST_F(SimpleExecutorTest, SelectFromEmptyTable) {
     auto plan = std::make_shared<PhysicalSequentialScanNode>("empty_table", *empty_schema);
 
     // Execute the plan
-    auto result = executor_->execute(plan);
+    auto result = executor_->Execute(plan);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -196,12 +196,12 @@ TEST_F(SimpleExecutorTest, SelectFromEmptyTable) {
 // Test Result:
 //      Execute returns an error result
 //
-TEST_F(SimpleExecutorTest, InvalidTable) {
+TEST_F(MaterializedExecutorTest, InvalidTable) {
     // Create a scan plan for a non-existent table
     auto plan = std::make_shared<PhysicalSequentialScanNode>("non_existent_table", *GetSchema("users"));
 
     // Execute the plan
-    auto result = executor_->execute(plan);
+    auto result = executor_->Execute(plan);
     ASSERT_FALSE(result.ok()) << "Execution should fail for non-existent table";
 }
 
@@ -212,7 +212,7 @@ TEST_F(SimpleExecutorTest, InvalidTable) {
 // Test Result:
 //      Query execution returns the correct data batch with all 5 rows
 //
-TEST_F(SimpleExecutorTest, ExecuteSQLQuery) {
+TEST_F(MaterializedExecutorTest, ExecuteSQLQuery) {
     // Create SQL query
     std::string sql_query = "SELECT * FROM users";
 
@@ -222,7 +222,7 @@ TEST_F(SimpleExecutorTest, ExecuteSQLQuery) {
     auto physical_plan = physical_plan_result.value();
 
     // Execute the physical plan
-    auto result = executor_->execute(physical_plan);
+    auto result = executor_->Execute(physical_plan);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -259,7 +259,7 @@ TEST_F(SimpleExecutorTest, ExecuteSQLQuery) {
 // Test Result:
 //      Execution should yield filtered results (only rows with age > 30)
 //
-TEST_F(SimpleExecutorTest, ExecuteSQLQueryWithFilter) {
+TEST_F(MaterializedExecutorTest, ExecuteSQLQueryWithFilter) {
     // Create SQL query with filter
     std::string sql_query = "SELECT * FROM users WHERE age > 30";
 
@@ -300,7 +300,7 @@ TEST_F(SimpleExecutorTest, ExecuteSQLQueryWithFilter) {
     inspect_plan(physical_plan);
 
     // Execute the plan
-    auto result = executor_->execute(physical_plan);
+    auto result = executor_->Execute(physical_plan);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -350,7 +350,7 @@ TEST_F(SimpleExecutorTest, ExecuteSQLQueryWithFilter) {
 // Test Result:
 //      Execute returns a DataBatch with data from all files with correct concatenation
 //
-TEST_F(SimpleExecutorTest, MultiFileQuery) {
+TEST_F(MaterializedExecutorTest, MultiFileQuery) {
     // Setup 3 files with 5 rows each
     SetupMultipleFiles(3, 5);
 
@@ -359,7 +359,7 @@ TEST_F(SimpleExecutorTest, MultiFileQuery) {
     auto schema = GetSchema("multi_users");
 
     // Execute the plan
-    auto result = executor_->execute(plan);
+    auto result = executor_->Execute(plan);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -383,7 +383,7 @@ TEST_F(SimpleExecutorTest, MultiFileQuery) {
 // Test Result:
 //      Execute returns a DataBatch with only the rows matching the filter from all files
 //
-TEST_F(SimpleExecutorTest, MultiFileQueryWithFilter) {
+TEST_F(MaterializedExecutorTest, MultiFileQueryWithFilter) {
     // Setup 3 files with 5 rows each
     SetupMultipleFiles(3, 5);
 
@@ -398,7 +398,7 @@ TEST_F(SimpleExecutorTest, MultiFileQueryWithFilter) {
     auto scan_node = std::make_shared<PhysicalSequentialScanNode>("multi_users", *schema, predicate);
 
     // Execute the plan
-    auto result = executor_->execute(scan_node);
+    auto result = executor_->Execute(scan_node);
     VERIFY_RESULT(result);
 
     // Get the batch
@@ -422,7 +422,7 @@ TEST_F(SimpleExecutorTest, MultiFileQueryWithFilter) {
 // Test Result:
 //      Execute returns a DataBatch with only the selected columns
 //
-TEST_F(SimpleExecutorTest, ProjectionTest) {
+TEST_F(MaterializedExecutorTest, ProjectionTest) {
     auto schema = GetSchema("users");
 
     // Create a scan plan
@@ -440,7 +440,7 @@ TEST_F(SimpleExecutorTest, ProjectionTest) {
     projection_node->AddChild(scan_node);
 
     // Execute the plan
-    auto result = executor_->execute(projection_node);
+    auto result = executor_->Execute(projection_node);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -474,7 +474,7 @@ TEST_F(SimpleExecutorTest, ProjectionTest) {
 // Test Result:
 //      Execute returns a DataBatch with only the selected column
 //
-TEST_F(SimpleExecutorTest, ProjectionSingleColumnTest) {
+TEST_F(MaterializedExecutorTest, ProjectionSingleColumnTest) {
     auto schema = GetSchema("users");
 
     // Create a scan plan
@@ -491,7 +491,7 @@ TEST_F(SimpleExecutorTest, ProjectionSingleColumnTest) {
     projection_node->AddChild(scan_node);
 
     // Execute the plan
-    auto result = executor_->execute(projection_node);
+    auto result = executor_->Execute(projection_node);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -521,7 +521,7 @@ TEST_F(SimpleExecutorTest, ProjectionSingleColumnTest) {
 // Test Result:
 //      Execute returns a filtered DataBatch with only the selected columns
 //
-TEST_F(SimpleExecutorTest, ProjectionAfterFilterTest) {
+TEST_F(MaterializedExecutorTest, ProjectionAfterFilterTest) {
     auto schema = GetSchema("users");
 
     // Create a scan plan
@@ -548,7 +548,7 @@ TEST_F(SimpleExecutorTest, ProjectionAfterFilterTest) {
     projection_node->AddChild(filter_node);
 
     // Execute the plan
-    auto result = executor_->execute(projection_node);
+    auto result = executor_->Execute(projection_node);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -581,7 +581,7 @@ TEST_F(SimpleExecutorTest, ProjectionAfterFilterTest) {
 // Test Result:
 //      Execute returns a DataBatch with only the selected columns from all files
 //
-TEST_F(SimpleExecutorTest, MultiFileQueryWithProjection) {
+TEST_F(MaterializedExecutorTest, MultiFileQueryWithProjection) {
     // Setup 3 files with 5 rows each
     SetupMultipleFiles(3, 5);
     auto schema = GetSchema("multi_users");
@@ -601,7 +601,7 @@ TEST_F(SimpleExecutorTest, MultiFileQueryWithProjection) {
     projection_node->AddChild(scan_node);
 
     // Execute the plan
-    auto result = executor_->execute(projection_node);
+    auto result = executor_->Execute(projection_node);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -639,7 +639,7 @@ TEST_F(SimpleExecutorTest, MultiFileQueryWithProjection) {
 // Test Result:
 //      Execute returns an error
 //
-TEST_F(SimpleExecutorTest, ProjectionInvalidColumnTest) {
+TEST_F(MaterializedExecutorTest, ProjectionInvalidColumnTest) {
     auto schema = GetSchema("users");
 
     // Create a scan plan
@@ -657,7 +657,7 @@ TEST_F(SimpleExecutorTest, ProjectionInvalidColumnTest) {
     projection_node->AddChild(scan_node);
 
     // Execute the plan
-    auto result = executor_->execute(projection_node);
+    auto result = executor_->Execute(projection_node);
 
     // Should fail because of the invalid column
     VERIFY_ERROR_CODE(result, common::ErrorCode::InvalidArgument);
@@ -671,7 +671,7 @@ TEST_F(SimpleExecutorTest, ProjectionInvalidColumnTest) {
 // Test Result:
 //      Should return only the projected columns in the result
 //
-TEST_F(SimpleExecutorTest, SequentialScanWithProjections) {
+TEST_F(MaterializedExecutorTest, SequentialScanWithProjections) {
     // Set up expected schema for the projected columns
     auto projected_schema = std::make_shared<common::Schema>(
         std::vector<common::ColumnSchema>{{"id", common::ColumnType::INT32}, {"name", common::ColumnType::STRING}});
@@ -681,7 +681,7 @@ TEST_F(SimpleExecutorTest, SequentialScanWithProjections) {
         "users", *GetSchema("users"), nullptr /* prediate */, *projected_schema);
 
     // Execute the plan
-    auto result = executor_->execute(scan_node);
+    auto result = executor_->Execute(scan_node);
     VERIFY_RESULT(result);
 
     auto batch = result.value();

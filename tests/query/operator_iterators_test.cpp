@@ -75,6 +75,9 @@ protected:
 
         // Create sample data for tests
         sample_batches_ = GetSampleBatches("users");
+        for (auto& batch : sample_batches_) {
+            IngestData("users", batch);
+        }
     }
 
     std::unique_ptr<MockOperatorIterator> NewMockIterator() {

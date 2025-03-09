@@ -65,9 +65,6 @@ public:
         return static_cast<T*>(this);
     }
 
-    // Execute this node using the provided executor
-    virtual common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) = 0;
-
 protected:
     PhysicalNodeType type_;
     common::UUID node_id_;  // Unique identifier for this node
@@ -102,7 +99,6 @@ public:
         return schema_;
     }
     void Accept(PhysicalPlanVisitor& visitor) override;
-    common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) override;
 
     const std::shared_ptr<common::Expression>& Predicate() const { return predicate_; }
     const std::optional<common::Schema>& ProjectionSchema() const { return projection_schema_; }
@@ -136,7 +132,6 @@ public:
     const std::string& IndexName() const { return index_name_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
-    common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) override;
 
 private:
     std::string table_name_;
@@ -155,7 +150,6 @@ public:
     const std::shared_ptr<common::Expression>& Predicate() const { return predicate_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
-    common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) override;
 
 private:
     std::shared_ptr<common::Expression> predicate_;
@@ -175,7 +169,6 @@ public:
     const std::vector<std::shared_ptr<common::Expression>>& Projections() const { return projections_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
-    common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) override;
 
 private:
     std::vector<std::shared_ptr<common::Expression>> projections_;
@@ -193,7 +186,6 @@ public:
     const std::shared_ptr<common::Expression>& Condition() const { return condition_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
-    common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) override;
 
 private:
     std::shared_ptr<common::Expression> condition_;
@@ -213,7 +205,6 @@ public:
     const std::shared_ptr<common::Expression>& Condition() const { return condition_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
-    common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) override;
 
 private:
     std::shared_ptr<common::Expression> condition_;
@@ -237,7 +228,6 @@ public:
     const std::vector<std::shared_ptr<common::Expression>>& Aggregates() const { return aggregates_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
-    common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) override;
 
 private:
     std::vector<std::shared_ptr<common::Expression>> group_by_;
@@ -256,7 +246,6 @@ public:
     const std::vector<SortSpec>& sortSpecs() const { return sort_specs_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
-    common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) override;
 
 private:
     std::vector<SortSpec> sort_specs_;
@@ -275,7 +264,6 @@ public:
     size_t Offset() const { return offset_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
-    common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) override;
 
 private:
     size_t limit_;
@@ -296,7 +284,6 @@ public:
     const std::vector<std::shared_ptr<common::Expression>>& PartitionBy() const { return partition_by_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
-    common::Result<ArrowDataBatchSharedPtr> Execute(Executor& executor) override;
 
 private:
     std::vector<std::shared_ptr<common::Expression>> partition_by_;
