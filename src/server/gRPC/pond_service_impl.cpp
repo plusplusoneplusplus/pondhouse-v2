@@ -7,7 +7,10 @@
 #include "common/data_chunk.h"
 #include "common/log.h"
 #include "common/result.h"
+#include "common/schema.h"
 #include "kv/db.h"
+#include "catalog/kv_catalog.h"
+#include "query/executor/sql_table_executor.h"
 
 namespace pond::server {
 
@@ -24,6 +27,15 @@ PondServiceImpl::PondServiceImpl(std::shared_ptr<pond::kv::DB> db,
     // Try to create the default table if it doesn't exist
     auto create_result = db_->CreateTable(DEFAULT_TABLE, schema);
     // Ignore error if table already exists
+
+    // Initialize the catalog
+    auto catalog_db_result = pond::kv::DB::Create(fs_, "catalog");
+    if (!catalog_db_result.ok()) {
+        LOG_ERROR("Failed to create catalog database: %s", catalog_db_result.error().message().c_str());
+        return;
+    }
+    catalog_db_ = std::move(catalog_db_result.value());
+    catalog_ = std::make_shared<pond::catalog::KVCatalog>(catalog_db_);
 }
 
 // Helper method to get the default table
@@ -255,6 +267,111 @@ grpc::Status PondServiceImpl::GetDirectoryInfo(grpc::ServerContext* context,
         response->set_error(result.error().message());
     }
 
+    return grpc::Status::OK;
+}
+
+grpc::Status PondServiceImpl::ExecuteSQL(grpc::ServerContext* context,
+                                       const pond::proto::ExecuteSQLRequest* request,
+                                       pond::proto::ExecuteSQLResponse* response) {
+    LOG_STATUS("Received ExecuteSQL request with query: %s", request->sql_query().c_str());
+
+    try {
+        // Get the SQL query
+        std::string sql_query = request->sql_query();
+        
+        // Create a SQL table executor
+        pond::query::SQLTableExecutor executor(catalog_);
+        
+        // Currently only supports CREATE TABLE statements
+        auto result = executor.ExecuteCreateTable(sql_query);
+        
+        if (result.ok()) {
+            auto metadata = result.value();
+            response->set_success(true);
+            response->set_message("Table '" + metadata.table_uuid + "' created successfully");
+        } else {
+            response->set_success(false);
+            response->set_error(result.error().message());
+        }
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error(std::string("Error executing SQL: ") + e.what());
+    }
+    
+    return grpc::Status::OK;
+}
+
+grpc::Status PondServiceImpl::ListTables(grpc::ServerContext* context,
+                                       const pond::proto::ListTablesRequest* request,
+                                       pond::proto::ListTablesResponse* response) {
+    LOG_STATUS("Received ListTables request");
+
+    // try {
+    //     // Use the catalog directly
+    //     auto result = catalog_->ListTables();
+        
+    //     if (result.ok()) {
+    //         response->set_success(true);
+    //         for (const auto& table_name : result.value()) {
+    //             response->add_table_names(table_name);
+    //         }
+    //     } else {
+    //         response->set_success(false);
+    //         response->set_error(result.error().message());
+    //     }
+    // } catch (const std::exception& e) {
+    //     response->set_success(false);
+    //     response->set_error(std::string("Error listing tables: ") + e.what());
+    // }
+    
+    return grpc::Status::OK;
+}
+
+grpc::Status PondServiceImpl::GetTableMetadata(grpc::ServerContext* context,
+                                           const pond::proto::GetTableMetadataRequest* request,
+                                           pond::proto::GetTableMetadataResponse* response) {
+    LOG_STATUS("Received GetTableMetadata request for table: %s", request->table_name().c_str());
+
+    // try {
+    //     // Use the catalog directly
+    //     auto result = catalog_->LoadTable(request->table_name());
+        
+    //     if (result.ok()) {
+    //         const auto& table_metadata = result.value();
+    //         auto* metadata = response->mutable_metadata();
+            
+    //         // Set basic metadata
+    //         metadata->set_name(table_metadata.name);
+    //         metadata->set_location(table_metadata.location);
+    //         metadata->set_last_updated_ms(table_metadata.last_updated_ms);
+            
+    //         // Set schema columns
+    //         for (const auto& column : table_metadata.schema->columns()) {
+    //             auto* col_info = metadata->add_columns();
+    //             col_info->set_name(column.name);
+    //             col_info->set_type(pond::common::ColumnTypeToString(column.type));
+    //         }
+            
+    //         // Set partition columns
+    //         for (const auto& part_col : table_metadata.partition_spec.fields()) {
+    //             metadata->add_partition_columns(part_col.source_column_name);
+    //         }
+            
+    //         // Set properties
+    //         for (const auto& [key, value] : table_metadata.properties) {
+    //             (*metadata->mutable_properties())[key] = value;
+    //         }
+            
+    //         response->set_success(true);
+    //     } else {
+    //         response->set_success(false);
+    //         response->set_error(result.error().message());
+    //     }
+    // } catch (const std::exception& e) {
+    //     response->set_success(false);
+    //     response->set_error(std::string("Error getting table metadata: ") + e.what());
+    // }
+    
     return grpc::Status::OK;
 }
 

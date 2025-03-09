@@ -7,6 +7,7 @@
 #include "common/result.h"
 #include "kv/db.h"
 #include "proto/build/proto/pond_service.grpc.pb.h"
+#include "catalog/catalog.h"
 
 namespace pond::server {
 
@@ -46,12 +47,29 @@ public:
                                   const pond::proto::DirectoryInfoRequest* request,
                                   pond::proto::DirectoryInfoResponse* response) override;
 
+    // Execute SQL query (primarily for table creation)
+    grpc::Status ExecuteSQL(grpc::ServerContext* context,
+                          const pond::proto::ExecuteSQLRequest* request,
+                          pond::proto::ExecuteSQLResponse* response) override;
+                          
+    // List all tables in the catalog
+    grpc::Status ListTables(grpc::ServerContext* context,
+                          const pond::proto::ListTablesRequest* request,
+                          pond::proto::ListTablesResponse* response) override;
+                          
+    // Get table metadata
+    grpc::Status GetTableMetadata(grpc::ServerContext* context,
+                                const pond::proto::GetTableMetadataRequest* request,
+                                pond::proto::GetTableMetadataResponse* response) override;
+
 private:
     // Helper method to get the default table
     common::Result<std::shared_ptr<pond::kv::Table>> GetDefaultTable();
 
     std::shared_ptr<pond::kv::DB> db_;
     std::shared_ptr<pond::common::IAppendOnlyFileSystem> fs_;
+    std::shared_ptr<pond::catalog::Catalog> catalog_;
+    std::shared_ptr<pond::kv::DB> catalog_db_;
 };
 
 }  // namespace pond::server

@@ -1,12 +1,13 @@
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 import grpc
 import os
 import sys
-from typing import Optional, List
+from typing import Optional, List, Dict
 from dataclasses import dataclass
+from datetime import datetime
 
 # Import generated gRPC modules
 import pond_service_pb2 as pb2
@@ -41,6 +42,21 @@ class DirectoryInfo:
 class FileSystemEntry:
     path: str
     is_directory: bool
+
+@dataclass
+class ColumnInfo:
+    name: str
+    type: str
+
+@dataclass
+class TableMetadata:
+    name: str
+    location: str
+    columns: List[ColumnInfo]
+    partition_columns: List[str]
+    properties: Dict[str, str]
+    last_updated_ms: int
+    error: Optional[str] = None
 
 def normalize_path(path: str) -> str:
     """Normalize path by handling empty paths and removing trailing slashes."""
@@ -158,8 +174,94 @@ class PondClient:
                 error=str(e)
             )
 
+    def execute_sql(self, sql_query: str) -> tuple[bool, Optional[str], Optional[str]]:
+        """
+        Execute a SQL query for table management. Currently only supports CREATE TABLE statements.
+        
+        Example: CREATE TABLE users (id INT, name STRING, email STRING)
+        
+        Returns a tuple of (success, message, error)
+        """
+        try:
+            request = pb2.ExecuteSQLRequest(sql_query=sql_query)
+            response = self.stub.ExecuteSQL(request)
+            
+            if response.success:
+                return True, response.message, None
+            return False, None, response.error
+        except Exception as e:
+            return False, None, str(e)
+    
+    def list_tables(self) -> tuple[List[str], Optional[str]]:
+        """
+        List all tables in the catalog.
+        
+        Returns a tuple of (table_names, error)
+        """
+        try:
+            request = pb2.ListTablesRequest()
+            response = self.stub.ListTables(request)
+            
+            if response.success:
+                return list(response.table_names), None
+            return [], response.error
+        except Exception as e:
+            return [], str(e)
+    
+    def get_table_metadata(self, table_name: str) -> TableMetadata:
+        """
+        Get metadata for a specific table.
+        
+        Returns TableMetadata object
+        """
+        try:
+            request = pb2.GetTableMetadataRequest(table_name=table_name)
+            response = self.stub.GetTableMetadata(request)
+            
+            if response.success:
+                meta = response.metadata
+                columns = [
+                    ColumnInfo(name=col.name, type=col.type)
+                    for col in meta.columns
+                ]
+                
+                return TableMetadata(
+                    name=meta.name,
+                    location=meta.location,
+                    columns=columns,
+                    partition_columns=list(meta.partition_columns),
+                    properties=dict(meta.properties),
+                    last_updated_ms=meta.last_updated_ms
+                )
+            else:
+                return TableMetadata(
+                    name=table_name,
+                    location="",
+                    columns=[],
+                    partition_columns=[],
+                    properties={},
+                    last_updated_ms=0,
+                    error=response.error
+                )
+        except Exception as e:
+            return TableMetadata(
+                name=table_name,
+                location="",
+                columns=[],
+                partition_columns=[],
+                properties={},
+                last_updated_ms=0,
+                error=str(e)
+            )
+
 # Create a global client instance
 pond_client = PondClient(GRPC_HOST, GRPC_PORT)
+
+# Add a timestamp filter for Jinja2
+@app.on_event("startup")
+async def startup_event():
+    # Add custom filters to Jinja2 templates
+    templates.env.filters["timestamp_to_date"] = lambda ts: datetime.fromtimestamp(ts / 1000).strftime('%Y-%m-%d %H:%M:%S')
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -304,6 +406,62 @@ async def list_files(
             "dir_info": dir_info,
             "result": result,
             "active_page": "files"
+        }
+    )
+
+@app.get("/catalog", response_class=HTMLResponse)
+async def catalog_home(request: Request):
+    tables, error = pond_client.list_tables()
+    
+    result = None
+    if error:
+        result = f"Error listing tables: {error}"
+    
+    return templates.TemplateResponse(
+        "catalog.html",
+        {
+            "request": request,
+            "tables": tables,
+            "result": result,
+            "active_page": "catalog"
+        }
+    )
+
+@app.post("/catalog/execute-sql", response_class=HTMLResponse)
+async def execute_sql(request: Request, sql_query: str = Form(...)):
+    success, message, error = pond_client.execute_sql(sql_query)
+    
+    # Get the updated list of tables
+    tables, list_error = pond_client.list_tables()
+    
+    result = None
+    if error:
+        result = f"Error executing SQL: {error}"
+    elif message:
+        result = message
+    else:
+        result = "SQL executed successfully"
+    
+    return templates.TemplateResponse(
+        "catalog.html",
+        {
+            "request": request,
+            "tables": tables,
+            "result": result,
+            "active_page": "catalog"
+        }
+    )
+
+@app.get("/catalog/table/{table_name}", response_class=HTMLResponse)
+async def table_details(request: Request, table_name: str):
+    metadata = pond_client.get_table_metadata(table_name)
+    
+    return templates.TemplateResponse(
+        "table_details.html",
+        {
+            "request": request,
+            "metadata": metadata,
+            "active_page": "catalog"
         }
     )
 

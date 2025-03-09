@@ -1,0 +1,86 @@
+{% extends "layout.html" %}
+
+{% block title %}PondHouse - Catalog{% endblock %}
+
+{% block page_title %}Catalog{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Create Table with SQL</h5>
+            </div>
+            <div class="card-body">
+                <form action="/catalog/execute-sql" method="post" class="mb-3">
+                    <div class="mb-3">
+                        <label for="sql_query" class="form-label">SQL Query (CREATE TABLE only)</label>
+                        <textarea class="form-control" id="sql_query" name="sql_query" rows="5" 
+                            placeholder="CREATE TABLE example (id INT, name VARCHAR(100))" required></textarea>
+                        <div class="form-text text-muted">
+                            Example: CREATE TABLE users (id INT, name VARCHAR(100) NOT NULL, email VARCHAR(1000));
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Create Table</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if result %}
+<div class="result mb-4">
+    <p class="mb-0">{{ result }}</p>
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Tables</h5>
+            </div>
+            <div class="card-body">
+                {% if tables %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Table Name</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for table_name in tables %}
+                            <tr>
+                                <td>{{ table_name }}</td>
+                                <td>
+                                    <a href="/catalog/table/{{ table_name }}" class="btn btn-sm btn-info">
+                                        <i class="bi bi-info-circle"></i> Details
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    No tables found. Use the SQL editor above to create a table.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Add SQL syntax highlighting if desired
+    document.addEventListener('DOMContentLoaded', function() {
+        const textarea = document.getElementById('sql_query');
+        // Optionally implement SQL syntax highlighting here
+    });
+</script>
+{% endblock %} 

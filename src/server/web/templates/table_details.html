@@ -1,0 +1,112 @@
+{% extends "layout.html" %}
+
+{% block title %}PondHouse - Table: {{ metadata.name }}{% endblock %}
+
+{% block page_title %}Table: {{ metadata.name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="/catalog" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Catalog
+    </a>
+</div>
+
+{% if metadata.error %}
+<div class="alert alert-danger">
+    <strong>Error:</strong> {{ metadata.error }}
+</div>
+{% else %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Table Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <p><strong>Name:</strong> {{ metadata.name }}</p>
+                        <p><strong>Location:</strong> {{ metadata.location }}</p>
+                        <p><strong>Last Updated:</strong> {{ metadata.last_updated_ms|timestamp_to_date }}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Partition Columns:</h6>
+                        {% if metadata.partition_columns %}
+                        <ul>
+                            {% for col in metadata.partition_columns %}
+                            <li>{{ col }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <p>This table is not partitioned.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Schema</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered">
+                        <thead>
+                            <tr>
+                                <th>Column Name</th>
+                                <th>Type</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for column in metadata.columns %}
+                            <tr>
+                                <td>{{ column.name }}</td>
+                                <td>{{ column.type }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if metadata.properties %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Properties</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered">
+                        <thead>
+                            <tr>
+                                <th>Key</th>
+                                <th>Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for key, value in metadata.properties.items() %}
+                            <tr>
+                                <td>{{ key }}</td>
+                                <td>{{ value }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %} 

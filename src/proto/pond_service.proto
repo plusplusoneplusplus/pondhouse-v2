@@ -21,6 +21,15 @@ service PondService {
   
   // Get directory information
   rpc GetDirectoryInfo(DirectoryInfoRequest) returns (DirectoryInfoResponse) {}
+  
+  // Execute SQL query (primarily for table creation)
+  rpc ExecuteSQL(ExecuteSQLRequest) returns (ExecuteSQLResponse) {}
+  
+  // List all tables in the catalog
+  rpc ListTables(ListTablesRequest) returns (ListTablesResponse) {}
+  
+  // Get table metadata
+  rpc GetTableMetadata(GetTableMetadataRequest) returns (GetTableMetadataResponse) {}
 }
 
 // Request message for Get operation
@@ -105,4 +114,55 @@ message DirectoryInfoResponse {
   uint64 total_size = 4;
   bool success = 5;
   string error = 6;
+}
+
+// Column information for table schema
+message ColumnInfo {
+  string name = 1;
+  string type = 2;
+}
+
+// Table metadata information
+message TableMetadataInfo {
+  string name = 1;
+  string location = 2;
+  repeated ColumnInfo columns = 3;
+  repeated string partition_columns = 4;
+  map<string, string> properties = 5;
+  int64 last_updated_ms = 6;
+}
+
+// Request message for ExecuteSQL operation
+message ExecuteSQLRequest {
+  string sql_query = 1;
+}
+
+// Response message for ExecuteSQL operation
+message ExecuteSQLResponse {
+  bool success = 1;
+  string error = 2;
+  string message = 3;
+}
+
+// Request message for ListTables operation
+message ListTablesRequest {
+}
+
+// Response message for ListTables operation
+message ListTablesResponse {
+  repeated string table_names = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+// Request message for GetTableMetadata operation
+message GetTableMetadataRequest {
+  string table_name = 1;
+}
+
+// Response message for GetTableMetadata operation
+message GetTableMetadataResponse {
+  TableMetadataInfo metadata = 1;
+  bool success = 2;
+  string error = 3;
 } 
