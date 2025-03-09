@@ -3,13 +3,16 @@
 # Configuration
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 BUILD_DIR="${PROJECT_ROOT}/build"
-GRPC_SERVER="${BUILD_DIR}/src/server/gRPC/pond_server"
+RUN_DIR="${PROJECT_ROOT}/.run"
+GRPC_SERVER="${BUILD_DIR}/pond_server"
 WEB_SERVER_DIR="${PROJECT_ROOT}/src/server/web"
 GRPC_HOST="127.0.0.1"
 GRPC_PORT="50051"
 WEB_PORT="8000"
 DB_NAME="pondhouse_test_db"
-LOG_FILE="/tmp/pondhouse_servers.log"
+DB_PATH="${RUN_DIR}/${DB_NAME}"
+LOG_FILE="${RUN_DIR}/pondhouse_servers.log"
+GENERATED_PB_DIR="${RUN_DIR}/pb"
 
 # Text formatting
 BOLD="\033[1m"
@@ -55,6 +58,10 @@ cleanup() {
 # Register the cleanup function on script exit
 trap cleanup EXIT INT TERM
 
+# Create run directory if it doesn't exist
+mkdir -p "$RUN_DIR"
+mkdir -p "$GENERATED_PB_DIR"
+
 # Parse command-line options
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -74,6 +81,13 @@ while [[ $# -gt 0 ]]; do
             DB_NAME="$2"
             shift 2
             ;;
+        --run-dir)
+            RUN_DIR="$2"
+            DB_PATH="${RUN_DIR}/${DB_NAME}"
+            LOG_FILE="${RUN_DIR}/pondhouse_servers.log"
+            GENERATED_PB_DIR="${RUN_DIR}/pb"
+            shift 2
+            ;;
         --help)
             echo "Usage: $0 [options]"
             echo "Options:"
@@ -81,6 +95,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --grpc-port PORT Set gRPC server port (default: 50051)"
             echo "  --web-port PORT  Set web server port (default: 8000)"
             echo "  --db-name NAME   Set database name (default: pondhouse_test_db)"
+            echo "  --run-dir DIR    Set directory for generated files (default: PROJECT_ROOT/.run)"
             echo "  --help           Show this help message"
             exit 0
             ;;
@@ -126,8 +141,9 @@ if [ ! -f "$GRPC_SERVER" ]; then
     exit 1
 fi
 
+cd "$RUN_DIR"
 print_info "Starting gRPC server on $GRPC_HOST:$GRPC_PORT..."
-"$GRPC_SERVER" --address "$GRPC_HOST:$GRPC_PORT" --db_name "$DB_NAME" > "$LOG_FILE" 2>&1 &
+"$GRPC_SERVER" --address "$GRPC_HOST:$GRPC_PORT" --db_name "$DB_NAME" --db_path "$DB_PATH" > "$LOG_FILE" 2>&1 &
 GRPC_PID=$!
 server_pids+=($GRPC_PID)
 
@@ -138,9 +154,33 @@ if ! ps -p $GRPC_PID > /dev/null; then
     exit 1
 fi
 
+
 print_info "Starting web server on port $WEB_PORT..."
 cd "$WEB_SERVER_DIR"
-GRPC_HOST="$GRPC_HOST" GRPC_PORT="$GRPC_PORT" python main.py --port "$WEB_PORT" >> "$LOG_FILE" 2>&1 &
+print_info "Activate python venv"
+source venv/bin/activate
+
+# Ensure static directory exists
+if [ ! -d "${WEB_SERVER_DIR}/static" ]; then
+    print_info "Creating static files directory"
+    mkdir -p "${WEB_SERVER_DIR}/static"
+fi
+
+# config the pb2 files
+print_info "Configuring pb2 files"
+python3 -m grpc_tools.protoc -I${PROJECT_ROOT}/src/proto --python_out=${GENERATED_PB_DIR} --grpc_python_out=${GENERATED_PB_DIR} ${PROJECT_ROOT}/src/proto/pond_service.proto
+
+# Copy or symlink the generated files to the web directory
+if [ -f "${GENERATED_PB_DIR}/pond_service_pb2.py" ] && [ -f "${GENERATED_PB_DIR}/pond_service_pb2_grpc.py" ]; then
+    print_info "Copying generated protobuf files to web server directory"
+    cp ${GENERATED_PB_DIR}/pond_service_pb2*.py ${WEB_SERVER_DIR}/
+else
+    print_error "Failed to generate protobuf files"
+    exit 1
+fi
+
+print_info "Start web server"
+GRPC_HOST="$GRPC_HOST" GRPC_PORT="$GRPC_PORT" WEB_PORT="$WEB_PORT" python3 main.py --port "$WEB_PORT" >> "$LOG_FILE" 2>&1 &
 WEB_PID=$!
 server_pids+=($WEB_PID)
 
@@ -159,6 +199,8 @@ print_info "Servers started successfully!"
 echo -e "  • gRPC Server: ${BOLD}$GRPC_HOST:$GRPC_PORT${RESET} (PID: $GRPC_PID)"
 echo -e "  • Web Server:  ${BOLD}http://localhost:$WEB_PORT${RESET} (PID: $WEB_PID)"
 echo -e "  • Database:    ${BOLD}$DB_NAME${RESET}"
+echo -e "  • DB Path:     ${BOLD}$DB_PATH${RESET}"
+echo -e "  • Run Dir:     ${BOLD}$RUN_DIR${RESET}"
 echo -e "  • Log File:    ${BOLD}$LOG_FILE${RESET}"
 echo ""
 print_info "Press Ctrl+C to shut down both servers."

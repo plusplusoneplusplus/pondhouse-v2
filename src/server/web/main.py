@@ -255,5 +255,18 @@ async def list_files(
     )
 
 if __name__ == "__main__":
+    import argparse
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=80) 
+    import os
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="PondHouse Web Server")
+    parser.add_argument("--port", type=int, default=8000, help="Web server port (default: 8000)")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
+    args = parser.parse_args()
+    
+    # Environment variables can override command line arguments
+    port = int(os.environ.get("WEB_PORT", args.port))
+    
+    print(f"Starting web server on {args.host}:{port}")
+    uvicorn.run(app, host=args.host, port=port) 
