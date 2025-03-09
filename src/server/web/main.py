@@ -6,7 +6,7 @@ import grpc
 import os
 import sys
 from typing import Optional, List, Dict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 # Import generated gRPC modules
@@ -49,13 +49,21 @@ class ColumnInfo:
     type: str
 
 @dataclass
+class DataFile:
+    path: str
+    content_length: int
+    partition_values: Dict[str, str]
+    record_count: int
+
+@dataclass
 class TableMetadata:
     name: str
     location: str
     columns: List[ColumnInfo]
     partition_columns: List[str]
     properties: Dict[str, str]
-    last_updated_ms: int
+    last_updated_time: int
+    data_files: List[DataFile] = field(default_factory=list)
     error: Optional[str] = None
 
 def normalize_path(path: str) -> str:
@@ -225,13 +233,24 @@ class PondClient:
                     for col in meta.columns
                 ]
                 
+                data_files = [
+                    DataFile(
+                        path=file.path,
+                        content_length=file.content_length,
+                        partition_values=dict(file.partition_values),
+                        record_count=file.record_count
+                    )
+                    for file in meta.data_files
+                ]
+                
                 return TableMetadata(
                     name=meta.name,
                     location=meta.location,
                     columns=columns,
                     partition_columns=list(meta.partition_columns),
                     properties=dict(meta.properties),
-                    last_updated_ms=meta.last_updated_ms
+                    last_updated_time=meta.last_updated_time,
+                    data_files=data_files
                 )
             else:
                 return TableMetadata(
@@ -240,7 +259,8 @@ class PondClient:
                     columns=[],
                     partition_columns=[],
                     properties={},
-                    last_updated_ms=0,
+                    last_updated_time=0,
+                    data_files=[],
                     error=response.error
                 )
         except Exception as e:
@@ -250,7 +270,8 @@ class PondClient:
                 columns=[],
                 partition_columns=[],
                 properties={},
-                last_updated_ms=0,
+                last_updated_time=0,
+                data_files=[],
                 error=str(e)
             )
 
@@ -261,7 +282,22 @@ pond_client = PondClient(GRPC_HOST, GRPC_PORT)
 @app.on_event("startup")
 async def startup_event():
     # Add custom filters to Jinja2 templates
-    templates.env.filters["timestamp_to_date"] = lambda ts: datetime.fromtimestamp(ts / 1000).strftime('%Y-%m-%d %H:%M:%S')
+    templates.env.filters["timestamp_to_date"] = lambda ts: datetime.fromtimestamp(ts / 1000000).strftime('%Y-%m-%d %H:%M:%S') if ts else "N/A"
+    
+    # Add a file size formatter
+    def filesizeformat(value):
+        """Format the value as a 'human-readable' file size (i.e. 13 KB, 4.1 MB, 102 bytes, etc)."""
+        value = float(value)
+        if value < 1024:
+            return f"{value:.0f} bytes"
+        elif value < 1024 * 1024:
+            return f"{value/1024:.1f} KB"
+        elif value < 1024 * 1024 * 1024:
+            return f"{value/(1024*1024):.1f} MB"
+        else:
+            return f"{value/(1024*1024*1024):.1f} GB"
+    
+    templates.env.filters["filesizeformat"] = filesizeformat
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -453,15 +489,33 @@ async def execute_sql(request: Request, sql_query: str = Form(...)):
     )
 
 @app.get("/catalog/table/{table_name}", response_class=HTMLResponse)
-async def table_details(request: Request, table_name: str):
+async def table_details(request: Request, table_name: str, sort_by: str = None, order: str = None):
     metadata = pond_client.get_table_metadata(table_name)
+    
+    # Sort data files if requested
+    if metadata.data_files and sort_by:
+        reverse = order == "desc"
+        if sort_by == "path":
+            metadata.data_files.sort(key=lambda x: x.path, reverse=reverse)
+        elif sort_by == "size":
+            metadata.data_files.sort(key=lambda x: x.content_length, reverse=reverse)
+        elif sort_by == "records":
+            metadata.data_files.sort(key=lambda x: x.record_count, reverse=reverse)
+    
+    # Calculate totals for summary
+    total_size = sum(file.content_length for file in metadata.data_files) if metadata.data_files else 0
+    total_records = sum(file.record_count for file in metadata.data_files) if metadata.data_files else 0
     
     return templates.TemplateResponse(
         "table_details.html",
         {
             "request": request,
             "metadata": metadata,
-            "active_page": "catalog"
+            "active_page": "catalog",
+            "sort_by": sort_by,
+            "order": order,
+            "total_size": total_size,
+            "total_records": total_records
         }
     )
 

@@ -122,6 +122,20 @@ message ColumnInfo {
   string type = 2;
 }
 
+// Partition value for a data file
+message PartitionValue {
+  string key = 1; 
+  string value = 2;
+}
+
+// Data file information
+message DataFileInfo {
+  string path = 1;
+  int64 content_length = 2;
+  map<string, string> partition_values = 3;
+  int64 record_count = 4;
+}
+
 // Table metadata information
 message TableMetadataInfo {
   string name = 1;
@@ -129,7 +143,8 @@ message TableMetadataInfo {
   repeated ColumnInfo columns = 3;
   repeated string partition_columns = 4;
   map<string, string> properties = 5;
-  int64 last_updated_ms = 6;
+  int64 last_updated_time = 6;
+  repeated DataFileInfo data_files = 7;
 }
 
 // Request message for ExecuteSQL operation

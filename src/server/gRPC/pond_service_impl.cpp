@@ -11,6 +11,7 @@
 #include "kv/db.h"
 #include "catalog/kv_catalog.h"
 #include "query/executor/sql_table_executor.h"
+#include "server/gRPC/type_converter.h"
 
 namespace pond::server {
 
@@ -306,23 +307,23 @@ grpc::Status PondServiceImpl::ListTables(grpc::ServerContext* context,
                                        pond::proto::ListTablesResponse* response) {
     LOG_STATUS("Received ListTables request");
 
-    // try {
-    //     // Use the catalog directly
-    //     auto result = catalog_->ListTables();
+    try {
+        // Use the catalog directly
+        auto result = catalog_->ListTables();
         
-    //     if (result.ok()) {
-    //         response->set_success(true);
-    //         for (const auto& table_name : result.value()) {
-    //             response->add_table_names(table_name);
-    //         }
-    //     } else {
-    //         response->set_success(false);
-    //         response->set_error(result.error().message());
-    //     }
-    // } catch (const std::exception& e) {
-    //     response->set_success(false);
-    //     response->set_error(std::string("Error listing tables: ") + e.what());
-    // }
+        if (result.ok()) {
+            response->set_success(true);
+            for (const auto& table_name : result.value()) {
+                response->add_table_names(table_name);
+            }
+        } else {
+            response->set_success(false);
+            response->set_error(result.error().message());
+        }
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error(std::string("Error listing tables: ") + e.what());
+    }
     
     return grpc::Status::OK;
 }
@@ -332,45 +333,38 @@ grpc::Status PondServiceImpl::GetTableMetadata(grpc::ServerContext* context,
                                            pond::proto::GetTableMetadataResponse* response) {
     LOG_STATUS("Received GetTableMetadata request for table: %s", request->table_name().c_str());
 
-    // try {
-    //     // Use the catalog directly
-    //     auto result = catalog_->LoadTable(request->table_name());
+    try {
+        // Use the catalog directly
+        auto table_name = request->table_name();
+        auto result = catalog_->LoadTable(table_name);
         
-    //     if (result.ok()) {
-    //         const auto& table_metadata = result.value();
-    //         auto* metadata = response->mutable_metadata();
+        if (result.ok()) {
+            const auto& table_metadata = result.value();
             
-    //         // Set basic metadata
-    //         metadata->set_name(table_metadata.name);
-    //         metadata->set_location(table_metadata.location);
-    //         metadata->set_last_updated_ms(table_metadata.last_updated_ms);
+            // Use TypeConverter to convert table metadata
+            auto metadata_info = TypeConverter::ConvertToTableMetadataInfo(table_metadata);
             
-    //         // Set schema columns
-    //         for (const auto& column : table_metadata.schema->columns()) {
-    //             auto* col_info = metadata->add_columns();
-    //             col_info->set_name(column.name);
-    //             col_info->set_type(pond::common::ColumnTypeToString(column.type));
-    //         }
+            // Get data files
+            auto files_result = catalog_->ListDataFiles(table_name);
+            if (files_result.ok()) {
+                // Add data files using TypeConverter
+                TypeConverter::AddDataFilesToTableMetadataInfo(
+                    &metadata_info, 
+                    files_result.value()
+                );
+            }
             
-    //         // Set partition columns
-    //         for (const auto& part_col : table_metadata.partition_spec.fields()) {
-    //             metadata->add_partition_columns(part_col.source_column_name);
-    //         }
-            
-    //         // Set properties
-    //         for (const auto& [key, value] : table_metadata.properties) {
-    //             (*metadata->mutable_properties())[key] = value;
-    //         }
-            
-    //         response->set_success(true);
-    //     } else {
-    //         response->set_success(false);
-    //         response->set_error(result.error().message());
-    //     }
-    // } catch (const std::exception& e) {
-    //     response->set_success(false);
-    //     response->set_error(std::string("Error getting table metadata: ") + e.what());
-    // }
+            // Set the metadata in the response
+            response->mutable_metadata()->CopyFrom(metadata_info);
+            response->set_success(true);
+        } else {
+            response->set_success(false);
+            response->set_error(result.error().message());
+        }
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error(std::string("Error getting table metadata: ") + e.what());
+    }
     
     return grpc::Status::OK;
 }

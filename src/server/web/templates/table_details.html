@@ -9,6 +9,11 @@
     <a href="/catalog" class="btn btn-outline-secondary">
         <i class="bi bi-arrow-left"></i> Back to Catalog
     </a>
+    {% if metadata.data_files and metadata.data_files|length > 0 %}
+    <a href="/catalog/table/{{ metadata.name }}" class="btn btn-outline-secondary ms-2">
+        <i class="bi bi-arrow-clockwise"></i> Reset Sorting
+    </a>
+    {% endif %}
 </div>
 
 {% if metadata.error %}
@@ -27,7 +32,14 @@
                     <div class="col-md-6">
                         <p><strong>Name:</strong> {{ metadata.name }}</p>
                         <p><strong>Location:</strong> {{ metadata.location }}</p>
-                        <p><strong>Last Updated:</strong> {{ metadata.last_updated_ms|timestamp_to_date }}</p>
+                        <p><strong>Last Updated:</strong> {{ metadata.last_updated_time|timestamp_to_date }}</p>
+                        {% if metadata.data_files %}
+                        <p><strong>Data Files:</strong> {{ metadata.data_files|length }} files 
+                            {% set total_size = metadata.data_files|sum(attribute='content_length') %}
+                            {% set total_records = metadata.data_files|sum(attribute='record_count') %}
+                            ({{ total_size|filesizeformat }}, {{ total_records }} records)
+                        </p>
+                        {% endif %}
                     </div>
                     <div class="col-md-6">
                         <h6>Partition Columns:</h6>
@@ -98,6 +110,76 @@
                             <tr>
                                 <td>{{ key }}</td>
                                 <td>{{ value }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if metadata.data_files %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Data Files <span class="badge bg-info text-white">{{ metadata.data_files|length }}</span></h5>
+                <div>
+                    <span class="text-muted">Total: {{ total_size|filesizeformat }}, {{ total_records }} records</span>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>
+                                    <a href="?sort_by=path&order={% if sort_by == 'path' and order != 'desc' %}desc{% else %}asc{% endif %}" class="text-decoration-none text-dark d-flex align-items-center">
+                                        Path
+                                        {% if sort_by == 'path' %}
+                                        <i class="bi bi-arrow-{% if order == 'desc' %}down{% else %}up{% endif %} ms-1"></i>
+                                        {% endif %}
+                                    </a>
+                                </th>
+                                <th>
+                                    <a href="?sort_by=size&order={% if sort_by == 'size' and order != 'desc' %}desc{% else %}asc{% endif %}" class="text-decoration-none text-dark d-flex align-items-center">
+                                        Size
+                                        {% if sort_by == 'size' %}
+                                        <i class="bi bi-arrow-{% if order == 'desc' %}down{% else %}up{% endif %} ms-1"></i>
+                                        {% endif %}
+                                    </a>
+                                </th>
+                                <th>
+                                    <a href="?sort_by=records&order={% if sort_by == 'records' and order != 'desc' %}desc{% else %}asc{% endif %}" class="text-decoration-none text-dark d-flex align-items-center">
+                                        Records
+                                        {% if sort_by == 'records' %}
+                                        <i class="bi bi-arrow-{% if order == 'desc' %}down{% else %}up{% endif %} ms-1"></i>
+                                        {% endif %}
+                                    </a>
+                                </th>
+                                <th>Partition</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for file in metadata.data_files %}
+                            <tr>
+                                <td class="text-break"><code>{{ file.path }}</code></td>
+                                <td>{{ file.content_length|filesizeformat }}</td>
+                                <td>{{ file.record_count|default(0) }}</td>
+                                <td>
+                                    {% if file.partition_values %}
+                                    <ul class="list-unstyled mb-0">
+                                        {% for key, value in file.partition_values.items() %}
+                                        <li><strong>{{ key }}</strong>: {{ value }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                    {% else %}
+                                    <em>No partition</em>
+                                    {% endif %}
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
