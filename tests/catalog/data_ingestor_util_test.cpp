@@ -856,7 +856,7 @@ std::shared_ptr<arrow::RecordBatch> BuildTimestampRecordBatch(const std::vector<
             std::string ms_str = date_str.substr(dot_pos + 1);
             milliseconds = std::stol(ms_str);
             // Ensure milliseconds are within 0-999 range
-            milliseconds = std::min(999LL, std::max(0LL, milliseconds));
+            milliseconds = std::min(static_cast<int64_t>(999), std::max(static_cast<int64_t>(0), milliseconds));
         }
 
         int64_t epoch_milliseconds = static_cast<int64_t>(epoch_seconds) * 1000 + milliseconds;
