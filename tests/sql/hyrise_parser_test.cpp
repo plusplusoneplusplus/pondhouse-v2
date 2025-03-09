@@ -114,4 +114,96 @@ TEST_F(HyriseSQLParserTest, ComplexQuery) {
     EXPECT_EQ(10, select->limit->limit->ival) << "LIMIT should be 10";
 }
 
+//
+// Test Setup:
+//      Parse a CREATE TABLE statement with column definitions including primary key and NOT NULL constraints
+// Test Result:
+//      Verify the parsed structure matches the expected CREATE TABLE statement components
+//
+TEST_F(HyriseSQLParserTest, CreateTable) {
+    // Sample CREATE TABLE SQL query
+    const std::string query = "CREATE TABLE students ("
+                              "id INTEGER PRIMARY KEY, "
+                              "name VARCHAR(50) NOT NULL, "
+                              "age INTEGER, "
+                              "email VARCHAR(100) UNIQUE, "
+                              "created_at TIMESTAMP, "
+                              "balance DOUBLE"
+                              ");";
+
+    // Parse query
+    hsql::SQLParserResult result;
+    hsql::SQLParser::parse(query, &result);
+
+    // Check if parsing was successful and print error message if not
+    if (!result.isValid()) {
+        std::cerr << "SQL Parsing Error: " << result.errorMsg() << std::endl;
+    }
+    ASSERT_TRUE(result.isValid()) << "Parsing should be successful";
+    ASSERT_EQ(1, result.size()) << "Should have exactly one statement";
+
+    // Get the first statement
+    const hsql::SQLStatement* stmt = result.getStatement(0);
+    ASSERT_EQ(hsql::kStmtCreate, stmt->type()) << "Statement should be CREATE";
+
+    // Cast to CREATE statement
+    const hsql::CreateStatement* create = static_cast<const hsql::CreateStatement*>(stmt);
+
+    // Verify it's a CREATE TABLE statement
+    ASSERT_EQ(hsql::kCreateTable, create->type) << "Create type should be CREATE TABLE";
+    EXPECT_EQ(std::string("students"), std::string(create->tableName)) << "Table name should be 'students'";
+
+    // Verify column definitions
+    ASSERT_EQ(6, create->columns->size()) << "Should have 6 columns";
+
+    // Verify id column (PRIMARY KEY)
+    const hsql::ColumnDefinition* idColumn = create->columns->at(0);
+    EXPECT_EQ(std::string("id"), std::string(idColumn->name)) << "First column should be 'id'";
+    EXPECT_EQ(hsql::DataType::INT, idColumn->type.data_type) << "id should be INTEGER";
+
+    // Check if id is a primary key by examining column constraints
+    bool isPrimaryKey = false;
+    if (idColumn->column_constraints != nullptr) {
+        isPrimaryKey = idColumn->column_constraints->count(hsql::ConstraintType::PrimaryKey) > 0;
+    }
+    EXPECT_TRUE(isPrimaryKey) << "id should be PRIMARY KEY";
+
+    // Verify name column (NOT NULL)
+    const hsql::ColumnDefinition* nameColumn = create->columns->at(1);
+    EXPECT_EQ(std::string("name"), std::string(nameColumn->name)) << "Second column should be 'name'";
+    EXPECT_EQ(hsql::DataType::VARCHAR, nameColumn->type.data_type) << "name should be VARCHAR";
+    EXPECT_EQ(50, nameColumn->type.length) << "name should have length 50";
+    EXPECT_FALSE(nameColumn->nullable) << "name should be NOT NULL";
+
+    // Verify age column
+    const hsql::ColumnDefinition* ageColumn = create->columns->at(2);
+    EXPECT_EQ(std::string("age"), std::string(ageColumn->name)) << "Third column should be 'age'";
+    EXPECT_EQ(hsql::DataType::INT, ageColumn->type.data_type) << "age should be INTEGER";
+    EXPECT_TRUE(ageColumn->nullable) << "age should be nullable by default";
+
+    // Verify email column (UNIQUE)
+    const hsql::ColumnDefinition* emailColumn = create->columns->at(3);
+    EXPECT_EQ(std::string("email"), std::string(emailColumn->name)) << "Fourth column should be 'email'";
+    EXPECT_EQ(hsql::DataType::VARCHAR, emailColumn->type.data_type) << "email should be VARCHAR";
+    EXPECT_EQ(100, emailColumn->type.length) << "email should have length 100";
+    EXPECT_TRUE(emailColumn->nullable) << "email should be nullable by default";
+
+    // Check if email has UNIQUE constraint
+    bool isUnique = false;
+    if (emailColumn->column_constraints != nullptr) {
+        isUnique = emailColumn->column_constraints->count(hsql::ConstraintType::Unique) > 0;
+    }
+    EXPECT_TRUE(isUnique) << "email should have UNIQUE constraint";
+
+    // Verify created_at column
+    const hsql::ColumnDefinition* createdAtColumn = create->columns->at(4);
+    EXPECT_EQ(std::string("created_at"), std::string(createdAtColumn->name)) << "Fifth column should be 'created_at'";
+    EXPECT_EQ(hsql::DataType::DATETIME, createdAtColumn->type.data_type) << "created_at should be TIMESTAMP";
+
+    // Verify balance column
+    const hsql::ColumnDefinition* balanceColumn = create->columns->at(5);
+    EXPECT_EQ(std::string("balance"), std::string(balanceColumn->name)) << "Sixth column should be 'balance'";
+    EXPECT_EQ(hsql::DataType::DOUBLE, balanceColumn->type.data_type) << "balance should be DOUBLE";
+}
+
 }  // namespace pond::test

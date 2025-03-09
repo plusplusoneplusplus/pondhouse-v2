@@ -174,6 +174,7 @@ add_library(pondhouse_common
     src/query/executor/materialized_executor.cpp
     src/query/executor/operator_iterators.cpp
     src/query/executor/vectorized_executor.cpp
+    src/query/executor/sql_table_executor.cpp
     src/rsm/rsm.cpp
     src/rsm/snapshot_manager.cpp
     ${PROTO_SRCS}
@@ -284,6 +285,8 @@ add_executable(
     tests/query/materialized_executor_test.cpp
     tests/query/vectorized_executor_test.cpp
     tests/query/operator_iterators_test.cpp
+    tests/query/sql_table_executor_test.cpp
+    tests/query/create_table_command_test.cpp
     tests/sql/hyrise_parser_test.cpp
     tests/test_helper.cpp
     tests/proto/metadata_test.cpp
