@@ -1,118 +1,70 @@
-<!DOCTYPE html>
-<html lang="en">
+{% extends "layout.html" %}
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PondHouse KV Store</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body {
-            padding-top: 2rem;
-            background-color: #f8f9fa;
-        }
+{% block title %}PondHouse - Key-Value Store{% endblock %}
 
-        .result {
-            margin-top: 1rem;
-            padding: 1rem;
-            background-color: #e9ecef;
-            border-radius: 0.25rem;
-        }
+{% block page_title %}Key-Value Store{% endblock %}
 
-        .key-list {
-            margin-top: 1rem;
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .key-item {
-            padding: 0.5rem;
-            border-bottom: 1px solid #dee2e6;
-        }
-
-        .key-item:last-child {
-            border-bottom: none;
-        }
-    </style>
-</head>
-
-<body>
-    <div class="container">
-        <div class="row justify-content-center">
-            <div class="col-md-8">
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h2 class="mb-0">PondHouse KV Store</h2>
-                        <a href="/files" class="btn btn-outline-primary btn-sm">View File System</a>
-                    </div>
-                    <div class="card-body">
-                        <div class="row g-3">
-                            <div class="col-12">
-                                <form action="/get" method="post" class="mb-3">
-                                    <div class="input-group">
-                                        <input type="text" name="key" class="form-control" placeholder="Key" required>
-                                        <button type="submit" class="btn btn-primary">Get</button>
-                                    </div>
-                                </form>
-                            </div>
-                            <div class="col-12">
-                                <form action="/put" method="post" class="mb-3">
-                                    <div class="input-group">
-                                        <input type="text" name="key" class="form-control" placeholder="Key" required>
-                                        <input type="text" name="value" class="form-control" placeholder="Value"
-                                            required>
-                                        <button type="submit" class="btn btn-primary">Put</button>
-                                    </div>
-                                </form>
-                            </div>
-                            <div class="col-12">
-                                <form action="/delete" method="post" class="mb-3">
-                                    <div class="input-group">
-                                        <input type="text" name="key" class="form-control" placeholder="Key" required>
-                                        <button type="submit" class="btn btn-danger">Delete</button>
-                                    </div>
-                                </form>
-                            </div>
-                            <div class="col-12">
-                                <form action="/list" method="post">
-                                    <div class="input-group">
-                                        <input type="text" name="start_key" class="form-control"
-                                            placeholder="Start Key (optional)">
-                                        <input type="text" name="end_key" class="form-control"
-                                            placeholder="End Key (optional)">
-                                        <input type="number" name="limit" class="form-control"
-                                            placeholder="Limit (optional)" min="1">
-                                        <button type="submit" class="btn btn-info">List Keys</button>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
-
-                        {% if result %}
-                        <div class="result mt-4">
-                            <p class="mb-0">{{ result }}</p>
-                        </div>
-                        {% endif %}
-
-                        {% if keys %}
-                        <div class="key-list mt-4">
-                            <h5>Keys:</h5>
-                            {% for key_item in keys %}
-                            <div class="key-item">
-                                <strong>Key:</strong> {{ key_item.key }}
-                                {% if key_item.value %}
-                                <br>
-                                <strong>Value:</strong> {{ key_item.value }}
-                                {% endif %}
-                            </div>
-                            {% endfor %}
-                        </div>
-                        {% endif %}
-                    </div>
-                </div>
+{% block content %}
+<div class="row g-3">
+    <div class="col-12">
+        <form action="/get" method="post" class="mb-3">
+            <div class="input-group">
+                <input type="text" name="key" class="form-control" placeholder="Key" required>
+                <button type="submit" class="btn btn-primary">Get</button>
             </div>
-        </div>
+        </form>
     </div>
-</body>
+    <div class="col-12">
+        <form action="/put" method="post" class="mb-3">
+            <div class="input-group">
+                <input type="text" name="key" class="form-control" placeholder="Key" required>
+                <input type="text" name="value" class="form-control" placeholder="Value"
+                    required>
+                <button type="submit" class="btn btn-primary">Put</button>
+            </div>
+        </form>
+    </div>
+    <div class="col-12">
+        <form action="/delete" method="post" class="mb-3">
+            <div class="input-group">
+                <input type="text" name="key" class="form-control" placeholder="Key" required>
+                <button type="submit" class="btn btn-danger">Delete</button>
+            </div>
+        </form>
+    </div>
+    <div class="col-12">
+        <form action="/list" method="post">
+            <div class="input-group">
+                <input type="text" name="start_key" class="form-control"
+                    placeholder="Start Key (optional)">
+                <input type="text" name="end_key" class="form-control"
+                    placeholder="End Key (optional)">
+                <input type="number" name="limit" class="form-control"
+                    placeholder="Limit (optional)" min="1">
+                <button type="submit" class="btn btn-info">List Keys</button>
+            </div>
+        </form>
+    </div>
+</div>
 
-</html>
+{% if result %}
+<div class="result mt-4">
+    <p class="mb-0">{{ result }}</p>
+</div>
+{% endif %}
+
+{% if keys %}
+<div class="key-list mt-4">
+    <h5>Keys:</h5>
+    {% for key_item in keys %}
+    <div class="key-item">
+        <strong>Key:</strong> {{ key_item.key }}
+        {% if key_item.value %}
+        <br>
+        <strong>Value:</strong> {{ key_item.value }}
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

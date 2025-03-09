@@ -207,21 +207,23 @@ grpc::Status PondServiceImpl::Scan(grpc::ServerContext* context,
     return grpc::Status::OK;
 }
 
-grpc::Status PondServiceImpl::ListFiles(grpc::ServerContext* context,
-                                        const pond::proto::ListFilesRequest* request,
-                                        pond::proto::ListFilesResponse* response) {
-    LOG_STATUS("Received ListFiles request for path: %s", request->path().c_str());
+grpc::Status PondServiceImpl::ListDetailedFiles(grpc::ServerContext* context,
+                                              const pond::proto::ListDetailedFilesRequest* request,
+                                              pond::proto::ListDetailedFilesResponse* response) {
+    LOG_STATUS("Received ListDetailedFiles request for path: %s", request->path().c_str());
 
     std::string path = request->path();
     bool recursive = request->recursive();
 
-    // Call the file system's List method
-    auto result = fs_->List(path, recursive);
+    // Call the file system's ListDetailed method
+    auto result = fs_->ListDetailed(path, recursive);
 
     if (result.ok()) {
         response->set_success(true);
-        for (const auto& file_path : result.value()) {
-            response->add_file_paths(file_path);
+        for (const auto& entry : result.value()) {
+            auto* proto_entry = response->add_entries();
+            proto_entry->set_path(entry.path);
+            proto_entry->set_is_directory(entry.is_directory);
         }
     } else {
         response->set_success(false);

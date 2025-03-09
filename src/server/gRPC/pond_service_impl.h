@@ -36,10 +36,10 @@ public:
                       const pond::proto::ScanRequest* request,
                       grpc::ServerWriter<pond::proto::ScanResponse>* writer) override;
 
-    // List files in a directory
-    grpc::Status ListFiles(grpc::ServerContext* context,
-                           const pond::proto::ListFilesRequest* request,
-                           pond::proto::ListFilesResponse* response) override;
+    // List detailed files in a directory
+    grpc::Status ListDetailedFiles(grpc::ServerContext* context,
+                                 const pond::proto::ListDetailedFilesRequest* request,
+                                 pond::proto::ListDetailedFilesResponse* response) override;
 
     // Get directory information
     grpc::Status GetDirectoryInfo(grpc::ServerContext* context,

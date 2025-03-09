@@ -37,6 +37,20 @@ class DirectoryInfo:
     total_size: int
     error: Optional[str] = None
 
+@dataclass
+class FileSystemEntry:
+    path: str
+    is_directory: bool
+
+def normalize_path(path: str) -> str:
+    """Normalize path by handling empty paths and removing trailing slashes."""
+    if not path or path == "/":
+        return "."
+    # Remove trailing slash if present but preserve root path
+    if path.endswith("/") and len(path) > 1:
+        path = path[:-1]
+    return path
+
 class PondClient:
     def __init__(self, host: str, port: str):
         self.channel = grpc.insecure_channel(f"{host}:{port}")
@@ -97,20 +111,28 @@ class PondClient:
         except Exception as e:
             return [], str(e)
 
-    def list_files(self, path: str = "", recursive: bool = False) -> tuple[List[str], Optional[str]]:
+    def list_detailed_files(self, path: str = "", recursive: bool = False) -> tuple[List[FileSystemEntry], Optional[str]]:
         try:
-            request = pb2.ListFilesRequest(path=path, recursive=recursive)
-            response = self.stub.ListFiles(request)
+            normalized_path = normalize_path(path)
+            request = pb2.ListDetailedFilesRequest(path=normalized_path, recursive=recursive)
+            response = self.stub.ListDetailedFiles(request)
             
             if response.success:
-                return list(response.file_paths), None
+                entries = []
+                for entry in response.entries:
+                    entries.append(FileSystemEntry(
+                        path=entry.path,
+                        is_directory=entry.is_directory
+                    ))
+                return entries, None
             return [], response.error
         except Exception as e:
             return [], str(e)
             
     def get_directory_info(self, path: str) -> DirectoryInfo:
         try:
-            request = pb2.DirectoryInfoRequest(path=path)
+            normalized_path = normalize_path(path)
+            request = pb2.DirectoryInfoRequest(path=normalized_path)
             response = self.stub.GetDirectoryInfo(request)
             
             if response.success:
@@ -143,46 +165,69 @@ pond_client = PondClient(GRPC_HOST, GRPC_PORT)
 async def home(request: Request):
     return templates.TemplateResponse(
         "index.html",
-        {"request": request, "result": None}
+        {
+            "request": request,
+            "active_page": "kv"
+        }
     )
 
 @app.post("/get", response_class=HTMLResponse)
 async def get_value(request: Request, key: str = Form(...)):
     found, value, error = pond_client.get(key)
-    if found:
+    
+    result = None
+    if error:
+        result = f"Error: {error}"
+    elif found:
         result = f"Value for key '{key}': {value}"
     else:
-        result = f"Error: {error}"
+        result = f"Key '{key}' not found"
     
     return templates.TemplateResponse(
         "index.html",
-        {"request": request, "result": result}
+        {
+            "request": request,
+            "result": result,
+            "active_page": "kv"
+        }
     )
 
 @app.post("/put", response_class=HTMLResponse)
 async def put_value(request: Request, key: str = Form(...), value: str = Form(...)):
     success, error = pond_client.put(key, value)
-    if success:
-        result = f"Successfully stored key: {key}"
-    else:
+    
+    result = None
+    if error:
         result = f"Error: {error}"
+    else:
+        result = f"Key '{key}' set successfully"
     
     return templates.TemplateResponse(
         "index.html",
-        {"request": request, "result": result}
+        {
+            "request": request,
+            "result": result,
+            "active_page": "kv"
+        }
     )
 
 @app.post("/delete", response_class=HTMLResponse)
 async def delete_value(request: Request, key: str = Form(...)):
     success, error = pond_client.delete(key)
-    if success:
-        result = f"Successfully deleted key: {key}"
-    else:
+    
+    result = None
+    if error:
         result = f"Error: {error}"
+    else:
+        result = f"Key '{key}' deleted successfully"
     
     return templates.TemplateResponse(
         "index.html",
-        {"request": request, "result": result}
+        {
+            "request": request,
+            "result": result,
+            "active_page": "kv"
+        }
     )
 
 @app.post("/list", response_class=HTMLResponse)
@@ -192,7 +237,9 @@ async def list_keys(
     end_key: str = Form(""),
     limit: Optional[int] = Form(None)
 ):
-    keys, error = pond_client.scan(start_key, end_key, limit or 0)
+    keys, error = pond_client.scan(start_key, end_key, limit if limit else 0)
+    
+    result = None
     if error:
         result = f"Error: {error}"
     else:
@@ -203,14 +250,16 @@ async def list_keys(
         {
             "request": request,
             "result": result,
-            "keys": keys
+            "keys": keys,
+            "active_page": "kv"
         }
     )
 
 @app.get("/files", response_class=HTMLResponse)
 async def file_explorer(request: Request, path: str = ""):
-    files, error = pond_client.list_files(path)
-    dir_info = pond_client.get_directory_info(path)
+    normalized_path = normalize_path(path)
+    entries, error = pond_client.list_detailed_files(normalized_path, False)
+    dir_info = pond_client.get_directory_info(normalized_path)
     
     result = None
     if error:
@@ -222,10 +271,11 @@ async def file_explorer(request: Request, path: str = ""):
         "files.html",
         {
             "request": request,
-            "path": path,
-            "files": files,
+            "path": path,  # Keep original path for UI
+            "entries": entries,
             "dir_info": dir_info,
-            "result": result
+            "result": result,
+            "active_page": "files"
         }
     )
 
@@ -235,22 +285,25 @@ async def list_files(
     path: str = Form(""),
     recursive: bool = Form(False)
 ):
-    files, error = pond_client.list_files(path, recursive)
-    dir_info = pond_client.get_directory_info(path)
+    normalized_path = normalize_path(path)
+    entries, error = pond_client.list_detailed_files(normalized_path, recursive)
+    dir_info = pond_client.get_directory_info(normalized_path)
     
+    result = None
     if error:
-        result = f"Error: {error}"
-    else:
-        result = f"Found {len(files)} files/directories"
+        result = f"Error listing files: {error}"
+    elif dir_info.error:
+        result = f"Error getting directory info: {dir_info.error}"
     
     return templates.TemplateResponse(
         "files.html",
         {
             "request": request,
-            "path": path,
-            "files": files,
+            "path": path,  # Keep original path for UI
+            "entries": entries,
             "dir_info": dir_info,
-            "result": result
+            "result": result,
+            "active_page": "files"
         }
     )
 
