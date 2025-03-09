@@ -107,6 +107,7 @@ struct TableMetadata {
 
     int32_t format_version;
     TableId table_uuid;
+    std::string name;
     std::string location;
     int64_t last_sequence_number;
     common::Timestamp last_updated_time;
@@ -117,11 +118,13 @@ struct TableMetadata {
     std::unordered_map<std::string, std::string> properties;
 
     TableMetadata(TableId table_uuid_,
+                  std::string name_,
                   std::string location_,
                   std::shared_ptr<common::Schema> schema_,
                   std::unordered_map<std::string, std::string> properties_ = {})
         : format_version(kCurrentFormatVersion),
           table_uuid(std::move(table_uuid_)),
+          name(std::move(name_)),
           location(std::move(location_)),
           last_sequence_number(0),
           last_updated_time(0),     // Will be set when committing
@@ -132,6 +135,7 @@ struct TableMetadata {
     TableMetadata()
         : format_version(-1),
           table_uuid(""),
+          name(""),
           location(""),
           last_sequence_number(-1),
           last_updated_time(-1),

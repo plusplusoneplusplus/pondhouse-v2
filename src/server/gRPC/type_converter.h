@@ -1,9 +1,8 @@
 #pragma once
 
+#include "catalog/catalog.h"
 #include "common/schema.h"
 #include "pond_service_impl.h"
-#include "catalog/catalog.h"
-
 
 namespace pond::server {
 
@@ -12,15 +11,15 @@ public:
     /**
      * Convert a catalog TableMetadata to protocol buffer TableMetadataInfo
      */
-    static pond::proto::TableMetadataInfo ConvertToTableMetadataInfo(const pond::catalog::TableMetadata& table_metadata) 
-    {
+    static pond::proto::TableMetadataInfo ConvertToTableMetadataInfo(
+        const pond::catalog::TableMetadata& table_metadata) {
         pond::proto::TableMetadataInfo pb_metadata;
-        
+
         // Set basic metadata
-        pb_metadata.set_name(table_metadata.table_uuid);
+        pb_metadata.set_name(table_metadata.name);
         pb_metadata.set_location(table_metadata.location);
         pb_metadata.set_last_updated_time(table_metadata.last_updated_time);
-        
+
         // Set schema columns
         if (table_metadata.schema) {
             for (const auto& column : table_metadata.schema->Columns()) {
@@ -29,7 +28,7 @@ public:
                 col_info->set_type(pond::common::ColumnTypeToString(column.type));
             }
         }
-        
+
         // Set partition columns
         if (!table_metadata.partition_specs.empty()) {
             const auto& partition_spec = table_metadata.partition_specs.front();
@@ -37,28 +36,26 @@ public:
                 pb_metadata.add_partition_columns(field.name);
             }
         }
-        
+
         // Set properties
         for (const auto& [key, value] : table_metadata.properties) {
             (*pb_metadata.mutable_properties())[key] = value;
         }
-        
+
         return pb_metadata;
     }
-    
+
     /**
      * Add data files to the TableMetadataInfo from a list of catalog DataFiles
      */
-    static void AddDataFilesToTableMetadataInfo(
-        pond::proto::TableMetadataInfo* pb_metadata,
-        const std::vector<pond::catalog::DataFile>& data_files) 
-    {
+    static void AddDataFilesToTableMetadataInfo(pond::proto::TableMetadataInfo* pb_metadata,
+                                                const std::vector<pond::catalog::DataFile>& data_files) {
         for (const auto& data_file : data_files) {
             auto* file_info = pb_metadata->add_data_files();
             file_info->set_path(data_file.file_path);
             file_info->set_content_length(data_file.file_size_bytes);
             file_info->set_record_count(data_file.record_count);
-            
+
             // Add partition values
             for (const auto& [key, value] : data_file.partition_values) {
                 (*file_info->mutable_partition_values())[key] = value;
@@ -68,4 +65,3 @@ public:
 };
 
 }  // namespace pond::server
-

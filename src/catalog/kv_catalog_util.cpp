@@ -121,6 +121,7 @@ std::string SerializeTableMetadata(const TableMetadata& metadata) {
 
     doc.AddMember("format_version", metadata.format_version, allocator);
     doc.AddMember("table_uuid", rapidjson::Value(metadata.table_uuid.c_str(), allocator), allocator);
+    doc.AddMember("name", rapidjson::Value(metadata.name.c_str(), allocator), allocator);
     doc.AddMember("location", rapidjson::Value(metadata.location.c_str(), allocator), allocator);
     doc.AddMember("last_sequence_number", metadata.last_sequence_number, allocator);
     doc.AddMember("last_updated_time", metadata.last_updated_time, allocator);
@@ -297,13 +298,15 @@ Result<TableMetadata> DeserializeTableMetadata(const std::string& data) {
     // Validate required fields
     if (!doc.HasMember(KEY_TABLE_UUID) || !doc.HasMember(KEY_FORMAT_VERSION) || !doc.HasMember(KEY_LOCATION)
         || !doc.HasMember(KEY_CURRENT_SNAPSHOT_ID) || !doc.HasMember(KEY_LAST_UPDATED_TIME)
-        || !doc.HasMember(KEY_PROPERTIES) || !doc.HasMember(KEY_SCHEMA) || !doc.HasMember(KEY_PARTITION_SPECS)) {
+        || !doc.HasMember(KEY_PROPERTIES) || !doc.HasMember(KEY_SCHEMA) || !doc.HasMember(KEY_PARTITION_SPECS)
+        || !doc.HasMember(KEY_NAME)) {
         return Result<TableMetadata>::failure(ErrorCode::DeserializationError,
                                               "Missing required fields in table metadata JSON");
     }
 
     // Extract basic fields
     TableMetadata metadata(doc[KEY_TABLE_UUID].GetString(),
+                           doc[KEY_NAME].GetString(),
                            doc[KEY_LOCATION].GetString(),
                            nullptr,  // Schema will be set later
                            {}        // Properties will be set later

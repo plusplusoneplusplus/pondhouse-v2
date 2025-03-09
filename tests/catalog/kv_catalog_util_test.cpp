@@ -133,7 +133,7 @@ protected:
         std::unordered_map<std::string, std::string> properties = {
             {"description", "Test table"}, {"owner", "test_user"}, {"version", "1.0"}};
 
-        TableMetadata metadata(UUID::NewUUID().ToString(), "/data/test_table", schema, properties);
+        TableMetadata metadata(UUID::NewUUID().ToString(), "test_table", "/data/test_table", schema, properties);
         metadata.format_version = 1;
         metadata.current_snapshot_id = 2;
         metadata.last_updated_time = 1648262400000;

@@ -134,7 +134,7 @@ common::Result<TableMetadata> KVCatalog::CreateTable(const std::string& name,
 
     {
         // Create initial table metadata
-        TableMetadata initial_metadata(table_uuid, location, schema, properties);
+        TableMetadata initial_metadata(table_uuid, name, location, schema, properties);
         initial_metadata.last_updated_time = GetCurrentTime();
         initial_metadata.partition_specs.push_back(spec);
         initial_metadata.table_uuid = table_uuid;
@@ -203,6 +203,7 @@ common::Result<TableMetadata> KVCatalog::LoadTable(const std::string& name) {
 
     // Create metadata object
     TableMetadata metadata(record->Get<std::string>(1).value(),  // TABLE_UUID_FIELD
+                           name,                                 // Use the name parameter passed to the function
                            record->Get<std::string>(3).value(),  // LOCATION_FIELD
                            schema,
                            properties.value());
