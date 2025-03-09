@@ -53,19 +53,19 @@ std::string GetPhysicalPlanUserFriendlyString(PhysicalPlanNode& root) {
     return printer.ToString();
 }
 
-Result<DataBatchSharedPtr> PhysicalSequentialScanNode::Execute(Executor& executor) {
+Result<ArrowDataBatchSharedPtr> PhysicalSequentialScanNode::Execute(Executor& executor) {
     // Accept visitor to execute this node
     executor.Visit(*this);
     return executor.CurrentBatch();
 }
 
-Result<DataBatchSharedPtr> PhysicalIndexScanNode::Execute(Executor& executor) {
+Result<ArrowDataBatchSharedPtr> PhysicalIndexScanNode::Execute(Executor& executor) {
     // Accept visitor to execute this node
     executor.Visit(*this);
-    return Result<DataBatchSharedPtr>::failure(ErrorCode::NotImplemented, "Index scan not implemented");
+    return Result<ArrowDataBatchSharedPtr>::failure(ErrorCode::NotImplemented, "Index scan not implemented");
 }
 
-Result<DataBatchSharedPtr> PhysicalFilterNode::Execute(Executor& executor) {
+Result<ArrowDataBatchSharedPtr> PhysicalFilterNode::Execute(Executor& executor) {
     // Execute child first
     auto result = children_[0]->Execute(executor);
     if (!result.ok()) {
@@ -74,34 +74,10 @@ Result<DataBatchSharedPtr> PhysicalFilterNode::Execute(Executor& executor) {
 
     // Accept visitor to execute this node
     executor.Visit(*this);
-    return Result<DataBatchSharedPtr>::failure(ErrorCode::NotImplemented, "Filter not implemented");
+    return Result<ArrowDataBatchSharedPtr>::failure(ErrorCode::NotImplemented, "Filter not implemented");
 }
 
-Result<DataBatchSharedPtr> PhysicalProjectionNode::Execute(Executor& executor) {
-    // Execute child first
-    auto result = children_[0]->Execute(executor);
-    if (!result.ok()) {
-        return result;
-    }
-
-    // Accept visitor to execute this node
-    executor.Visit(*this);
-    return executor.CurrentBatch();
-}
-
-Result<DataBatchSharedPtr> PhysicalHashJoinNode::Execute(Executor& executor) {
-    // Accept visitor to execute this node
-    executor.Visit(*this);
-    return executor.CurrentBatch();
-}
-
-Result<DataBatchSharedPtr> PhysicalNestedLoopJoinNode::Execute(Executor& executor) {
-    // Accept visitor to execute this node
-    executor.Visit(*this);
-    return Result<DataBatchSharedPtr>::failure(ErrorCode::NotImplemented, "Nested loop join not implemented");
-}
-
-Result<DataBatchSharedPtr> PhysicalHashAggregateNode::Execute(Executor& executor) {
+Result<ArrowDataBatchSharedPtr> PhysicalProjectionNode::Execute(Executor& executor) {
     // Execute child first
     auto result = children_[0]->Execute(executor);
     if (!result.ok()) {
@@ -113,19 +89,19 @@ Result<DataBatchSharedPtr> PhysicalHashAggregateNode::Execute(Executor& executor
     return executor.CurrentBatch();
 }
 
-Result<DataBatchSharedPtr> PhysicalSortNode::Execute(Executor& executor) {
-    // Execute child first
-    auto result = children_[0]->Execute(executor);
-    if (!result.ok()) {
-        return result;
-    }
-
+Result<ArrowDataBatchSharedPtr> PhysicalHashJoinNode::Execute(Executor& executor) {
     // Accept visitor to execute this node
     executor.Visit(*this);
-    return Result<DataBatchSharedPtr>::failure(ErrorCode::NotImplemented, "Sort not implemented");
+    return executor.CurrentBatch();
 }
 
-Result<DataBatchSharedPtr> PhysicalLimitNode::Execute(Executor& executor) {
+Result<ArrowDataBatchSharedPtr> PhysicalNestedLoopJoinNode::Execute(Executor& executor) {
+    // Accept visitor to execute this node
+    executor.Visit(*this);
+    return Result<ArrowDataBatchSharedPtr>::failure(ErrorCode::NotImplemented, "Nested loop join not implemented");
+}
+
+Result<ArrowDataBatchSharedPtr> PhysicalHashAggregateNode::Execute(Executor& executor) {
     // Execute child first
     auto result = children_[0]->Execute(executor);
     if (!result.ok()) {
@@ -137,7 +113,7 @@ Result<DataBatchSharedPtr> PhysicalLimitNode::Execute(Executor& executor) {
     return executor.CurrentBatch();
 }
 
-Result<DataBatchSharedPtr> PhysicalShuffleExchangeNode::Execute(Executor& executor) {
+Result<ArrowDataBatchSharedPtr> PhysicalSortNode::Execute(Executor& executor) {
     // Execute child first
     auto result = children_[0]->Execute(executor);
     if (!result.ok()) {
@@ -146,7 +122,31 @@ Result<DataBatchSharedPtr> PhysicalShuffleExchangeNode::Execute(Executor& execut
 
     // Accept visitor to execute this node
     executor.Visit(*this);
-    return Result<DataBatchSharedPtr>::failure(ErrorCode::NotImplemented, "Shuffle exchange not implemented");
+    return Result<ArrowDataBatchSharedPtr>::failure(ErrorCode::NotImplemented, "Sort not implemented");
+}
+
+Result<ArrowDataBatchSharedPtr> PhysicalLimitNode::Execute(Executor& executor) {
+    // Execute child first
+    auto result = children_[0]->Execute(executor);
+    if (!result.ok()) {
+        return result;
+    }
+
+    // Accept visitor to execute this node
+    executor.Visit(*this);
+    return executor.CurrentBatch();
+}
+
+Result<ArrowDataBatchSharedPtr> PhysicalShuffleExchangeNode::Execute(Executor& executor) {
+    // Execute child first
+    auto result = children_[0]->Execute(executor);
+    if (!result.ok()) {
+        return result;
+    }
+
+    // Accept visitor to execute this node
+    executor.Visit(*this);
+    return Result<ArrowDataBatchSharedPtr>::failure(ErrorCode::NotImplemented, "Shuffle exchange not implemented");
 }
 
 }  // namespace pond::query

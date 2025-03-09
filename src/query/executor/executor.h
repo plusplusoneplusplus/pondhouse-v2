@@ -8,7 +8,7 @@
 
 namespace pond::query {
 
-using DataBatchSharedPtr = std::shared_ptr<arrow::RecordBatch>;
+using ArrowDataBatchSharedPtr = std::shared_ptr<arrow::RecordBatch>;
 
 /**
  * @brief Interface for query executors
@@ -20,7 +20,7 @@ public:
     virtual ~Executor() = default;
 
     // Execute a physical plan
-    virtual common::Result<DataBatchSharedPtr> execute(std::shared_ptr<PhysicalPlanNode> plan) = 0;
+    virtual common::Result<ArrowDataBatchSharedPtr> execute(std::shared_ptr<PhysicalPlanNode> plan) = 0;
 
     // Visitor methods for different physical operators
     virtual void Visit(PhysicalSequentialScanNode& node) override = 0;
@@ -35,11 +35,11 @@ public:
     virtual void Visit(PhysicalShuffleExchangeNode& node) override = 0;
 
     // Get the current batch
-    virtual common::Result<DataBatchSharedPtr> CurrentBatch() const = 0;
+    virtual common::Result<ArrowDataBatchSharedPtr> CurrentBatch() const = 0;
 
 protected:
     // Helper methods for execution
-    virtual common::Result<DataBatchSharedPtr> ExecuteChildren(PhysicalPlanNode& node) = 0;
+    virtual common::Result<ArrowDataBatchSharedPtr> ExecuteChildren(PhysicalPlanNode& node) = 0;
     virtual common::Result<bool> ProduceResults(const common::Schema& schema) = 0;
 };
 

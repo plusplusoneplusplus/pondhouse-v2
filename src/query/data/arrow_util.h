@@ -13,7 +13,7 @@
 
 namespace pond::query {
 
-using DataBatchSharedPtr = std::shared_ptr<arrow::RecordBatch>;
+using ArrowDataBatchSharedPtr = std::shared_ptr<arrow::RecordBatch>;
 
 /**
  * @brief Utility functions for working with Arrow data
@@ -32,13 +32,13 @@ public:
      * @param schema The schema for the record batch
      * @return An empty record batch with the given schema
      */
-    static common::Result<DataBatchSharedPtr> CreateEmptyBatch(const common::Schema& schema);
+    static common::Result<ArrowDataBatchSharedPtr> CreateEmptyBatch(const common::Schema& schema);
 
     /**
      * @brief Create an empty record batch with an empty schema
      * @return An empty record batch with an empty schema
      */
-    static DataBatchSharedPtr CreateEmptyBatch();
+    static ArrowDataBatchSharedPtr CreateEmptyBatch();
 
     /**
      * @brief Apply a filter expression to a record batch
@@ -46,8 +46,8 @@ public:
      * @param predicate The filter expression
      * @return The filtered record batch
      */
-    static common::Result<DataBatchSharedPtr> ApplyPredicate(const DataBatchSharedPtr& batch,
-                                                             const std::shared_ptr<common::Expression>& predicate);
+    static common::Result<ArrowDataBatchSharedPtr> ApplyPredicate(const ArrowDataBatchSharedPtr& batch,
+                                                                  const std::shared_ptr<common::Expression>& predicate);
 
     /**
      * @brief Concatenate multiple record batches into a single batch
@@ -58,7 +58,8 @@ public:
      * an empty record batch will be returned with a null schema.
      * If there's only one batch, it will be returned directly without copying.
      */
-    static common::Result<DataBatchSharedPtr> ConcatenateBatches(const std::vector<DataBatchSharedPtr>& batches);
+    static common::Result<ArrowDataBatchSharedPtr> ConcatenateBatches(
+        const std::vector<ArrowDataBatchSharedPtr>& batches);
 };
 
 }  // namespace pond::query

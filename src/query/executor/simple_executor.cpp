@@ -18,12 +18,12 @@ namespace pond::query {
 SimpleExecutor::SimpleExecutor(std::shared_ptr<catalog::Catalog> catalog, std::shared_ptr<DataAccessor> data_accessor)
     : catalog_(std::move(catalog)),
       data_accessor_(std::move(data_accessor)),
-      current_result_(common::Result<DataBatchSharedPtr>::success(nullptr)) {}
+      current_result_(common::Result<ArrowDataBatchSharedPtr>::success(nullptr)) {}
 
-common::Result<DataBatchSharedPtr> SimpleExecutor::execute(std::shared_ptr<PhysicalPlanNode> plan) {
+common::Result<ArrowDataBatchSharedPtr> SimpleExecutor::execute(std::shared_ptr<PhysicalPlanNode> plan) {
     // Reset the current batch and result
     current_batch_ = nullptr;
-    current_result_ = common::Result<DataBatchSharedPtr>::success(nullptr);
+    current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(nullptr);
 
     // If the plan is null, return an error
     if (!plan) {
@@ -37,11 +37,11 @@ common::Result<DataBatchSharedPtr> SimpleExecutor::execute(std::shared_ptr<Physi
     return current_result_;
 }
 
-common::Result<DataBatchSharedPtr> SimpleExecutor::CurrentBatch() const {
+common::Result<ArrowDataBatchSharedPtr> SimpleExecutor::CurrentBatch() const {
     return current_result_;
 }
 
-common::Result<DataBatchSharedPtr> SimpleExecutor::ExecuteChildren(PhysicalPlanNode& node) {
+common::Result<ArrowDataBatchSharedPtr> SimpleExecutor::ExecuteChildren(PhysicalPlanNode& node) {
     // If the node has children, execute them first
     if (!node.Children().empty()) {
         for (const auto& child : node.Children()) {
@@ -67,7 +67,7 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
     // List table files from catalog
     auto files_result = data_accessor_->ListTableFiles(table_name);
     if (!files_result.ok()) {
-        current_result_ = common::Result<DataBatchSharedPtr>::failure(files_result.error());
+        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(files_result.error());
         return;
     }
 
@@ -82,7 +82,7 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
         }
 
         current_batch_ = empty_batch_result.value();
-        current_result_ = common::Result<DataBatchSharedPtr>::success(current_batch_);
+        current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
         return;
     }
 
@@ -98,7 +98,7 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
         // Create a reader for the file
         auto reader_result = data_accessor_->GetReader(file);
         if (!reader_result.ok()) {
-            current_result_ = common::Result<DataBatchSharedPtr>::failure(reader_result.error());
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(reader_result.error());
             return;
         }
 
@@ -111,7 +111,7 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
         // Use the batch reader interface
         auto batch_reader_result = reader->GetBatchReader(projection_column_names);
         if (!batch_reader_result.ok()) {
-            current_result_ = common::Result<DataBatchSharedPtr>::failure(batch_reader_result.error());
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(batch_reader_result.error());
             return;
         }
 
@@ -128,7 +128,7 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
                 if (node.Predicate()) {
                     auto filter_result = ArrowUtil::ApplyPredicate(batch, node.Predicate());
                     if (!filter_result.ok()) {
-                        current_result_ = common::Result<DataBatchSharedPtr>::failure(filter_result.error());
+                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(filter_result.error());
                         return;
                     }
                     batch = filter_result.value();
@@ -165,7 +165,7 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
         // Use ArrowUtil to concatenate all the batches
         auto concat_result = ArrowUtil::ConcatenateBatches(batches);
         if (!concat_result.ok()) {
-            current_result_ = common::Result<DataBatchSharedPtr>::failure(concat_result.error());
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(concat_result.error());
             return;
         }
 
@@ -173,7 +173,7 @@ void SimpleExecutor::Visit(PhysicalSequentialScanNode& node) {
         LOG_VERBOSE("Concatenated %d batches with total of %d rows", batches.size(), current_batch_->num_rows());
     }
 
-    current_result_ = common::Result<DataBatchSharedPtr>::success(current_batch_);
+    current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
     return;
 }
 
@@ -194,13 +194,13 @@ void SimpleExecutor::Visit(PhysicalFilterNode& node) {
     // Apply the filter predicate using ArrowUtil
     auto filter_result = ArrowUtil::ApplyPredicate(current_batch_, node.Predicate());
     if (!filter_result.ok()) {
-        current_result_ = common::Result<DataBatchSharedPtr>::failure(filter_result.error());
+        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(filter_result.error());
         return;
     }
 
     // Update the current batch with the filtered result
     current_batch_ = filter_result.value();
-    current_result_ = common::Result<DataBatchSharedPtr>::success(current_batch_);
+    current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
 }
 
 // Minimal implementation for other operators, as we're only supporting simple SELECT *
@@ -219,7 +219,7 @@ void SimpleExecutor::Visit(PhysicalProjectionNode& node) {
     // Get input batch from child
     auto input_batch = child_result.value();
     if (!input_batch) {
-        current_result_ = common::Result<DataBatchSharedPtr>::failure(
+        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
             common::Error(common::ErrorCode::InvalidArgument, "Input batch is null"));
         return;
     }
@@ -229,7 +229,7 @@ void SimpleExecutor::Visit(PhysicalProjectionNode& node) {
     if (projections.empty()) {
         // No projections, just return the input batch
         current_batch_ = input_batch;
-        current_result_ = common::Result<DataBatchSharedPtr>::success(current_batch_);
+        current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
         return;
     }
 
@@ -252,7 +252,7 @@ void SimpleExecutor::Visit(PhysicalProjectionNode& node) {
             }
 
             if (col_idx == -1) {
-                current_result_ = common::Result<DataBatchSharedPtr>::failure(
+                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
                     common::Error(common::ErrorCode::InvalidArgument, "Column not found: " + col_name));
                 return;
             }
@@ -261,7 +261,7 @@ void SimpleExecutor::Visit(PhysicalProjectionNode& node) {
             output_fields.push_back(input_schema->field(col_idx));
         } else {
             // For now, only support column references
-            current_result_ = common::Result<DataBatchSharedPtr>::failure(common::Error(
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
                 common::ErrorCode::NotImplemented, "Only column references are supported in projections"));
             return;
         }
@@ -290,7 +290,7 @@ void SimpleExecutor::Visit(PhysicalProjectionNode& node) {
 
             // This should never happen because we already checked above
             if (col_idx == -1) {
-                current_result_ = common::Result<DataBatchSharedPtr>::failure(
+                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
                     common::Error(common::ErrorCode::InvalidArgument, "Column not found: " + col_name));
                 return;
             }
@@ -299,7 +299,7 @@ void SimpleExecutor::Visit(PhysicalProjectionNode& node) {
             output_arrays.push_back(input_batch->column(col_idx));
         } else {
             // For now, only support column references
-            current_result_ = common::Result<DataBatchSharedPtr>::failure(common::Error(
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
                 common::ErrorCode::NotImplemented, "Only column references are supported in projections"));
             return;
         }
@@ -307,7 +307,7 @@ void SimpleExecutor::Visit(PhysicalProjectionNode& node) {
 
     // Create the output batch
     current_batch_ = arrow::RecordBatch::Make(output_schema, input_batch->num_rows(), output_arrays);
-    current_result_ = common::Result<DataBatchSharedPtr>::success(current_batch_);
+    current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
 }
 
 void SimpleExecutor::Visit(PhysicalHashJoinNode& node) {

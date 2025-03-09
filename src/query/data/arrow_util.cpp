@@ -96,8 +96,8 @@ arrow::Result<std::shared_ptr<arrow::Array>> ArrowUtil::CreateEmptyArray(common:
     return it->second();
 }
 
-common::Result<DataBatchSharedPtr> ArrowUtil::CreateEmptyBatch(const common::Schema& schema) {
-    using ResultType = common::Result<DataBatchSharedPtr>;
+common::Result<ArrowDataBatchSharedPtr> ArrowUtil::CreateEmptyBatch(const common::Schema& schema) {
+    using ResultType = common::Result<ArrowDataBatchSharedPtr>;
 
     // Create empty arrays for each field
     std::vector<std::shared_ptr<arrow::Array>> columns;
@@ -119,16 +119,16 @@ common::Result<DataBatchSharedPtr> ArrowUtil::CreateEmptyBatch(const common::Sch
     return arrow::RecordBatch::Make(arrow_schema_result.value(), 0, columns);
 }
 
-DataBatchSharedPtr ArrowUtil::CreateEmptyBatch() {
+ArrowDataBatchSharedPtr ArrowUtil::CreateEmptyBatch() {
     auto empty_schema = arrow::schema({});
     std::vector<std::shared_ptr<arrow::Array>> empty_columns;
     return arrow::RecordBatch::Make(empty_schema, 0, empty_columns);
 }
 
-common::Result<DataBatchSharedPtr> ArrowUtil::ApplyPredicate(const DataBatchSharedPtr& batch,
-                                                             const std::shared_ptr<common::Expression>& predicate) {
+common::Result<ArrowDataBatchSharedPtr> ArrowUtil::ApplyPredicate(
+    const ArrowDataBatchSharedPtr& batch, const std::shared_ptr<common::Expression>& predicate) {
     if (!predicate) {
-        return common::Result<DataBatchSharedPtr>::success(batch);
+        return common::Result<ArrowDataBatchSharedPtr>::success(batch);
     }
 
     // For simple implementation, we'll handle only binary operations with comparison operators
@@ -244,7 +244,7 @@ common::Result<DataBatchSharedPtr> ArrowUtil::ApplyPredicate(const DataBatchShar
                 }
 
                 // Return the filtered record batch
-                return common::Result<DataBatchSharedPtr>::success(filter_result.ValueOrDie().record_batch());
+                return common::Result<ArrowDataBatchSharedPtr>::success(filter_result.ValueOrDie().record_batch());
             }
         }
     }
@@ -252,8 +252,9 @@ common::Result<DataBatchSharedPtr> ArrowUtil::ApplyPredicate(const DataBatchShar
     return common::Error(common::ErrorCode::NotImplemented, "Unsupported predicate expression type");
 }
 
-common::Result<DataBatchSharedPtr> ArrowUtil::ConcatenateBatches(const std::vector<DataBatchSharedPtr>& batches) {
-    using ResultType = common::Result<DataBatchSharedPtr>;
+common::Result<ArrowDataBatchSharedPtr> ArrowUtil::ConcatenateBatches(
+    const std::vector<ArrowDataBatchSharedPtr>& batches) {
+    using ResultType = common::Result<ArrowDataBatchSharedPtr>;
 
     // Handle empty input case
     if (batches.empty()) {

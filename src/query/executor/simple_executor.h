@@ -27,7 +27,7 @@ public:
     ~SimpleExecutor() override = default;
 
     // Execute a physical plan
-    common::Result<DataBatchSharedPtr> execute(std::shared_ptr<PhysicalPlanNode> plan) override;
+    common::Result<ArrowDataBatchSharedPtr> execute(std::shared_ptr<PhysicalPlanNode> plan) override;
 
     // Visitor methods for different physical operators
     void Visit(PhysicalSequentialScanNode& node) override;
@@ -42,18 +42,18 @@ public:
     void Visit(PhysicalShuffleExchangeNode& node) override;
 
     // Get the current batch
-    common::Result<DataBatchSharedPtr> CurrentBatch() const override;
+    common::Result<ArrowDataBatchSharedPtr> CurrentBatch() const override;
 
 protected:
     // Helper methods for execution
-    common::Result<DataBatchSharedPtr> ExecuteChildren(PhysicalPlanNode& node) override;
+    common::Result<ArrowDataBatchSharedPtr> ExecuteChildren(PhysicalPlanNode& node) override;
     common::Result<bool> ProduceResults(const common::Schema& schema) override;
 
 private:
     std::shared_ptr<catalog::Catalog> catalog_;
     std::shared_ptr<DataAccessor> data_accessor_;
-    DataBatchSharedPtr current_batch_;                   // Current result batch
-    common::Result<DataBatchSharedPtr> current_result_;  // Current result status
+    ArrowDataBatchSharedPtr current_batch_;                   // Current result batch
+    common::Result<ArrowDataBatchSharedPtr> current_result_;  // Current result status
 };
 
 }  // namespace pond::query
