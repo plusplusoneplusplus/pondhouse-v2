@@ -6,34 +6,10 @@
 #include "common/result.h"
 #include "query/data/arrow_util.h"
 #include "query/data/data_accessor.h"
+#include "query/executor/executor.h"
 #include "query/planner/physical_plan_node.h"
 
 namespace pond::query {
-
-/**
- * @brief Iterator for pulling batches of data from a query execution
- *
- * This interface provides a pull-based vectorized execution model,
- * allowing consumers to request batches of data on demand.
- */
-class BatchIterator {
-public:
-    virtual ~BatchIterator() = default;
-
-    /**
-     * @brief Pull the next batch of data
-     *
-     * @return common::Result<ArrowDataBatchSharedPtr> Next batch or end of data (nullptr) if no more data
-     */
-    virtual common::Result<ArrowDataBatchSharedPtr> Next() = 0;
-
-    /**
-     * @brief Check if more data is available without consuming it
-     *
-     * @return bool True if more data is available, false otherwise
-     */
-    virtual bool HasNext() const = 0;
-};
 
 /**
  * @brief Implementation of BatchIterator for different operators
@@ -65,7 +41,7 @@ public:
  * iterators, where each operator pulls data from its children as needed. This allows for
  * lazy evaluation and streaming processing of data.
  */
-class VectorizedExecutor {
+class VectorizedExecutor : public Executor {
 public:
     /**
      * @brief Create a new VectorizedExecutor
@@ -83,15 +59,7 @@ public:
      * @param plan The physical plan to execute
      * @return common::Result<std::unique_ptr<BatchIterator>> Iterator for retrieving result batches
      */
-    common::Result<std::unique_ptr<BatchIterator>> Execute(std::shared_ptr<PhysicalPlanNode> plan);
-
-    /**
-     * @brief Compatibility method that returns all results in a single batch
-     *
-     * @param plan The physical plan to execute
-     * @return common::Result<ArrowDataBatchSharedPtr> All results in a single batch
-     */
-    common::Result<ArrowDataBatchSharedPtr> ExecuteToCompletion(std::shared_ptr<PhysicalPlanNode> plan);
+    common::Result<std::unique_ptr<BatchIterator>> Execute(std::shared_ptr<PhysicalPlanNode> plan) override;
 
 private:
     /**

@@ -10,6 +10,43 @@
 namespace pond::query {
 
 /**
+ * @brief A batch iterator implementation for MaterializedExecutor
+ *
+ * This iterator is simple - it returns all data in a single batch
+ * and then returns nullptr for subsequent calls.
+ */
+class MaterializedBatchIterator : public BatchIterator {
+public:
+    explicit MaterializedBatchIterator(ArrowDataBatchSharedPtr batch) : batch_(std::move(batch)), consumed_(false) {}
+
+    ~MaterializedBatchIterator() override = default;
+
+    /**
+     * @brief Pull the next batch of data
+     *
+     * @return common::Result<ArrowDataBatchSharedPtr> Next batch or end of data (nullptr) if no more data
+     */
+    common::Result<ArrowDataBatchSharedPtr> Next() override {
+        if (consumed_) {
+            return common::Result<ArrowDataBatchSharedPtr>::success(nullptr);
+        }
+        consumed_ = true;
+        return common::Result<ArrowDataBatchSharedPtr>::success(batch_);
+    }
+
+    /**
+     * @brief Check if more data is available without consuming it
+     *
+     * @return bool True if more data is available, false otherwise
+     */
+    bool HasNext() const override { return !consumed_; }
+
+private:
+    ArrowDataBatchSharedPtr batch_;
+    bool consumed_;
+};
+
+/**
  * @brief A simple implementation of the Executor interface
  *
  * This implementation supports basic SELECT * FROM table queries
@@ -27,7 +64,7 @@ public:
     ~MaterializedExecutor() override = default;
 
     // Execute a physical plan
-    common::Result<ArrowDataBatchSharedPtr> Execute(std::shared_ptr<PhysicalPlanNode> plan) override;
+    common::Result<std::unique_ptr<BatchIterator>> Execute(std::shared_ptr<PhysicalPlanNode> plan) override;
 
     // Visitor methods for different physical operators
     void Visit(PhysicalSequentialScanNode& node) override;

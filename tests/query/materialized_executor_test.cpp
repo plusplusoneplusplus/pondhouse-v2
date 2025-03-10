@@ -132,7 +132,7 @@ TEST_F(MaterializedExecutorTest, SelectAllFromTable) {
     auto plan = CreateScanPlan();
 
     // Execute the plan
-    auto result = executor_->Execute(plan);
+    auto result = executor_->ExecuteToCompletion(plan);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -179,7 +179,7 @@ TEST_F(MaterializedExecutorTest, SelectFromEmptyTable) {
     auto plan = std::make_shared<PhysicalSequentialScanNode>("empty_table", *empty_schema);
 
     // Execute the plan
-    auto result = executor_->Execute(plan);
+    auto result = executor_->ExecuteToCompletion(plan);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -201,7 +201,7 @@ TEST_F(MaterializedExecutorTest, InvalidTable) {
     auto plan = std::make_shared<PhysicalSequentialScanNode>("non_existent_table", *GetSchema("users"));
 
     // Execute the plan
-    auto result = executor_->Execute(plan);
+    auto result = executor_->ExecuteToCompletion(plan);
     ASSERT_FALSE(result.ok()) << "Execution should fail for non-existent table";
 }
 
@@ -222,7 +222,7 @@ TEST_F(MaterializedExecutorTest, ExecuteSQLQuery) {
     auto physical_plan = physical_plan_result.value();
 
     // Execute the physical plan
-    auto result = executor_->Execute(physical_plan);
+    auto result = executor_->ExecuteToCompletion(physical_plan);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -300,7 +300,7 @@ TEST_F(MaterializedExecutorTest, ExecuteSQLQueryWithFilter) {
     inspect_plan(physical_plan);
 
     // Execute the plan
-    auto result = executor_->Execute(physical_plan);
+    auto result = executor_->ExecuteToCompletion(physical_plan);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -359,7 +359,7 @@ TEST_F(MaterializedExecutorTest, MultiFileQuery) {
     auto schema = GetSchema("multi_users");
 
     // Execute the plan
-    auto result = executor_->Execute(plan);
+    auto result = executor_->ExecuteToCompletion(plan);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -398,7 +398,7 @@ TEST_F(MaterializedExecutorTest, MultiFileQueryWithFilter) {
     auto scan_node = std::make_shared<PhysicalSequentialScanNode>("multi_users", *schema, predicate);
 
     // Execute the plan
-    auto result = executor_->Execute(scan_node);
+    auto result = executor_->ExecuteToCompletion(scan_node);
     VERIFY_RESULT(result);
 
     // Get the batch
@@ -440,7 +440,7 @@ TEST_F(MaterializedExecutorTest, ProjectionTest) {
     projection_node->AddChild(scan_node);
 
     // Execute the plan
-    auto result = executor_->Execute(projection_node);
+    auto result = executor_->ExecuteToCompletion(projection_node);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -491,7 +491,7 @@ TEST_F(MaterializedExecutorTest, ProjectionSingleColumnTest) {
     projection_node->AddChild(scan_node);
 
     // Execute the plan
-    auto result = executor_->Execute(projection_node);
+    auto result = executor_->ExecuteToCompletion(projection_node);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -548,7 +548,7 @@ TEST_F(MaterializedExecutorTest, ProjectionAfterFilterTest) {
     projection_node->AddChild(filter_node);
 
     // Execute the plan
-    auto result = executor_->Execute(projection_node);
+    auto result = executor_->ExecuteToCompletion(projection_node);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -601,7 +601,7 @@ TEST_F(MaterializedExecutorTest, MultiFileQueryWithProjection) {
     projection_node->AddChild(scan_node);
 
     // Execute the plan
-    auto result = executor_->Execute(projection_node);
+    auto result = executor_->ExecuteToCompletion(projection_node);
     ASSERT_TRUE(result.ok()) << "Execution failed: " << result.error().message();
 
     // Get the batch
@@ -657,7 +657,7 @@ TEST_F(MaterializedExecutorTest, ProjectionInvalidColumnTest) {
     projection_node->AddChild(scan_node);
 
     // Execute the plan
-    auto result = executor_->Execute(projection_node);
+    auto result = executor_->ExecuteToCompletion(projection_node);
 
     // Should fail because of the invalid column
     VERIFY_ERROR_CODE(result, common::ErrorCode::InvalidArgument);
@@ -681,7 +681,7 @@ TEST_F(MaterializedExecutorTest, SequentialScanWithProjections) {
         "users", *GetSchema("users"), nullptr /* prediate */, *projected_schema);
 
     // Execute the plan
-    auto result = executor_->Execute(scan_node);
+    auto result = executor_->ExecuteToCompletion(scan_node);
     VERIFY_RESULT(result);
 
     auto batch = result.value();
@@ -702,6 +702,46 @@ TEST_F(MaterializedExecutorTest, SequentialScanWithProjections) {
     LOG_STATUS("First row values - id: %d, name: %s",
                std::static_pointer_cast<arrow::Int32Array>(batch->column(0))->Value(0),
                std::static_pointer_cast<arrow::StringArray>(batch->column(1))->GetString(0).c_str());
+}
+
+//
+// Test Setup:
+//      Execute a scan plan and use the returned iterator to fetch results
+// Test Result:
+//      Iterator correctly provides the data batch on first call and nullptr on subsequent calls
+//
+TEST_F(MaterializedExecutorTest, BatchIteratorTest) {
+    // Create a simple scan plan
+    auto plan = CreateScanPlan();
+
+    // Execute the plan to get an iterator
+    auto iterator_result = executor_->Execute(plan);
+    ASSERT_TRUE(iterator_result.ok()) << "Execution failed: " << iterator_result.error().message();
+
+    auto iterator = std::move(iterator_result).value();
+    ASSERT_NE(iterator, nullptr) << "Iterator should not be null";
+
+    // Check that HasNext returns true before we call Next
+    ASSERT_TRUE(iterator->HasNext()) << "Iterator should have data available";
+
+    // Call Next to get the batch
+    auto batch_result = iterator->Next();
+    ASSERT_TRUE(batch_result.ok()) << "Next call failed: " << batch_result.error().message();
+
+    auto batch = batch_result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents
+    ASSERT_EQ(batch->num_rows(), 5) << "Batch should have 5 rows";
+    ASSERT_EQ(batch->num_columns(), 4) << "Batch should have 4 columns";
+
+    // Check that HasNext now returns false
+    ASSERT_FALSE(iterator->HasNext()) << "Iterator should not have more data";
+
+    // Call Next again - should return nullptr
+    auto empty_result = iterator->Next();
+    ASSERT_TRUE(empty_result.ok()) << "Second Next call failed: " << empty_result.error().message();
+    ASSERT_EQ(empty_result.value(), nullptr) << "Second call to Next should return nullptr";
 }
 
 }  // namespace pond::query

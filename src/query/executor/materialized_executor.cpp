@@ -21,7 +21,9 @@ MaterializedExecutor::MaterializedExecutor(std::shared_ptr<catalog::Catalog> cat
       data_accessor_(std::move(data_accessor)),
       current_result_(common::Result<ArrowDataBatchSharedPtr>::success(nullptr)) {}
 
-common::Result<ArrowDataBatchSharedPtr> MaterializedExecutor::Execute(std::shared_ptr<PhysicalPlanNode> plan) {
+common::Result<std::unique_ptr<BatchIterator>> MaterializedExecutor::Execute(std::shared_ptr<PhysicalPlanNode> plan) {
+    using ReturnType = common::Result<std::unique_ptr<BatchIterator>>;
+
     // Reset the current batch and result
     current_batch_ = nullptr;
     current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(nullptr);
@@ -34,8 +36,11 @@ common::Result<ArrowDataBatchSharedPtr> MaterializedExecutor::Execute(std::share
     // Accept the plan visitor to execute the plan
     plan->Accept(*this);
 
-    // Return the current result
-    return current_result_;
+    RETURN_IF_ERROR_T(ReturnType, current_result_);
+
+    // Create a MaterializedBatchIterator with the result
+    auto iterator = std::make_unique<MaterializedBatchIterator>(current_batch_);
+    return common::Result<std::unique_ptr<BatchIterator>>::success(std::move(iterator));
 }
 
 common::Result<ArrowDataBatchSharedPtr> MaterializedExecutor::CurrentBatch() const {
