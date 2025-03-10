@@ -173,7 +173,9 @@ common::Result<std::unique_ptr<Record>> Record::Deserialize(const common::DataCh
     remaining -= sizeof(num_columns);
 
     if (num_columns != schema->NumColumns()) {
-        return common::Result<std::unique_ptr<Record>>::failure(common::ErrorCode::InvalidOperation, "Schema mismatch");
+        return common::Result<std::unique_ptr<Record>>::failure(common::ErrorCode::InvalidOperation,
+                                                                "Schema mismatch" + std::to_string(num_columns) +
+                                                                    " != " + std::to_string(schema->NumColumns()));
     }
 
     // Read null bitmap

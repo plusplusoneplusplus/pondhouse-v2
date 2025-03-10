@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -8,6 +8,7 @@ import sys
 from typing import Optional, List, Dict
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 
 # Import generated gRPC modules
 import pond_service_pb2 as pb2
@@ -275,6 +276,30 @@ class PondClient:
                 error=str(e)
             )
 
+    def ingest_json_data(self, table_name: str, json_data: str) -> tuple[bool, int, Optional[str]]:
+        """
+        Ingest JSON data into a specified table.
+        
+        Args:
+            table_name: The name of the table to ingest data into
+            json_data: A JSON string containing an array of objects to ingest
+            
+        Returns:
+            A tuple of (success, rows_ingested, error_message)
+        """
+        try:
+            request = pb2.IngestJsonDataRequest(
+                table_name=table_name,
+                json_data=json_data
+            )
+            response = self.stub.IngestJsonData(request)
+            
+            if response.success:
+                return True, response.rows_ingested, None
+            return False, 0, response.error_message
+        except Exception as e:
+            return False, 0, str(e)
+
 # Create a global client instance
 pond_client = PondClient(GRPC_HOST, GRPC_PORT)
 
@@ -515,7 +540,91 @@ async def table_details(request: Request, table_name: str, sort_by: str = None, 
             "sort_by": sort_by,
             "order": order,
             "total_size": total_size,
-            "total_records": total_records
+            "total_records": total_records,
+            "upload_result": None  # Initialize upload_result as None
+        }
+    )
+
+@app.post("/catalog/table/{table_name}/ingest-json", response_class=HTMLResponse)
+async def ingest_json_data(
+    request: Request, 
+    table_name: str, 
+    json_data: str = Form(None),
+    json_file: UploadFile = File(None),
+    sort_by: str = Form(None),
+    order: str = Form(None)
+):
+    # Track result for displaying feedback to the user
+    upload_result = {
+        "success": False,
+        "message": "",
+        "rows_ingested": 0
+    }
+    
+    # Get data from either the textarea or the uploaded file
+    data_to_ingest = None
+    
+    if json_file and json_file.filename:
+        # Read data from the uploaded file
+        contents = await json_file.read()
+        try:
+            data_to_ingest = contents.decode('utf-8')
+        except UnicodeDecodeError:
+            upload_result["message"] = "Error: The uploaded file is not a valid UTF-8 encoded text file."
+    elif json_data:
+        # Use the data from the textarea
+        data_to_ingest = json_data
+    else:
+        # No data provided
+        upload_result["message"] = "Error: No JSON data provided. Please enter JSON data or upload a file."
+    
+    # Process data if available
+    if data_to_ingest:
+        # Validate JSON format before sending to the server
+        try:
+            # Parse the JSON to validate it (we'll still send the original string)
+            json.loads(data_to_ingest)
+            
+            # Send to the pond service
+            success, rows_ingested, error = pond_client.ingest_json_data(table_name, data_to_ingest)
+            
+            if success:
+                upload_result["success"] = True
+                upload_result["rows_ingested"] = rows_ingested
+                upload_result["message"] = f"Successfully ingested {rows_ingested} rows into {table_name}."
+            else:
+                upload_result["message"] = f"Error: {error}"
+        except json.JSONDecodeError as e:
+            upload_result["message"] = f"Error: Invalid JSON format - {str(e)}"
+    
+    # Get updated metadata (will show newly added files)
+    metadata = pond_client.get_table_metadata(table_name)
+    
+    # Sort data files if requested
+    if metadata.data_files and sort_by:
+        reverse = order == "desc"
+        if sort_by == "path":
+            metadata.data_files.sort(key=lambda x: x.path, reverse=reverse)
+        elif sort_by == "size":
+            metadata.data_files.sort(key=lambda x: x.content_length, reverse=reverse)
+        elif sort_by == "records":
+            metadata.data_files.sort(key=lambda x: x.record_count, reverse=reverse)
+    
+    # Calculate totals for summary
+    total_size = sum(file.content_length for file in metadata.data_files) if metadata.data_files else 0
+    total_records = sum(file.record_count for file in metadata.data_files) if metadata.data_files else 0
+    
+    return templates.TemplateResponse(
+        "table_details.html",
+        {
+            "request": request,
+            "metadata": metadata,
+            "active_page": "catalog",
+            "sort_by": sort_by,
+            "order": order,
+            "total_size": total_size,
+            "total_records": total_records,
+            "upload_result": upload_result
         }
     )
 
