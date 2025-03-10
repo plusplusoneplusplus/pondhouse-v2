@@ -236,6 +236,7 @@ add_subdirectory(third_party/googletest)
 # Add test executable
 add_executable(
     unit_tests
+    src/server/gRPC/pond_service_impl.cpp
     tests/catalog/kv_catalog_test.cpp
     tests/catalog/kv_catalog_util_test.cpp
     tests/catalog/data_ingestor_test.cpp
@@ -287,6 +288,7 @@ add_executable(
     tests/query/operator_iterators_test.cpp
     tests/query/sql_table_executor_test.cpp
     tests/query/create_table_command_test.cpp
+    tests/server/gRPC/pond_service_impl_test.cpp
     tests/sql/hyrise_parser_test.cpp
     tests/test_helper.cpp
     tests/proto/metadata_test.cpp

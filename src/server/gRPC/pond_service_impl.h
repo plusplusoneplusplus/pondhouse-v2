@@ -3,11 +3,11 @@
 #include <memory>
 #include <string>
 
+#include "catalog/catalog.h"
 #include "common/append_only_fs.h"
 #include "common/result.h"
 #include "kv/db.h"
 #include "proto/build/proto/pond_service.grpc.pb.h"
-#include "catalog/catalog.h"
 
 namespace pond::server {
 
@@ -39,8 +39,8 @@ public:
 
     // List detailed files in a directory
     grpc::Status ListDetailedFiles(grpc::ServerContext* context,
-                                 const pond::proto::ListDetailedFilesRequest* request,
-                                 pond::proto::ListDetailedFilesResponse* response) override;
+                                   const pond::proto::ListDetailedFilesRequest* request,
+                                   pond::proto::ListDetailedFilesResponse* response) override;
 
     // Get directory information
     grpc::Status GetDirectoryInfo(grpc::ServerContext* context,
@@ -49,20 +49,25 @@ public:
 
     // Execute SQL query (primarily for table creation)
     grpc::Status ExecuteSQL(grpc::ServerContext* context,
-                          const pond::proto::ExecuteSQLRequest* request,
-                          pond::proto::ExecuteSQLResponse* response) override;
-                          
+                            const pond::proto::ExecuteSQLRequest* request,
+                            pond::proto::ExecuteSQLResponse* response) override;
+
     // List all tables in the catalog
     grpc::Status ListTables(grpc::ServerContext* context,
-                          const pond::proto::ListTablesRequest* request,
-                          pond::proto::ListTablesResponse* response) override;
-                          
+                            const pond::proto::ListTablesRequest* request,
+                            pond::proto::ListTablesResponse* response) override;
+
     // Get table metadata
     grpc::Status GetTableMetadata(grpc::ServerContext* context,
-                                const pond::proto::GetTableMetadataRequest* request,
-                                pond::proto::GetTableMetadataResponse* response) override;
+                                  const pond::proto::GetTableMetadataRequest* request,
+                                  pond::proto::GetTableMetadataResponse* response) override;
 
-private:
+    // Ingest data from JSON
+    grpc::Status IngestJsonData(grpc::ServerContext* context,
+                                const pond::proto::IngestJsonDataRequest* request,
+                                pond::proto::IngestJsonDataResponse* response) override;
+
+protected:
     // Helper method to get the default table
     common::Result<std::shared_ptr<pond::kv::Table>> GetDefaultTable();
 
@@ -70,6 +75,15 @@ private:
     std::shared_ptr<pond::common::IAppendOnlyFileSystem> fs_;
     std::shared_ptr<pond::catalog::Catalog> catalog_;
     std::shared_ptr<pond::kv::DB> catalog_db_;
+
+    // Friend test declarations for unit tests
+    friend class PondServiceImplTest;
+    FRIEND_TEST(PondServiceImplTest, IngestJsonData_Success);
+    FRIEND_TEST(PondServiceImplTest, IngestJsonData_TableNotFound);
+    FRIEND_TEST(PondServiceImplTest, IngestJsonData_InvalidJson);
+    FRIEND_TEST(PondServiceImplTest, IngestJsonData_SchemaTypeMismatch);
+    FRIEND_TEST(PondServiceImplTest, IngestJsonData_EmptyJsonArray);
+    FRIEND_TEST(PondServiceImplTest, IngestJsonData_MultipleBatches);
 };
 
 }  // namespace pond::server

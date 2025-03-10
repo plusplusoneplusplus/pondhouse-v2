@@ -30,6 +30,9 @@ service PondService {
   
   // Get table metadata
   rpc GetTableMetadata(GetTableMetadataRequest) returns (GetTableMetadataResponse) {}
+  
+  // New method for ingesting data from JSON
+  rpc IngestJsonData(IngestJsonDataRequest) returns (IngestJsonDataResponse) {}
 }
 
 // Request message for Get operation
@@ -180,4 +183,25 @@ message GetTableMetadataResponse {
   TableMetadataInfo metadata = 1;
   bool success = 2;
   string error = 3;
+}
+
+// New message definitions for JSON data ingestion
+message IngestJsonDataRequest {
+  // The name of the table to ingest data into
+  string table_name = 1;
+  
+  // JSON data as a string. Should be an array of objects where each object represents a row
+  // and keys match column names in the table's schema
+  string json_data = 2;
+}
+
+message IngestJsonDataResponse {
+  // Number of rows successfully ingested
+  int64 rows_ingested = 1;
+  
+  // Any error message if the operation failed
+  string error_message = 2;
+  
+  // Whether the operation was successful
+  bool success = 3;
 } 

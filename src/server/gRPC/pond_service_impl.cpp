@@ -4,12 +4,16 @@
 
 #include <grpcpp/grpcpp.h>
 
+#include "catalog/data_ingestor.h"
+#include "catalog/kv_catalog.h"
 #include "common/data_chunk.h"
 #include "common/log.h"
 #include "common/result.h"
 #include "common/schema.h"
+#include "common/time.h"
+#include "format/parquet/parquet_writer.h"
 #include "kv/db.h"
-#include "catalog/kv_catalog.h"
+#include "query/data/arrow_util.h"
 #include "query/executor/sql_table_executor.h"
 #include "server/gRPC/type_converter.h"
 
@@ -221,8 +225,8 @@ grpc::Status PondServiceImpl::Scan(grpc::ServerContext* context,
 }
 
 grpc::Status PondServiceImpl::ListDetailedFiles(grpc::ServerContext* context,
-                                              const pond::proto::ListDetailedFilesRequest* request,
-                                              pond::proto::ListDetailedFilesResponse* response) {
+                                                const pond::proto::ListDetailedFilesRequest* request,
+                                                pond::proto::ListDetailedFilesResponse* response) {
     LOG_STATUS("Received ListDetailedFiles request for path: %s", request->path().c_str());
 
     std::string path = request->path();
@@ -272,20 +276,20 @@ grpc::Status PondServiceImpl::GetDirectoryInfo(grpc::ServerContext* context,
 }
 
 grpc::Status PondServiceImpl::ExecuteSQL(grpc::ServerContext* context,
-                                       const pond::proto::ExecuteSQLRequest* request,
-                                       pond::proto::ExecuteSQLResponse* response) {
+                                         const pond::proto::ExecuteSQLRequest* request,
+                                         pond::proto::ExecuteSQLResponse* response) {
     LOG_STATUS("Received ExecuteSQL request with query: %s", request->sql_query().c_str());
 
     try {
         // Get the SQL query
         std::string sql_query = request->sql_query();
-        
+
         // Create a SQL table executor
         pond::query::SQLTableExecutor executor(catalog_);
-        
+
         // Currently only supports CREATE TABLE statements
         auto result = executor.ExecuteCreateTable(sql_query);
-        
+
         if (result.ok()) {
             auto metadata = result.value();
             response->set_success(true);
@@ -298,19 +302,19 @@ grpc::Status PondServiceImpl::ExecuteSQL(grpc::ServerContext* context,
         response->set_success(false);
         response->set_error(std::string("Error executing SQL: ") + e.what());
     }
-    
+
     return grpc::Status::OK;
 }
 
 grpc::Status PondServiceImpl::ListTables(grpc::ServerContext* context,
-                                       const pond::proto::ListTablesRequest* request,
-                                       pond::proto::ListTablesResponse* response) {
+                                         const pond::proto::ListTablesRequest* request,
+                                         pond::proto::ListTablesResponse* response) {
     LOG_STATUS("Received ListTables request");
 
     try {
         // Use the catalog directly
         auto result = catalog_->ListTables();
-        
+
         if (result.ok()) {
             response->set_success(true);
             for (const auto& table_name : result.value()) {
@@ -324,36 +328,33 @@ grpc::Status PondServiceImpl::ListTables(grpc::ServerContext* context,
         response->set_success(false);
         response->set_error(std::string("Error listing tables: ") + e.what());
     }
-    
+
     return grpc::Status::OK;
 }
 
 grpc::Status PondServiceImpl::GetTableMetadata(grpc::ServerContext* context,
-                                           const pond::proto::GetTableMetadataRequest* request,
-                                           pond::proto::GetTableMetadataResponse* response) {
+                                               const pond::proto::GetTableMetadataRequest* request,
+                                               pond::proto::GetTableMetadataResponse* response) {
     LOG_STATUS("Received GetTableMetadata request for table: %s", request->table_name().c_str());
 
     try {
         // Use the catalog directly
         auto table_name = request->table_name();
         auto result = catalog_->LoadTable(table_name);
-        
+
         if (result.ok()) {
             const auto& table_metadata = result.value();
-            
+
             // Use TypeConverter to convert table metadata
             auto metadata_info = TypeConverter::ConvertToTableMetadataInfo(table_metadata);
-            
+
             // Get data files
             auto files_result = catalog_->ListDataFiles(table_name);
             if (files_result.ok()) {
                 // Add data files using TypeConverter
-                TypeConverter::AddDataFilesToTableMetadataInfo(
-                    &metadata_info, 
-                    files_result.value()
-                );
+                TypeConverter::AddDataFilesToTableMetadataInfo(&metadata_info, files_result.value());
             }
-            
+
             // Set the metadata in the response
             response->mutable_metadata()->CopyFrom(metadata_info);
             response->set_success(true);
@@ -365,7 +366,90 @@ grpc::Status PondServiceImpl::GetTableMetadata(grpc::ServerContext* context,
         response->set_success(false);
         response->set_error(std::string("Error getting table metadata: ") + e.what());
     }
-    
+
+    return grpc::Status::OK;
+}
+
+grpc::Status PondServiceImpl::IngestJsonData(grpc::ServerContext* context,
+                                             const pond::proto::IngestJsonDataRequest* request,
+                                             pond::proto::IngestJsonDataResponse* response) {
+    LOG_STATUS("Received IngestJsonData request for table: %s", request->table_name().c_str());
+
+    try {
+        // Get the table name and JSON data from the request
+        const std::string& table_name = request->table_name();
+        const std::string& json_data = request->json_data();
+
+        // Load the table metadata to get the schema
+        auto table_result = catalog_->LoadTable(table_name);
+        if (!table_result.ok()) {
+            response->set_success(false);
+            response->set_error_message("Failed to load table: " + table_result.error().message());
+            return grpc::Status::OK;
+        }
+
+        const auto& table_metadata = table_result.value();
+        const auto& schema = table_metadata.schema;
+
+        if (!schema) {
+            response->set_success(false);
+            response->set_error_message("Table schema is null");
+            return grpc::Status::OK;
+        }
+
+        // Convert JSON to Arrow RecordBatch
+        auto batch_result = pond::query::ArrowUtil::JsonToRecordBatch(json_data, *schema);
+        if (!batch_result.ok()) {
+            response->set_success(false);
+            response->set_error_message("Failed to convert JSON to Arrow RecordBatch: "
+                                        + batch_result.error().message());
+            return grpc::Status::OK;
+        }
+
+        auto record_batch = batch_result.value();
+
+        // If the record batch is empty, return success with 0 rows
+        if (record_batch->num_rows() == 0) {
+            response->set_success(true);
+            response->set_rows_ingested(0);
+            return grpc::Status::OK;
+        }
+
+        // Create a DataIngestor to handle writing the data to the table
+        auto ingestor_result = catalog::DataIngestor::Create(catalog_, fs_, table_name);
+        if (!ingestor_result.ok()) {
+            response->set_success(false);
+            response->set_error_message("Failed to create data ingestor: " + ingestor_result.error().message());
+            return grpc::Status::OK;
+        }
+
+        auto ingestor = std::move(ingestor_result).value();
+
+        // Add the record batch to the ingestor
+        auto add_result = ingestor->IngestBatch(record_batch);
+        if (!add_result.ok()) {
+            response->set_success(false);
+            response->set_error_message("Failed to add record batch to ingestor: " + add_result.error().message());
+            return grpc::Status::OK;
+        }
+
+        // Commit the data to the table
+        auto commit_result = ingestor->Commit();
+        if (!commit_result.ok()) {
+            response->set_success(false);
+            response->set_error_message("Failed to commit data to table: " + commit_result.error().message());
+            return grpc::Status::OK;
+        }
+
+        // Set response values
+        response->set_success(true);
+        response->set_rows_ingested(record_batch->num_rows());
+
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error_message(std::string("Error ingesting JSON data: ") + e.what());
+    }
+
     return grpc::Status::OK;
 }
 
