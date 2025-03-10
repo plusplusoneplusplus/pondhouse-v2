@@ -289,4 +289,283 @@ TEST_F(ArrowUtilTest, ConcatenateBatchesDifferentSchema) {
     ASSERT_NE(result.error().message().find("different schemas"), std::string::npos);
 }
 
+//
+// Test Setup:
+//      Test with empty JSON array
+// Test Result:
+//      Should return an empty record batch with the correct schema
+//
+TEST_F(ArrowUtilTest, JsonToRecordBatchEmptyArray) {
+    std::string json_str = "[]";
+    auto result = ArrowUtil::JsonToRecordBatch(json_str, schema_);
+    ASSERT_TRUE(result.ok()) << "Failed with error: " << result.error().message();
+
+    auto batch = result.value();
+    EXPECT_EQ(batch->num_rows(), 0);
+    EXPECT_EQ(batch->num_columns(), schema_.Fields().size());
+
+    // Verify schema matches
+    auto arrow_schema = batch->schema();
+    EXPECT_EQ(arrow_schema->num_fields(), schema_.Fields().size());
+    for (size_t i = 0; i < schema_.Fields().size(); ++i) {
+        EXPECT_EQ(arrow_schema->field(i)->name(), schema_.Fields()[i].name);
+    }
+}
+
+//
+// Test Setup:
+//      Test with invalid JSON
+// Test Result:
+//      Should return an error
+//
+TEST_F(ArrowUtilTest, JsonToRecordBatchInvalidJson) {
+    std::string invalid_json = "{not valid json}";
+    auto result = ArrowUtil::JsonToRecordBatch(invalid_json, schema_);
+    EXPECT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code(), common::ErrorCode::InvalidArgument);
+}
+
+//
+// Test Setup:
+//      Test with JSON that is not an array
+// Test Result:
+//      Should return an error
+//
+TEST_F(ArrowUtilTest, JsonToRecordBatchNotAnArray) {
+    std::string json_str = R"({"this": "is an object", "not": "an array"})";
+    auto result = ArrowUtil::JsonToRecordBatch(json_str, schema_);
+    EXPECT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code(), common::ErrorCode::InvalidArgument);
+}
+
+//
+// Test Setup:
+//      Test with a single row of valid data
+// Test Result:
+//      Should correctly convert to a record batch
+//
+TEST_F(ArrowUtilTest, JsonToRecordBatchSingleRow) {
+    std::string json_str = R"([
+        {
+            "int32_col": 42,
+            "int64_col": 9223372036854775807,
+            "float_col": 3.14,
+            "double_col": 2.71828,
+            "bool_col": true,
+            "string_col": "hello world",
+            "timestamp_col": 1609459200000,
+            "binary_col": "binary data"
+        }
+    ])";
+
+    auto result = ArrowUtil::JsonToRecordBatch(json_str, schema_);
+    ASSERT_TRUE(result.ok()) << "Failed with error: " << result.error().message();
+
+    auto batch = result.value();
+    EXPECT_EQ(batch->num_rows(), 1);
+    EXPECT_EQ(batch->num_columns(), schema_.Fields().size());
+
+    // Verify data for each column
+    EXPECT_EQ(std::static_pointer_cast<arrow::Int32Array>(batch->column(0))->Value(0), 42);
+    EXPECT_EQ(std::static_pointer_cast<arrow::Int64Array>(batch->column(1))->Value(0), 9223372036854775807);
+    EXPECT_FLOAT_EQ(std::static_pointer_cast<arrow::FloatArray>(batch->column(2))->Value(0), 3.14f);
+    EXPECT_DOUBLE_EQ(std::static_pointer_cast<arrow::DoubleArray>(batch->column(3))->Value(0), 2.71828);
+    EXPECT_EQ(std::static_pointer_cast<arrow::BooleanArray>(batch->column(4))->Value(0), true);
+    EXPECT_EQ(std::static_pointer_cast<arrow::StringArray>(batch->column(5))->GetString(0), "hello world");
+    EXPECT_EQ(std::static_pointer_cast<arrow::TimestampArray>(batch->column(6))->Value(0), 1609459200000);
+
+    auto binary_array = std::static_pointer_cast<arrow::BinaryArray>(batch->column(7));
+    EXPECT_EQ(binary_array->GetView(0), std::string_view("binary data"));
+}
+
+//
+// Test Setup:
+//      Test with multiple rows of data
+// Test Result:
+//      Should correctly convert to a record batch with multiple rows
+//
+TEST_F(ArrowUtilTest, JsonToRecordBatchMultipleRows) {
+    std::string json_str = R"([
+        {
+            "int32_col": 1,
+            "int64_col": 1000000000000,
+            "float_col": 1.1,
+            "double_col": 1.01,
+            "bool_col": true,
+            "string_col": "row 1",
+            "timestamp_col": 1609459200000,
+            "binary_col": "binary 1"
+        },
+        {
+            "int32_col": 2,
+            "int64_col": 2000000000000,
+            "float_col": 2.2,
+            "double_col": 2.02,
+            "bool_col": false,
+            "string_col": "row 2",
+            "timestamp_col": 1609545600000,
+            "binary_col": "binary 2"
+        },
+        {
+            "int32_col": 3,
+            "int64_col": 3000000000000,
+            "float_col": 3.3,
+            "double_col": 3.03,
+            "bool_col": true,
+            "string_col": "row 3",
+            "timestamp_col": 1609632000000,
+            "binary_col": "binary 3"
+        }
+    ])";
+
+    auto result = ArrowUtil::JsonToRecordBatch(json_str, schema_);
+    ASSERT_TRUE(result.ok()) << "Failed with error: " << result.error().message();
+
+    auto batch = result.value();
+    EXPECT_EQ(batch->num_rows(), 3);
+    EXPECT_EQ(batch->num_columns(), schema_.Fields().size());
+
+    // Verify data for a few columns across rows
+    auto int32_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+    EXPECT_EQ(int32_array->Value(0), 1);
+    EXPECT_EQ(int32_array->Value(1), 2);
+    EXPECT_EQ(int32_array->Value(2), 3);
+
+    auto string_array = std::static_pointer_cast<arrow::StringArray>(batch->column(5));
+    EXPECT_EQ(string_array->GetString(0), "row 1");
+    EXPECT_EQ(string_array->GetString(1), "row 2");
+    EXPECT_EQ(string_array->GetString(2), "row 3");
+
+    auto bool_array = std::static_pointer_cast<arrow::BooleanArray>(batch->column(4));
+    EXPECT_EQ(bool_array->Value(0), true);
+    EXPECT_EQ(bool_array->Value(1), false);
+    EXPECT_EQ(bool_array->Value(2), true);
+}
+
+//
+// Test Setup:
+//      Test handling of null values in JSON
+// Test Result:
+//      Should correctly handle null values for nullable columns and reject for non-nullable
+//
+TEST_F(ArrowUtilTest, JsonToRecordBatchNullValues) {
+    // Create a schema with nullable columns
+    common::Schema nullable_schema({{"int32_col", common::ColumnType::INT32, common::Nullability::NULLABLE},
+                                    {"string_col", common::ColumnType::STRING, common::Nullability::NULLABLE}});
+
+    std::string json_str = R"([
+        {
+            "int32_col": 1,
+            "string_col": "not null"
+        },
+        {
+            "int32_col": null,
+            "string_col": "int is null"
+        },
+        {
+            "int32_col": 3,
+            "string_col": null
+        },
+        {
+            "string_col": "int missing"
+        },
+        {
+            "int32_col": 5
+        }
+    ])";
+
+    auto result = ArrowUtil::JsonToRecordBatch(json_str, nullable_schema);
+    ASSERT_TRUE(result.ok()) << "Failed with error: " << result.error().message();
+
+    auto batch = result.value();
+    EXPECT_EQ(batch->num_rows(), 5);
+    EXPECT_EQ(batch->num_columns(), 2);
+
+    // Verify data and nullity
+    auto int32_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+    auto string_array = std::static_pointer_cast<arrow::StringArray>(batch->column(1));
+
+    // Row 0: both values present
+    EXPECT_FALSE(int32_array->IsNull(0));
+    EXPECT_EQ(int32_array->Value(0), 1);
+    EXPECT_FALSE(string_array->IsNull(0));
+    EXPECT_EQ(string_array->GetString(0), "not null");
+
+    // Row 1: int32 is null
+    EXPECT_TRUE(int32_array->IsNull(1));
+    EXPECT_FALSE(string_array->IsNull(1));
+    EXPECT_EQ(string_array->GetString(1), "int is null");
+
+    // Row 2: string is null
+    EXPECT_FALSE(int32_array->IsNull(2));
+    EXPECT_EQ(int32_array->Value(2), 3);
+    EXPECT_TRUE(string_array->IsNull(2));
+
+    // Row 3: int32 missing (treated as null)
+    EXPECT_TRUE(int32_array->IsNull(3));
+    EXPECT_FALSE(string_array->IsNull(3));
+    EXPECT_EQ(string_array->GetString(3), "int missing");
+
+    // Row 4: string missing (treated as null)
+    EXPECT_FALSE(int32_array->IsNull(4));
+    EXPECT_EQ(int32_array->Value(4), 5);
+    EXPECT_TRUE(string_array->IsNull(4));
+}
+
+//
+// Test Setup:
+//      Test handling of null values in JSON
+// Test Result:
+//      Should correctly handle null values for nullable columns and reject for non-nullable
+//
+TEST_F(ArrowUtilTest, JsonToRecordBatchNonNullableError) {
+    // Create a schema with non-nullable columns
+    common::Schema non_nullable_schema({{"int32_col", common::ColumnType::INT32, common::Nullability::NOT_NULL},
+                                        {"string_col", common::ColumnType::STRING, common::Nullability::NOT_NULL}});
+
+    // JSON with null value for a non-nullable column
+    std::string json_str = R"([
+        {
+            "int32_col": 1,
+            "string_col": "not null"
+        },
+        {
+            "int32_col": null,
+            "string_col": "this should fail"
+        }
+    ])";
+
+    auto result = ArrowUtil::JsonToRecordBatch(json_str, non_nullable_schema);
+    EXPECT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code(), common::ErrorCode::InvalidArgument);
+    EXPECT_TRUE(result.error().message().find("Non-nullable column") != std::string::npos);
+}
+
+//
+// Test Setup:
+//      Test handling of type mismatches
+// Test Result:
+//      Should reject values with incorrect types
+//
+TEST_F(ArrowUtilTest, JsonToRecordBatchTypeMismatch) {
+    // JSON with type mismatches
+    std::string json_str = R"([
+        {
+            "int32_col": "not a number",
+            "int64_col": 1000000000000,
+            "float_col": 1.1,
+            "double_col": 1.01,
+            "bool_col": true,
+            "string_col": "row 1",
+            "timestamp_col": 1609459200000,
+            "binary_col": "binary 1"
+        }
+    ])";
+
+    auto result = ArrowUtil::JsonToRecordBatch(json_str, schema_);
+    EXPECT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code(), common::ErrorCode::InvalidArgument);
+    EXPECT_TRUE(result.error().message().find("not an integer") != std::string::npos);
+}
+
 }  // namespace pond::query

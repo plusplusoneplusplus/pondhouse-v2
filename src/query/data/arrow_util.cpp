@@ -4,6 +4,8 @@
 #include <arrow/builder.h>
 #include <arrow/compute/api.h>
 #include <arrow/type_traits.h>
+#include <rapidjson/document.h>
+#include <rapidjson/error/en.h>
 
 #include "common/error.h"
 #include "common/log.h"
@@ -304,6 +306,284 @@ common::Result<ArrowDataBatchSharedPtr> ArrowUtil::ConcatenateBatches(
 
     // Create a new record batch with the concatenated arrays
     return ResultType::success(arrow::RecordBatch::Make(batches[0]->schema(), total_rows, concatenated_arrays));
+}
+
+common::Result<ArrowDataBatchSharedPtr> ArrowUtil::JsonToRecordBatch(const std::string& json_str,
+                                                                     const common::Schema& schema) {
+    using ResultType = common::Result<ArrowDataBatchSharedPtr>;
+
+    rapidjson::Document doc;
+    rapidjson::ParseResult parse_result = doc.Parse(json_str.c_str());
+    if (!parse_result) {
+        std::string error_msg = "JSON parse error: ";
+        error_msg += rapidjson::GetParseError_En(parse_result.Code());
+        error_msg += " at offset " + std::to_string(parse_result.Offset());
+        return ResultType::failure(common::ErrorCode::InvalidArgument, error_msg);
+    }
+
+    return JsonToRecordBatch(doc, schema);
+}
+
+common::Result<ArrowDataBatchSharedPtr> ArrowUtil::JsonToRecordBatch(const rapidjson::Document& json_doc,
+                                                                     const common::Schema& schema) {
+    using ResultType = common::Result<ArrowDataBatchSharedPtr>;
+
+    if (!json_doc.IsArray()) {
+        return ResultType::failure(common::ErrorCode::InvalidArgument, "JSON document must be an array of objects");
+    }
+
+    if (json_doc.Empty()) {
+        // Handle empty array case by returning an empty batch
+        return CreateEmptyBatch(schema);
+    }
+
+    const auto& columns = schema.Columns();
+    size_t num_rows = json_doc.Size();
+    size_t num_cols = columns.size();
+
+    // Create arrow builders for each column
+    std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
+    builders.reserve(num_cols);
+
+    for (const auto& col_schema : columns) {
+        arrow::Result<std::shared_ptr<arrow::Array>> empty_array_result = CreateEmptyArray(col_schema.type);
+
+        if (!empty_array_result.ok()) {
+            return ResultType::failure(common::ErrorCode::InternalError,
+                                       "Failed to create array builder for column " + col_schema.name);
+        }
+
+        // Get the builder type for this column
+        std::shared_ptr<arrow::DataType> data_type = empty_array_result.ValueOrDie()->type();
+
+        // Use MakeBuilder with the correct signature that returns a Result
+        arrow::Result<std::unique_ptr<arrow::ArrayBuilder>> builder_result =
+            arrow::MakeBuilder(data_type, arrow::default_memory_pool());
+
+        if (!builder_result.ok()) {
+            return ResultType::failure(
+                common::ErrorCode::InternalError,
+                "Failed to create builder for column " + col_schema.name + ": " + builder_result.status().ToString());
+        }
+
+        builders.push_back(std::move(builder_result.ValueOrDie()));
+    }
+
+    // Process each row in the JSON array
+    for (rapidjson::SizeType row_idx = 0; row_idx < num_rows; row_idx++) {
+        const auto& json_row = json_doc[row_idx];
+
+        if (!json_row.IsObject()) {
+            return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                       "Row " + std::to_string(row_idx) + " is not an object");
+        }
+
+        // Process each column in the schema
+        for (size_t col_idx = 0; col_idx < num_cols; col_idx++) {
+            const auto& col_schema = columns[col_idx];
+            const std::string& col_name = col_schema.name;
+
+            // Check if this column exists in the current row
+            bool is_null = !json_row.HasMember(col_name.c_str());
+
+            if (is_null) {
+                // Column not present, treat as null
+                if (col_schema.nullability == common::Nullability::NOT_NULL) {
+                    return ResultType::failure(
+                        common::ErrorCode::InvalidArgument,
+                        "Row " + std::to_string(row_idx) + ": Non-nullable column '" + col_name + "' has null value");
+                }
+
+                auto status = builders[col_idx]->AppendNull();
+                if (!status.ok()) {
+                    return ResultType::failure(common::ErrorCode::InternalError,
+                                               "Failed to append null to column " + col_name);
+                }
+                continue;
+            }
+
+            const auto& json_value = json_row[col_name.c_str()];
+
+            // Check if value is null
+            if (json_value.IsNull()) {
+                if (col_schema.nullability == common::Nullability::NOT_NULL) {
+                    return ResultType::failure(
+                        common::ErrorCode::InvalidArgument,
+                        "Row " + std::to_string(row_idx) + ": Non-nullable column '" + col_name + "' has null value");
+                }
+
+                auto status = builders[col_idx]->AppendNull();
+                if (!status.ok()) {
+                    return ResultType::failure(common::ErrorCode::InternalError,
+                                               "Failed to append null to column " + col_name);
+                }
+                continue;
+            }
+
+            // Handle different column types
+            arrow::Status status;
+            switch (col_schema.type) {
+                case common::ColumnType::INT32: {
+                    if (!json_value.IsInt()) {
+                        return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                                   "Row " + std::to_string(row_idx) + ": Value for column '" + col_name
+                                                       + "' is not an integer");
+                    }
+                    status = static_cast<arrow::Int32Builder*>(builders[col_idx].get())->Append(json_value.GetInt());
+                    break;
+                }
+                case common::ColumnType::INT64: {
+                    if (!json_value.IsInt64()) {
+                        return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                                   "Row " + std::to_string(row_idx) + ": Value for column '" + col_name
+                                                       + "' is not an integer");
+                    }
+                    status = static_cast<arrow::Int64Builder*>(builders[col_idx].get())->Append(json_value.GetInt64());
+                    break;
+                }
+                case common::ColumnType::FLOAT: {
+                    if (!json_value.IsNumber()) {
+                        return ResultType::failure(
+                            common::ErrorCode::InvalidArgument,
+                            "Row " + std::to_string(row_idx) + ": Value for column '" + col_name + "' is not a number");
+                    }
+                    status = static_cast<arrow::FloatBuilder*>(builders[col_idx].get())
+                                 ->Append(static_cast<float>(json_value.GetDouble()));
+                    break;
+                }
+                case common::ColumnType::DOUBLE: {
+                    if (!json_value.IsNumber()) {
+                        return ResultType::failure(
+                            common::ErrorCode::InvalidArgument,
+                            "Row " + std::to_string(row_idx) + ": Value for column '" + col_name + "' is not a number");
+                    }
+                    status =
+                        static_cast<arrow::DoubleBuilder*>(builders[col_idx].get())->Append(json_value.GetDouble());
+                    break;
+                }
+                case common::ColumnType::BOOLEAN: {
+                    if (!json_value.IsBool()) {
+                        return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                                   "Row " + std::to_string(row_idx) + ": Value for column '" + col_name
+                                                       + "' is not a boolean");
+                    }
+                    status = static_cast<arrow::BooleanBuilder*>(builders[col_idx].get())->Append(json_value.GetBool());
+                    break;
+                }
+                case common::ColumnType::STRING: {
+                    if (!json_value.IsString()) {
+                        return ResultType::failure(
+                            common::ErrorCode::InvalidArgument,
+                            "Row " + std::to_string(row_idx) + ": Value for column '" + col_name + "' is not a string");
+                    }
+                    status =
+                        static_cast<arrow::StringBuilder*>(builders[col_idx].get())->Append(json_value.GetString());
+                    break;
+                }
+                case common::ColumnType::BINARY: {
+                    if (!json_value.IsString()) {
+                        return ResultType::failure(
+                            common::ErrorCode::InvalidArgument,
+                            "Row " + std::to_string(row_idx) + ": Value for column '" + col_name + "' is not a string");
+                    }
+                    // For binary, we assume the string is a base64-encoded binary value
+                    // In a real implementation, you'd decode the base64 string here
+                    status = static_cast<arrow::BinaryBuilder*>(builders[col_idx].get())
+                                 ->Append(reinterpret_cast<const uint8_t*>(json_value.GetString()),
+                                          json_value.GetStringLength());
+                    break;
+                }
+                case common::ColumnType::TIMESTAMP: {
+                    // For timestamp, we assume the value is a number representing milliseconds since epoch
+                    if (json_value.IsNumber()) {
+                        status = static_cast<arrow::TimestampBuilder*>(builders[col_idx].get())
+                                     ->Append(json_value.GetInt64());
+                    } else if (json_value.IsString()) {
+                        // In a real implementation, you'd parse the string to a timestamp here
+                        // For simplicity, we'll just reject string timestamps
+                        return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                                   "Row " + std::to_string(row_idx)
+                                                       + ": String timestamp not implemented for column '" + col_name
+                                                       + "'");
+                    } else {
+                        return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                                   "Row " + std::to_string(row_idx) + ": Value for column '" + col_name
+                                                       + "' is not a valid timestamp");
+                    }
+                    break;
+                }
+                default:
+                    return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                               "Unsupported column type for column " + col_name);
+            }
+
+            if (!status.ok()) {
+                return ResultType::failure(common::ErrorCode::InternalError,
+                                           "Failed to append value to column " + col_name + ": " + status.ToString());
+            }
+        }
+    }
+
+    // Finalize arrays
+    std::vector<std::shared_ptr<arrow::Array>> arrays(num_cols);
+    std::vector<std::shared_ptr<arrow::Field>> fields(num_cols);
+
+    for (size_t i = 0; i < num_cols; i++) {
+        const auto& col_schema = columns[i];
+
+        // Create arrow data type for the column
+        std::shared_ptr<arrow::DataType> arrow_type;
+        switch (col_schema.type) {
+            case common::ColumnType::INT32:
+                arrow_type = arrow::int32();
+                break;
+            case common::ColumnType::INT64:
+                arrow_type = arrow::int64();
+                break;
+            case common::ColumnType::FLOAT:
+                arrow_type = arrow::float32();
+                break;
+            case common::ColumnType::DOUBLE:
+                arrow_type = arrow::float64();
+                break;
+            case common::ColumnType::BOOLEAN:
+                arrow_type = arrow::boolean();
+                break;
+            case common::ColumnType::STRING:
+                arrow_type = arrow::utf8();
+                break;
+            case common::ColumnType::BINARY:
+                arrow_type = arrow::binary();
+                break;
+            case common::ColumnType::TIMESTAMP:
+                arrow_type = arrow::timestamp(arrow::TimeUnit::MILLI);
+                break;
+            default:
+                return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                           "Unsupported column type for column " + col_schema.name);
+        }
+
+        // Create field with nullability
+        bool nullable = (col_schema.nullability == common::Nullability::NULLABLE);
+        fields[i] = arrow::field(col_schema.name, arrow_type, nullable);
+
+        // Finalize array
+        std::shared_ptr<arrow::Array> array;
+        arrow::Status status = builders[i]->Finish(&array);
+        if (!status.ok()) {
+            return ResultType::failure(
+                common::ErrorCode::InternalError,
+                "Failed to finalize array for column " + col_schema.name + ": " + status.ToString());
+        }
+
+        arrays[i] = array;
+    }
+
+    // Create arrow schema and record batch
+    auto arrow_schema = arrow::schema(fields);
+    auto record_batch = arrow::RecordBatch::Make(arrow_schema, num_rows, arrays);
+
+    return ResultType::success(record_batch);
 }
 
 }  // namespace pond::query

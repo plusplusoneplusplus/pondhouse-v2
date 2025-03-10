@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <arrow/api.h>
@@ -60,6 +61,28 @@ public:
      */
     static common::Result<ArrowDataBatchSharedPtr> ConcatenateBatches(
         const std::vector<ArrowDataBatchSharedPtr>& batches);
+
+    /**
+     * @brief Convert JSON string to Arrow RecordBatch
+     * @param json_str The JSON string to convert
+     * @param schema The schema for the record batch
+     * @return Result containing the converted record batch or an error
+     *
+     * The JSON string should be an array of objects, where each object represents a row.
+     * Each object should have keys matching the column names in the schema.
+     * Example: [{"col1": 1, "col2": "value"}, {"col1": 2, "col2": "another value"}]
+     */
+    static common::Result<ArrowDataBatchSharedPtr> JsonToRecordBatch(const std::string& json_str,
+                                                                     const common::Schema& schema);
+
+    /**
+     * @brief Convert JSON document to Arrow RecordBatch
+     * @param json_doc The RapidJSON document to convert
+     * @param schema The schema for the record batch
+     * @return Result containing the converted record batch or an error
+     */
+    static common::Result<ArrowDataBatchSharedPtr> JsonToRecordBatch(const rapidjson::Document& json_doc,
+                                                                     const common::Schema& schema);
 };
 
 }  // namespace pond::query
