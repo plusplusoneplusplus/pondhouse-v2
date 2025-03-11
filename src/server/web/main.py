@@ -81,58 +81,86 @@ class PondClient:
         self.channel = grpc.insecure_channel(f"{host}:{port}")
         self.stub = pb2_grpc.PondServiceStub(self.channel)
 
-    def get(self, key: str) -> tuple[bool, str, Optional[str]]:
+    def get(self, key: str, table: str = "default") -> tuple[bool, bool, Optional[str], Optional[str]]:
+        """
+        Get a value for a key from the KV store.
+        
+        Returns a tuple of (success, found, value, error)
+        """
         try:
-            request = pb2.GetRequest(key=key.encode())
+            request = pb2.GetRequest(key=key.encode(), table_name=table)
             response = self.stub.Get(request)
-            if response.found:
-                return True, response.value.decode(), None
-            return False, "", response.error or "Key not found"
+            
+            if response.error:
+                return False, False, None, response.error
+            
+            value = response.value.decode() if response.found else None
+            return True, response.found, value, None
         except Exception as e:
-            return False, "", str(e)
+            return False, False, None, str(e)
 
-    def put(self, key: str, value: str) -> tuple[bool, Optional[str]]:
+    def put(self, key: str, value: str, table: str = "default") -> tuple[bool, Optional[str]]:
+        """
+        Put a key-value pair into the KV store.
+        
+        Returns a tuple of (success, error)
+        """
         try:
-            request = pb2.PutRequest(key=key.encode(), value=value.encode())
+            request = pb2.PutRequest(key=key.encode(), value=value.encode(), table_name=table)
             response = self.stub.Put(request)
-            if response.success:
-                return True, None
-            return False, response.error
+            
+            if response.error:
+                return False, response.error
+            
+            return True, None
         except Exception as e:
             return False, str(e)
 
-    def delete(self, key: str) -> tuple[bool, Optional[str]]:
+    def delete(self, key: str, table: str = "default") -> tuple[bool, Optional[str]]:
+        """
+        Delete a key from the KV store.
+        
+        Returns a tuple of (success, error)
+        """
         try:
-            request = pb2.DeleteRequest(key=key.encode())
+            request = pb2.DeleteRequest(key=key.encode(), table_name=table)
             response = self.stub.Delete(request)
-            if response.success:
-                return True, None
-            return False, response.error
+            
+            if response.error:
+                return False, response.error
+            
+            return True, None
         except Exception as e:
             return False, str(e)
 
-    def scan(self, start_key: str = "", end_key: str = "", limit: int = 0) -> tuple[list[KeyValue], Optional[str]]:
+    def scan(self, start_key: str = "", end_key: str = "", limit: int = 0, table: str = "default") -> tuple[list[KeyValue], Optional[str]]:
+        """
+        Scan keys from the KV store.
+        
+        Returns a tuple of (key_values, error)
+        """
         try:
             request = pb2.ScanRequest(
                 start_key=start_key.encode() if start_key else b"",
                 end_key=end_key.encode() if end_key else b"",
-                limit=limit
+                limit=limit,
+                table_name=table
             )
             
             keys = []
+            error = None
+            
             for response in self.stub.Scan(request):
                 if response.error:
-                    return [], response.error
-                
-                if response.key:
-                    key = response.key.decode()
-                    value = response.value.decode()
-                    keys.append(KeyValue(key=key, value=value))
-                
-                if not response.has_more:
+                    error = response.error
                     break
+                
+                key = response.key.decode()
+                value = response.value.decode() if response.value else None
+                
+                keys.append(KeyValue(key=key, value=value))
             
-            return keys, None
+            return keys, error
         except Exception as e:
             return [], str(e)
 
@@ -278,20 +306,12 @@ class PondClient:
 
     def ingest_json_data(self, table_name: str, json_data: str) -> tuple[bool, int, Optional[str]]:
         """
-        Ingest JSON data into a specified table.
+        Ingest JSON data into a table.
         
-        Args:
-            table_name: The name of the table to ingest data into
-            json_data: A JSON string containing an array of objects to ingest
-            
-        Returns:
-            A tuple of (success, rows_ingested, error_message)
+        Returns a tuple of (success, rows_ingested, error)
         """
         try:
-            request = pb2.IngestJsonDataRequest(
-                table_name=table_name,
-                json_data=json_data
-            )
+            request = pb2.IngestJsonDataRequest(table_name=table_name, json_data=json_data)
             response = self.stub.IngestJsonData(request)
             
             if response.success:
@@ -299,6 +319,44 @@ class PondClient:
             return False, 0, response.error_message
         except Exception as e:
             return False, 0, str(e)
+
+    def get_kv_tables(self) -> tuple[List[str], Optional[str]]:
+        """
+        List all tables in the KV store that can be used for KV operations.
+        
+        Returns a tuple of (table_names, error)
+        """
+        try:
+            request = pb2.ListKVTablesRequest()
+            response = self.stub.ListKVTables(request)
+            
+            if response.success:
+                # Sort tables with "default" first
+                kv_tables = list(response.table_names)
+                kv_tables.sort()
+                if "default" in kv_tables:
+                    kv_tables.remove("default")
+                    kv_tables.insert(0, "default")
+                return kv_tables, None
+            return [], response.error
+        except Exception as e:
+            return [], str(e)
+    
+    def create_kv_table(self, table_name: str) -> tuple[bool, Optional[str]]:
+        """
+        Create a new KV table.
+        
+        Returns a tuple of (success, error)
+        """
+        try:
+            request = pb2.CreateKVTableRequest(table_name=table_name)
+            response = self.stub.CreateKVTable(request)
+            
+            if response.success:
+                return True, None
+            return False, response.error
+        except Exception as e:
+            return False, str(e)
 
 # Create a global client instance
 pond_client = PondClient(GRPC_HOST, GRPC_PORT)
@@ -325,88 +383,70 @@ async def startup_event():
     templates.env.filters["filesizeformat"] = filesizeformat
 
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
+async def home(request: Request, table: str = "default"):
+    # Get list of KV tables
+    tables, error = pond_client.get_kv_tables()
+    
+    result = None
+    if error:
+        result = f"Error listing tables: {error}"
+    
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
-            "active_page": "kv"
+            "active_page": "kv",
+            "current_table": table,
+            "tables": tables,
+            "result": result
+        }
+    )
+
+@app.post("/create-table", response_class=HTMLResponse)
+async def create_table(request: Request, table_name: str = Form(...)):
+    success, error = pond_client.create_kv_table(table_name)
+    
+    result = None
+    if error:
+        result = f"Error creating table: {error}"
+    else:
+        result = f"Table '{table_name}' created successfully"
+    
+    # Get updated list of tables
+    tables, list_error = pond_client.get_kv_tables()
+    if list_error:
+        result = f"Error listing tables: {list_error}"
+    
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "active_page": "kv",
+            "current_table": table_name if success else "default",
+            "tables": tables,
+            "result": result
         }
     )
 
 @app.post("/get", response_class=HTMLResponse)
-async def get_value(request: Request, key: str = Form(...)):
-    found, value, error = pond_client.get(key)
+async def get_value(request: Request, table: str = Form(...), key: str = Form(...)):
+    success, found, value, error = pond_client.get(key, table)
     
     result = None
+    keys = None
+    
     if error:
         result = f"Error: {error}"
-    elif found:
-        result = f"Value for key '{key}': {value}"
-    else:
+    elif not success:
+        result = f"Failed to get value for key '{key}'"
+    elif not found:
         result = f"Key '{key}' not found"
-    
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "result": result,
-            "active_page": "kv"
-        }
-    )
-
-@app.post("/put", response_class=HTMLResponse)
-async def put_value(request: Request, key: str = Form(...), value: str = Form(...)):
-    success, error = pond_client.put(key, value)
-    
-    result = None
-    if error:
-        result = f"Error: {error}"
     else:
-        result = f"Key '{key}' set successfully"
+        result = f"Key '{key}' found"
+        keys = [KeyValue(key=key, value=value)]
     
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "result": result,
-            "active_page": "kv"
-        }
-    )
-
-@app.post("/delete", response_class=HTMLResponse)
-async def delete_value(request: Request, key: str = Form(...)):
-    success, error = pond_client.delete(key)
-    
-    result = None
-    if error:
-        result = f"Error: {error}"
-    else:
-        result = f"Key '{key}' deleted successfully"
-    
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "result": result,
-            "active_page": "kv"
-        }
-    )
-
-@app.post("/list", response_class=HTMLResponse)
-async def list_keys(
-    request: Request,
-    start_key: str = Form(""),
-    end_key: str = Form(""),
-    limit: Optional[int] = Form(None)
-):
-    keys, error = pond_client.scan(start_key, end_key, limit if limit else 0)
-    
-    result = None
-    if error:
-        result = f"Error: {error}"
-    else:
-        result = f"Found {len(keys)} keys"
+    # Get list of KV tables for the dropdown
+    tables, _ = pond_client.get_kv_tables()
     
     return templates.TemplateResponse(
         "index.html",
@@ -414,7 +454,92 @@ async def list_keys(
             "request": request,
             "result": result,
             "keys": keys,
-            "active_page": "kv"
+            "active_page": "kv",
+            "current_table": table,
+            "tables": tables
+        }
+    )
+
+@app.post("/put", response_class=HTMLResponse)
+async def put_value(request: Request, table: str = Form(...), key: str = Form(...), value: str = Form(...)):
+    success, error = pond_client.put(key, value, table)
+    
+    result = None
+    if error:
+        result = f"Error: {error}"
+    elif not success:
+        result = f"Failed to put value for key '{key}'"
+    else:
+        result = f"Value for key '{key}' saved successfully"
+    
+    # Get list of KV tables for the dropdown
+    tables, _ = pond_client.get_kv_tables()
+    
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "result": result,
+            "active_page": "kv",
+            "current_table": table,
+            "tables": tables
+        }
+    )
+
+@app.post("/delete", response_class=HTMLResponse)
+async def delete_value(request: Request, table: str = Form(...), key: str = Form(...)):
+    success, error = pond_client.delete(key, table)
+    
+    result = None
+    if error:
+        result = f"Error: {error}"
+    elif not success:
+        result = f"Failed to delete key '{key}'"
+    else:
+        result = f"Key '{key}' deleted successfully"
+    
+    # Get list of KV tables for the dropdown
+    tables, _ = pond_client.get_kv_tables()
+    
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "result": result,
+            "active_page": "kv",
+            "current_table": table,
+            "tables": tables
+        }
+    )
+
+@app.post("/list", response_class=HTMLResponse)
+async def list_keys(
+    request: Request,
+    table: str = Form(...),
+    start_key: str = Form(""),
+    end_key: str = Form(""),
+    limit: Optional[int] = Form(None)
+):
+    keys, error = pond_client.scan(start_key, end_key, limit if limit else 0, table)
+    
+    result = None
+    if error:
+        result = f"Error: {error}"
+    else:
+        result = f"Found {len(keys)} keys"
+    
+    # Get list of KV tables for the dropdown
+    tables, _ = pond_client.get_kv_tables()
+    
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "result": result,
+            "keys": keys,
+            "active_page": "kv",
+            "current_table": table,
+            "tables": tables
         }
     )
 

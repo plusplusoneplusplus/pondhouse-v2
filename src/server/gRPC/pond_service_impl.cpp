@@ -48,179 +48,202 @@ common::Result<std::shared_ptr<pond::kv::Table>> PondServiceImpl::GetDefaultTabl
     return db_->GetTable(DEFAULT_TABLE);
 }
 
-grpc::Status PondServiceImpl::Get(grpc::ServerContext* context,
-                                  const pond::proto::GetRequest* request,
-                                  pond::proto::GetResponse* response) {
-    LOG_STATUS("Received Get request for key: %s", request->key().c_str());
-
-    std::string key = request->key();
-
-    // Get the default table
-    auto table_result = GetDefaultTable();
-    if (!table_result.ok()) {
-        response->set_found(false);
-        response->set_error(table_result.error().message());
-        return grpc::Status::OK;
-    }
-
-    // Get the value from the table
-    auto result = table_result.value()->Get(key);
-
-    if (result.ok()) {
-        response->set_found(true);
-        auto record = std::move(result).value();
-        auto value_result = record->Get<std::string>(0);
-        if (value_result.ok()) {
-            response->set_value(value_result.value());
+grpc::Status PondServiceImpl::Get(grpc::ServerContext* context, const pond::proto::GetRequest* request,
+                                 pond::proto::GetResponse* response) {
+    try {
+        std::string key(request->key().begin(), request->key().end());
+        
+        // Get the table to use (default if not specified)
+        std::string table_name = request->table_name().empty() ? DEFAULT_TABLE : request->table_name();
+        LOG_STATUS("Received Get request for key '%s' from table '%s'", key.c_str(), table_name.c_str());
+        
+        // Get the table
+        auto table_result = db_->GetTable(table_name);
+        if (!table_result.ok()) {
+            response->set_found(false);
+            response->set_error(table_result.error().message());
+            return grpc::Status::OK;
+        }
+        
+        auto table = table_result.value();
+        auto get_result = table->Get(key);
+        
+        if (get_result.ok()) {
+            auto record_ptr = std::move(get_result).value();
+            if (record_ptr) {
+                // Value found, get the string value from the record
+                auto value_result = record_ptr->Get<std::string>(0);
+                if (value_result.ok()) {
+                    response->set_found(true);
+                    response->set_value(value_result.value());
+                } else {
+                    response->set_found(false);
+                    response->set_error(value_result.error().message());
+                }
+            } else {
+                // Key not found
+                response->set_found(false);
+            }
         } else {
-            response->set_value("");
+            // Error getting value
+            response->set_found(false);
+            response->set_error(get_result.error().message());
         }
-    } else {
+    } catch (const std::exception& e) {
         response->set_found(false);
-        response->set_error(result.error().message());
+        response->set_error(std::string("Error getting value: ") + e.what());
     }
-
+    
     return grpc::Status::OK;
 }
 
-grpc::Status PondServiceImpl::Put(grpc::ServerContext* context,
-                                  const pond::proto::PutRequest* request,
-                                  pond::proto::PutResponse* response) {
-    LOG_STATUS("Received Put request for key: %s", request->key().c_str());
-
-    std::string key = request->key();
-    std::string value = request->value();
-
-    // Get the default table
-    auto table_result = GetDefaultTable();
-    if (!table_result.ok()) {
-        response->set_success(false);
-        response->set_error(table_result.error().message());
-        return grpc::Status::OK;
-    }
-
-    // Create a record with the value
-    auto table = table_result.value();
-    auto record = std::make_unique<pond::kv::Record>(table->schema());
-    record->Set(0, value);
-
-    // Put the record in the table
-    auto result = table->Put(key, std::move(record));
-
-    if (result.ok()) {
-        response->set_success(true);
-    } else {
-        response->set_success(false);
-        response->set_error(result.error().message());
-    }
-
-    return grpc::Status::OK;
-}
-
-grpc::Status PondServiceImpl::Delete(grpc::ServerContext* context,
-                                     const pond::proto::DeleteRequest* request,
-                                     pond::proto::DeleteResponse* response) {
-    LOG_STATUS("Received Delete request for key: %s", request->key().c_str());
-
-    std::string key = request->key();
-
-    // Get the default table
-    auto table_result = GetDefaultTable();
-    if (!table_result.ok()) {
-        response->set_success(false);
-        response->set_error(table_result.error().message());
-        return grpc::Status::OK;
-    }
-
-    // Delete the key from the table
-    auto result = table_result.value()->Delete(key);
-
-    if (result.ok()) {
-        response->set_success(true);
-    } else {
-        response->set_success(false);
-        response->set_error(result.error().message());
-    }
-
-    return grpc::Status::OK;
-}
-
-grpc::Status PondServiceImpl::Scan(grpc::ServerContext* context,
-                                   const pond::proto::ScanRequest* request,
-                                   grpc::ServerWriter<pond::proto::ScanResponse>* writer) {
-    LOG_STATUS("Received Scan request from %s to %s", request->start_key().c_str(), request->end_key().c_str());
-
-    std::string start_key = request->start_key();
-    std::string end_key = request->end_key();
-    int32_t limit = request->limit();
-
-    // Get the default table
-    auto table_result = GetDefaultTable();
-    if (!table_result.ok()) {
-        pond::proto::ScanResponse scan_response;
-        scan_response.set_has_more(false);
-        scan_response.set_error(table_result.error().message());
-        writer->Write(scan_response);
-        return grpc::Status::OK;
-    }
-
-    // Get an iterator for the table
-    auto iter_result = table_result.value()->NewIterator();
-    if (!iter_result.ok()) {
-        pond::proto::ScanResponse scan_response;
-        scan_response.set_has_more(false);
-        scan_response.set_error(iter_result.error().message());
-        writer->Write(scan_response);
-        return grpc::Status::OK;
-    }
-
-    auto iter = std::move(iter_result).value();
-
-    if (!start_key.empty()) {
-        iter->Seek(start_key);
-    }
-
-    int count = 0;
-    while (iter->Valid() && (limit <= 0 || count < limit)) {
-        // Check if we've reached the end key
-        if (!end_key.empty() && iter->key() >= end_key) {
-            break;
+grpc::Status PondServiceImpl::Put(grpc::ServerContext* context, const pond::proto::PutRequest* request,
+                                 pond::proto::PutResponse* response) {
+    try {
+        std::string key(request->key().begin(), request->key().end());
+        std::string value(request->value().begin(), request->value().end());
+        
+        // Get the table to use (default if not specified)
+        std::string table_name = request->table_name().empty() ? DEFAULT_TABLE : request->table_name();
+        LOG_STATUS("Received Put request for key '%s' in table '%s'", key.c_str(), table_name.c_str());
+        
+        // Get the table
+        auto table_result = db_->GetTable(table_name);
+        if (!table_result.ok()) {
+            response->set_success(false);
+            response->set_error(table_result.error().message());
+            return grpc::Status::OK;
         }
-
-        pond::proto::ScanResponse scan_response;
-        scan_response.set_key(iter->key());
-
-        // Get the value from the record
-        auto& record = iter->value();
-        auto value_result = record->Get<std::string>(0);
-        if (value_result.ok()) {
-            scan_response.set_value(value_result.value());
+        
+        auto table = table_result.value();
+        
+        // Create a record with the value
+        auto record = std::make_unique<pond::kv::Record>(table->schema());
+        record->Set(0, value);
+        
+        // Put the record in the table
+        auto put_result = table->Put(key, std::move(record));
+        
+        if (put_result.ok()) {
+            response->set_success(true);
         } else {
-            scan_response.set_value("");
+            response->set_success(false);
+            response->set_error(put_result.error().message());
         }
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error(std::string("Error putting value: ") + e.what());
+    }
+    
+    return grpc::Status::OK;
+}
 
-        scan_response.set_has_more(true);
-
-        if (!writer->Write(scan_response)) {
-            // Client disconnected
-            return grpc::Status(grpc::StatusCode::CANCELLED, "Client disconnected");
+grpc::Status PondServiceImpl::Delete(grpc::ServerContext* context, const pond::proto::DeleteRequest* request,
+                                    pond::proto::DeleteResponse* response) {
+    try {
+        std::string key(request->key().begin(), request->key().end());
+        
+        // Get the table to use (default if not specified)
+        std::string table_name = request->table_name().empty() ? DEFAULT_TABLE : request->table_name();
+        LOG_STATUS("Received Delete request for key '%s' from table '%s'", key.c_str(), table_name.c_str());
+        
+        // Get the table
+        auto table_result = db_->GetTable(table_name);
+        if (!table_result.ok()) {
+            response->set_success(false);
+            response->set_error(table_result.error().message());
+            return grpc::Status::OK;
         }
-
-        iter->Next();
-        count++;
+        
+        auto table = table_result.value();
+        auto delete_result = table->Delete(key);
+        
+        if (delete_result.ok()) {
+            response->set_success(true);
+        } else {
+            response->set_success(false);
+            response->set_error(delete_result.error().message());
+        }
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error(std::string("Error deleting key: ") + e.what());
     }
+    
+    return grpc::Status::OK;
+}
 
-    // Send a final message indicating no more results
-    if (iter->Valid() && (limit <= 0 || count < limit) && (end_key.empty() || iter->key() < end_key)) {
-        pond::proto::ScanResponse scan_response;
-        scan_response.set_has_more(true);
-        writer->Write(scan_response);
-    } else {
-        pond::proto::ScanResponse scan_response;
-        scan_response.set_has_more(false);
-        writer->Write(scan_response);
+grpc::Status PondServiceImpl::Scan(grpc::ServerContext* context, const pond::proto::ScanRequest* request,
+                                  grpc::ServerWriter<pond::proto::ScanResponse>* writer) {
+    try {
+        std::string start_key(request->start_key().begin(), request->start_key().end());
+        std::string end_key(request->end_key().begin(), request->end_key().end());
+        int32_t limit = request->limit();
+        
+        // Get the table to use (default if not specified)
+        std::string table_name = request->table_name().empty() ? DEFAULT_TABLE : request->table_name();
+        LOG_STATUS("Received Scan request from table '%s'", table_name.c_str());
+        
+        // Get the table
+        auto table_result = db_->GetTable(table_name);
+        if (!table_result.ok()) {
+            pond::proto::ScanResponse response;
+            response.set_error(table_result.error().message());
+            writer->Write(response);
+            return grpc::Status::OK;
+        }
+        
+        auto table = table_result.value();
+        
+        // Get an iterator for the table
+        auto iter_result = table->NewIterator();
+        if (!iter_result.ok()) {
+            pond::proto::ScanResponse response;
+            response.set_error(iter_result.error().message());
+            writer->Write(response);
+            return grpc::Status::OK;
+        }
+        
+        auto iter = std::move(iter_result).value();
+        
+        // Seek to the start key if specified
+        if (!start_key.empty()) {
+            iter->Seek(start_key);
+        } else {
+            iter->Seek("");
+        }
+        
+        // Scan keys and values
+        int count = 0;
+        while (iter->Valid() && (limit <= 0 || count < limit)) {
+            // Check if we've reached the end key
+            if (!end_key.empty() && iter->key() >= end_key) {
+                break;
+            }
+            
+            pond::proto::ScanResponse response;
+            response.set_key(iter->key());
+            
+            // Get the value from the record
+            auto& record = iter->value();
+            auto value_result = record->Get<std::string>(0);
+            if (value_result.ok()) {
+                response.set_value(value_result.value());
+            }
+            
+            if (!writer->Write(response)) {
+                // Client disconnected
+                return grpc::Status(grpc::StatusCode::CANCELLED, "Client disconnected");
+            }
+            
+            iter->Next();
+            count++;
+        }
+    } catch (const std::exception& e) {
+        pond::proto::ScanResponse response;
+        response.set_error(std::string("Error scanning keys: ") + e.what());
+        writer->Write(response);
     }
-
+    
     return grpc::Status::OK;
 }
 
@@ -448,6 +471,88 @@ grpc::Status PondServiceImpl::IngestJsonData(grpc::ServerContext* context,
     } catch (const std::exception& e) {
         response->set_success(false);
         response->set_error_message(std::string("Error ingesting JSON data: ") + e.what());
+    }
+
+    return grpc::Status::OK;
+}
+
+grpc::Status PondServiceImpl::CreateKVTable(grpc::ServerContext* context,
+                                            const pond::proto::CreateKVTableRequest* request,
+                                            pond::proto::CreateKVTableResponse* response) {
+    LOG_STATUS("Received CreateKVTable request for table: %s", request->table_name().c_str());
+
+    try {
+        // Create a schema for the KV table (single 'value' column of type STRING)
+        auto schema = std::make_shared<pond::common::Schema>(
+            std::vector<pond::common::ColumnSchema>{{"value", pond::common::ColumnType::STRING}});
+
+        // Try to create the table in the DB
+        auto create_result = db_->CreateTable(request->table_name(), schema);
+        
+        if (create_result.ok()) {
+            // Also register the table in the catalog for consistency
+            if (catalog_) {
+                auto catalog_result = catalog_->CreateTable(
+                    request->table_name(),
+                    schema,
+                    {},  // empty partition spec
+                    ""   // let catalog decide the location
+                );
+                
+                if (!catalog_result.ok()) {
+                    // Log the warning but don't fail the operation
+                    LOG_WARNING("Created KV table in DB but failed to register in catalog: %s", 
+                               catalog_result.error().message().c_str());
+                }
+            }
+            response->set_success(true);
+        } else {
+            response->set_success(false);
+            response->set_error(create_result.error().message());
+        }
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error(std::string("Error creating KV table: ") + e.what());
+    }
+
+    return grpc::Status::OK;
+}
+
+grpc::Status PondServiceImpl::ListKVTables(grpc::ServerContext* context,
+                                           const pond::proto::ListKVTablesRequest* request,
+                                           pond::proto::ListKVTablesResponse* response) {
+    LOG_STATUS("Received ListKVTables request");
+
+    try {
+        // Get all tables from the KV DB
+        auto list_result = db_->ListTables();
+        
+        if (list_result.ok()) {
+            response->set_success(true);
+            
+            // For each table, check if it has KV structure (single 'value' column of type STRING)
+            for (const auto& table_name : list_result.value()) {
+                auto table_result = db_->GetTable(table_name);
+                if (table_result.ok()) {
+                    auto table = table_result.value();
+                    auto& schema = table->schema();
+                    
+                    // Check if the schema matches a KV table
+                    const auto& columns = schema->Columns();
+                    if (columns.size() == 1 && 
+                        columns[0].name == "value" && 
+                        columns[0].type == pond::common::ColumnType::STRING) {
+                        response->add_table_names(table_name);
+                    }
+                }
+            }
+        } else {
+            response->set_success(false);
+            response->set_error(list_result.error().message());
+        }
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error(std::string("Error listing KV tables: ") + e.what());
     }
 
     return grpc::Status::OK;

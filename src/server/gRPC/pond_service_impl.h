@@ -67,6 +67,16 @@ public:
                                 const pond::proto::IngestJsonDataRequest* request,
                                 pond::proto::IngestJsonDataResponse* response) override;
 
+    // Create a new KV table
+    grpc::Status CreateKVTable(grpc::ServerContext* context,
+                               const pond::proto::CreateKVTableRequest* request,
+                               pond::proto::CreateKVTableResponse* response) override;
+    
+    // List all KV tables
+    grpc::Status ListKVTables(grpc::ServerContext* context,
+                              const pond::proto::ListKVTablesRequest* request,
+                              pond::proto::ListKVTablesResponse* response) override;
+
 protected:
     // Helper method to get the default table
     common::Result<std::shared_ptr<pond::kv::Table>> GetDefaultTable();

@@ -4,6 +4,12 @@ package pond.proto;
 
 // Service definition for the Pond database
 service PondService {
+  // Create a new KV table
+  rpc CreateKVTable(CreateKVTableRequest) returns (CreateKVTableResponse) {}
+  
+  // List KV tables (tables suitable for KV operations)
+  rpc ListKVTables(ListKVTablesRequest) returns (ListKVTablesResponse) {}
+
   // Get a value by key
   rpc Get(GetRequest) returns (GetResponse) {}
   
@@ -38,6 +44,7 @@ service PondService {
 // Request message for Get operation
 message GetRequest {
   bytes key = 1;
+  string table_name = 2;
 }
 
 // Response message for Get operation
@@ -51,6 +58,7 @@ message GetResponse {
 message PutRequest {
   bytes key = 1;
   bytes value = 2;
+  string table_name = 3;
 }
 
 // Response message for Put operation
@@ -62,6 +70,7 @@ message PutResponse {
 // Request message for Delete operation
 message DeleteRequest {
   bytes key = 1;
+  string table_name = 2;
 }
 
 // Response message for Delete operation
@@ -75,6 +84,7 @@ message ScanRequest {
   bytes start_key = 1;
   bytes end_key = 2;
   int32 limit = 3;
+  string table_name = 4;
 }
 
 // Response message for Scan operation
@@ -204,4 +214,27 @@ message IngestJsonDataResponse {
   
   // Whether the operation was successful
   bool success = 3;
+}
+
+// Message for CreateKVTable request
+message CreateKVTableRequest {
+  string table_name = 1;
+}
+
+// Message for CreateKVTable response
+message CreateKVTableResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// Message for ListKVTables request
+message ListKVTablesRequest {
+  // Currently empty, may add filters in the future
+}
+
+// Message for ListKVTables response
+message ListKVTablesResponse {
+  bool success = 1;
+  repeated string table_names = 2;
+  string error = 3;
 } 
