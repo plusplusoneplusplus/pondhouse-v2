@@ -77,6 +77,11 @@ public:
                               const pond::proto::ListKVTablesRequest* request,
                               pond::proto::ListKVTablesResponse* response) override;
 
+    // Read content from a parquet file
+    grpc::Status ReadParquetFile(grpc::ServerContext* context,
+                                 const pond::proto::ReadParquetFileRequest* request,
+                                 grpc::ServerWriter<pond::proto::ReadParquetFileResponse>* writer) override;
+
 protected:
     // Helper method to get the default table
     common::Result<std::shared_ptr<pond::kv::Table>> GetDefaultTable();

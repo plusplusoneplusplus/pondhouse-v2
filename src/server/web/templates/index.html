@@ -64,10 +64,23 @@
 </div>
 
 {% if result %}
-<div class="alert {% if 'Error' in result %}alert-danger{% else %}alert-success{% endif %} alert-dismissible fade show mb-4">
+<div class="alert {% if 'Error' in result %}alert-danger{% else %}alert-success{% endif %} alert-dismissible fade show mb-4" id="operation-alert">
     {{ result }}
     <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
 </div>
+
+<script>
+    // Auto-dismiss the alert after 10 seconds
+    document.addEventListener('DOMContentLoaded', function() {
+        const alert = document.getElementById('operation-alert');
+        if (alert) {
+            setTimeout(function() {
+                const bsAlert = new bootstrap.Alert(alert);
+                bsAlert.close();
+            }, 10000); // 10000 milliseconds = 10 seconds
+        }
+    });
+</script>
 {% endif %}
 
 <div class="row g-3">

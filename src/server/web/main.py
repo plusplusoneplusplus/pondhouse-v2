@@ -367,6 +367,57 @@ class PondClient:
         except Exception as e:
             return False, str(e)
 
+    def read_parquet_file(self, file_path: str, batch_size: int = 1000, columns: List[str] = None,
+                         start_row: int = 0, num_rows: int = 0) -> tuple[List[Dict[str, str]], int, Optional[str]]:
+        """
+        Read content from a parquet file.
+        
+        Args:
+            file_path: Path to the parquet file
+            batch_size: Number of rows to read in each batch
+            columns: Optional list of column names to read
+            start_row: Optional starting row number
+            num_rows: Optional maximum number of rows to read
+            
+        Returns:
+            Tuple of (rows, total_rows, error)
+            where rows is a list of dictionaries with column names as keys
+        """
+        try:
+            request = pb2.ReadParquetFileRequest(
+                file_path=file_path,
+                batch_size=batch_size,
+                columns=columns or [],
+                start_row=start_row,
+                num_rows=num_rows
+            )
+            
+            rows = []
+            total_rows = 0
+            error = None
+            
+            for response in self.stub.ReadParquetFile(request):
+                if not response.success:
+                    return [], 0, response.error
+                
+                total_rows = response.total_rows
+                
+                # Convert columnar data to row-based format
+                if response.columns:
+                    num_rows_in_batch = len(response.columns[0].values)
+                    for row_idx in range(num_rows_in_batch):
+                        row = {}
+                        for col in response.columns:
+                            if col.nulls[row_idx]:
+                                row[col.name] = None
+                            else:
+                                row[col.name] = col.values[row_idx]
+                        rows.append(row)
+            
+            return rows, total_rows, None
+        except Exception as e:
+            return [], 0, str(e)
+
 # Create a global client instance
 pond_client = PondClient(GRPC_HOST, GRPC_PORT)
 
@@ -759,6 +810,92 @@ async def ingest_json_data(
             "total_size": total_size,
             "total_records": total_records,
             "upload_result": upload_result
+        }
+    )
+
+@app.get("/catalog/table/{table_name}/file/{file_path:path}", response_class=HTMLResponse)
+async def view_parquet_file(
+    request: Request,
+    table_name: str,
+    file_path: str,
+    page: int = 1,
+    rows_per_page: int = 100
+):
+    # Get table metadata to verify the file belongs to this table
+    metadata = pond_client.get_table_metadata(table_name)
+    if metadata.error:
+        return templates.TemplateResponse(
+            "table_details.html",
+            {
+                "request": request,
+                "metadata": metadata,
+                "active_page": "catalog",
+                "error": f"Error loading table metadata: {metadata.error}"
+            }
+        )
+    
+    # Find the file in the table's data files
+    file_info = None
+    for df in metadata.data_files:
+        if df.path == file_path:
+            file_info = df
+            break
+    
+    if not file_info:
+        return templates.TemplateResponse(
+            "table_details.html",
+            {
+                "request": request,
+                "metadata": metadata,
+                "active_page": "catalog",
+                "error": f"File {file_path} not found in table {table_name}"
+            }
+        )
+    
+    # Calculate pagination
+    start_row = (page - 1) * rows_per_page
+    
+    # Read the parquet file content
+    rows, total_rows, error = pond_client.read_parquet_file(
+        file_path=file_path,
+        batch_size=rows_per_page,
+        start_row=start_row,
+        num_rows=rows_per_page
+    )
+    
+    if error:
+        return templates.TemplateResponse(
+            "table_details.html",
+            {
+                "request": request,
+                "metadata": metadata,
+                "active_page": "catalog",
+                "error": f"Error reading parquet file: {error}"
+            }
+        )
+    
+    # Calculate pagination info
+    total_pages = (total_rows + rows_per_page - 1) // rows_per_page
+    
+    # Get column names from the first row
+    columns = []
+    if rows:
+        columns = list(rows[0].keys())
+    
+    return templates.TemplateResponse(
+        "parquet_viewer.html",
+        {
+            "request": request,
+            "active_page": "catalog",
+            "table_name": table_name,
+            "file_path": file_path,
+            "file_info": file_info,
+            "rows": rows,
+            "columns": columns,
+            "current_page": page,
+            "total_pages": total_pages,
+            "total_rows": total_rows,
+            "rows_per_page": rows_per_page
         }
     )
 

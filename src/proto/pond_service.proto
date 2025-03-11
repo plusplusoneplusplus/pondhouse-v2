@@ -39,6 +39,9 @@ service PondService {
   
   // New method for ingesting data from JSON
   rpc IngestJsonData(IngestJsonDataRequest) returns (IngestJsonDataResponse) {}
+
+  // Read content from a parquet file
+  rpc ReadParquetFile(ReadParquetFileRequest) returns (stream ReadParquetFileResponse) {}
 }
 
 // Request message for Get operation
@@ -237,4 +240,30 @@ message ListKVTablesResponse {
   bool success = 1;
   repeated string table_names = 2;
   string error = 3;
+}
+
+// Message for ReadParquetFile request
+message ReadParquetFileRequest {
+  string file_path = 1;  // Path to the parquet file
+  int32 batch_size = 2;  // Number of rows to read in each batch
+  repeated string columns = 3;  // Optional: specific columns to read. If empty, read all columns
+  int64 start_row = 4;  // Optional: start reading from this row number
+  int64 num_rows = 5;   // Optional: maximum number of rows to read
+}
+
+// Message for ReadParquetFile response
+message ReadParquetFileResponse {
+  bool success = 1;
+  string error = 2;
+  repeated ColumnData columns = 3;  // Column data for this batch
+  bool has_more = 4;  // Whether there are more rows to read
+  int64 total_rows = 5;  // Total number of rows in the file
+}
+
+// Column data with type information
+message ColumnData {
+  string name = 1;
+  string type = 2;
+  repeated string values = 3;  // String representation of values
+  repeated bool nulls = 4;     // Whether each value is null
 } 

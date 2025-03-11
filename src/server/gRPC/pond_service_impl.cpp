@@ -1,6 +1,10 @@
 #include "pond_service_impl.h"
 
 #include <string>
+#include <arrow/io/file.h>
+#include <arrow/table.h>
+#include <parquet/arrow/reader.h>
+#include <parquet/file_reader.h>
 
 #include <grpcpp/grpcpp.h>
 
@@ -11,6 +15,7 @@
 #include "common/result.h"
 #include "common/schema.h"
 #include "common/time.h"
+#include "format/parquet/parquet_reader.h"
 #include "format/parquet/parquet_writer.h"
 #include "kv/db.h"
 #include "query/data/arrow_util.h"
@@ -557,6 +562,138 @@ grpc::Status PondServiceImpl::ListKVTables(grpc::ServerContext* context,
     }
 
     return grpc::Status::OK;
+}
+
+grpc::Status PondServiceImpl::ReadParquetFile(grpc::ServerContext* context,
+                                              const pond::proto::ReadParquetFileRequest* request,
+                                              grpc::ServerWriter<pond::proto::ReadParquetFileResponse>* writer) {
+    LOG_STATUS("Received ReadParquetFile request for file: %s", request->file_path().c_str());
+
+    try {
+        // Create a ParquetReader instance
+        auto reader_result = pond::format::ParquetReader::Create(fs_, request->file_path());
+        if (!reader_result.ok()) {
+            pond::proto::ReadParquetFileResponse error_response;
+            error_response.set_success(false);
+            error_response.set_error(reader_result.error().message());
+            writer->Write(error_response);
+            return grpc::Status::OK;
+        }
+        auto reader = std::move(reader_result).value();
+
+        // Get the schema
+        auto schema_result = reader->Schema();
+        if (!schema_result.ok()) {
+            pond::proto::ReadParquetFileResponse error_response;
+            error_response.set_success(false);
+            error_response.set_error(schema_result.error().message());
+            writer->Write(error_response);
+            return grpc::Status::OK;
+        }
+        auto schema = schema_result.value();
+
+        // Get number of row groups
+        auto num_row_groups_result = reader->NumRowGroups();
+        if (!num_row_groups_result.ok()) {
+            pond::proto::ReadParquetFileResponse error_response;
+            error_response.set_success(false);
+            error_response.set_error(num_row_groups_result.error().message());
+            writer->Write(error_response);
+            return grpc::Status::OK;
+        }
+        int num_row_groups = num_row_groups_result.value();
+
+        // Convert column names to indices if specific columns are requested
+        std::vector<std::string> column_names;
+        if (!request->columns().empty()) {
+            column_names.assign(request->columns().begin(), request->columns().end());
+        }
+
+        // Read each row group
+        for (int row_group = 0; row_group < num_row_groups; row_group++) {
+            // Check if the client has cancelled the request
+            if (context->IsCancelled()) {
+                return grpc::Status::CANCELLED;
+            }
+
+            // Read the row group
+            auto table_result = column_names.empty() ? 
+                reader->ReadRowGroup(row_group) :
+                reader->ReadRowGroup(row_group, column_names);
+
+            if (!table_result.ok()) {
+                pond::proto::ReadParquetFileResponse error_response;
+                error_response.set_success(false);
+                error_response.set_error(table_result.error().message());
+                writer->Write(error_response);
+                return grpc::Status::OK;
+            }
+            auto table = table_result.value();
+
+            // Prepare response
+            pond::proto::ReadParquetFileResponse response;
+            response.set_success(true);
+            response.set_has_more(row_group < num_row_groups - 1);
+
+            // Convert columns to response format
+            for (int i = 0; i < table->num_columns(); i++) {
+                auto column = table->column(i);
+                auto field = table->schema()->field(i);
+                
+                auto* col_data = response.add_columns();
+                col_data->set_name(field->name());
+                col_data->set_type(field->type()->ToString());
+
+                // Convert values to strings
+                auto chunk = column->chunk(0);
+                for (int64_t row = 0; row < chunk->length(); row++) {
+                    if (chunk->IsNull(row)) {
+                        col_data->add_values("");
+                        col_data->add_nulls(true);
+                    } else {
+                        std::string str_val;
+                        switch (field->type()->id()) {
+                            case arrow::Type::INT32:
+                                str_val = std::to_string(std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(row));
+                                break;
+                            case arrow::Type::INT64:
+                                str_val = std::to_string(std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(row));
+                                break;
+                            case arrow::Type::FLOAT:
+                                str_val = std::to_string(std::static_pointer_cast<arrow::FloatArray>(chunk)->Value(row));
+                                break;
+                            case arrow::Type::DOUBLE:
+                                str_val = std::to_string(std::static_pointer_cast<arrow::DoubleArray>(chunk)->Value(row));
+                                break;
+                            case arrow::Type::STRING:
+                                str_val = std::static_pointer_cast<arrow::StringArray>(chunk)->GetString(row);
+                                break;
+                            case arrow::Type::BOOL:
+                                str_val = std::static_pointer_cast<arrow::BooleanArray>(chunk)->Value(row) ? "true" : "false";
+                                break;
+                            default:
+                                str_val = "Unsupported type";
+                        }
+                        col_data->add_values(str_val);
+                        col_data->add_nulls(false);
+                    }
+                }
+            }
+
+            // Send the batch
+            if (!writer->Write(response)) {
+                return grpc::Status(grpc::StatusCode::CANCELLED, "Failed to write response");
+            }
+        }
+
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        pond::proto::ReadParquetFileResponse error_response;
+        error_response.set_success(false);
+        error_response.set_error(std::string("Error reading parquet file: ") + e.what());
+        writer->Write(error_response);
+        return grpc::Status::OK;
+    }
 }
 
 }  // namespace pond::server
