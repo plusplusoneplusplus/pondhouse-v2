@@ -501,6 +501,11 @@ TEST_F(LogicalPlannerTest, AggregateWithoutGroupBy) {
     auto scan = agg_node->Children()[0];
     EXPECT_EQ(LogicalNodeType::Scan, scan->Type()) << "Leaf should be scan";
     EXPECT_EQ("users", scan->as<LogicalScanNode>()->TableName()) << "Should scan users table";
+
+    // verify output schema
+    auto schema = agg_node->OutputSchema();
+    EXPECT_EQ(1, schema.FieldCount()) << "Should have one output column";
+    EXPECT_EQ("count", schema.Fields()[0].name) << "First column should be count";
 }
 
 //

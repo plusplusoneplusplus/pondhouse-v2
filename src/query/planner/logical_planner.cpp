@@ -419,6 +419,8 @@ Result<std::shared_ptr<Expression>> LogicalPlanner::BuildExpression(const hsql::
                     return Result<std::shared_ptr<Expression>>::success(std::make_shared<AggregateExpression>(
                         AggregateType::Count, std::make_shared<StarExpression>()));
                 }
+
+                // TODO: handle other aggregate functions
             }
 
             // Check if we have an argument

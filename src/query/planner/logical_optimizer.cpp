@@ -288,6 +288,16 @@ std::vector<std::string> ColumnPruning::CollectRequiredColumns(const LogicalPlan
             }
             break;
         }
+        case LogicalNodeType::Aggregate: {
+            auto& agg = static_cast<const LogicalAggregateNode&>(node);
+            for (const auto& group_by : agg.GetGroupBy()) {
+                LogicalOptimizerHelper::CollectColumnsFromExpression(group_by, columns);
+            }
+            for (const auto& aggregate : agg.GetAggregates()) {
+                LogicalOptimizerHelper::CollectColumnsFromExpression(aggregate, columns);
+            }
+            break;
+        }
         default:
             // For other nodes, collect columns from children
             for (const auto& child : node.Children()) {
@@ -316,6 +326,11 @@ std::vector<std::string> ColumnPruning::CollectRequiredColumns(const LogicalPlan
             auto bin_expr = std::static_pointer_cast<BinaryExpression>(expr);
             LogicalOptimizerHelper::CollectColumnsFromExpression(bin_expr->Left(), columns);
             LogicalOptimizerHelper::CollectColumnsFromExpression(bin_expr->Right(), columns);
+            break;
+        }
+        case ExprType::Aggregate: {
+            auto agg_expr = std::static_pointer_cast<AggregateExpression>(expr);
+            LogicalOptimizerHelper::CollectColumnsFromExpression(agg_expr->Input(), columns);
             break;
         }
         default:
@@ -436,6 +451,30 @@ Result<std::shared_ptr<LogicalPlanNode>> ColumnPruning::PruneColumns(std::shared
 
             return Result<std::shared_ptr<LogicalPlanNode>>::success(std::make_shared<LogicalProjectionNode>(
                 child_result.value(), proj->OutputSchema(), proj->GetExpressions(), proj->TableName()));
+        }
+        case LogicalNodeType::Aggregate: {
+            auto agg = std::static_pointer_cast<LogicalAggregateNode>(node);
+
+            auto required_columns = CollectRequiredColumns(*node);
+
+            if (required_columns.empty() && !agg->Children().empty()) {
+                const auto& child_schema = agg->Children()[0]->OutputSchema();
+                if (child_schema.FieldCount() == 0) {
+                    return Result<std::shared_ptr<LogicalPlanNode>>::failure(ErrorCode::InvalidArgument,
+                                                                             "No columns to prune");
+                }
+
+                required_columns.emplace_back(child_schema.Fields()[0].name);
+            }
+
+            // Recursively prune child
+            auto child_result = PruneColumns(agg->Children()[0], required_columns);
+            if (!child_result.ok()) {
+                return child_result;
+            }
+
+            return Result<std::shared_ptr<LogicalPlanNode>>::success(std::make_shared<LogicalAggregateNode>(
+                child_result.value(), agg->GetGroupBy(), agg->GetAggregates(), agg->OutputSchema()));
         }
         default:
             return Result<std::shared_ptr<LogicalPlanNode>>::success(node);

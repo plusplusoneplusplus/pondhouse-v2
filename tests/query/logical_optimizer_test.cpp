@@ -1,5 +1,3 @@
-
-
 #include "query/planner/logical_plan_printer.h"
 #include "query/planner/logical_planner.h"
 #include "query_test_context.h"
@@ -709,6 +707,42 @@ TEST_F(LogicalOptimizerTest, LimitPushdown) {
     auto limit_node = child->as<LogicalLimitNode>();
     EXPECT_EQ(10, limit_node->Limit()) << "Limit should be 10";
     EXPECT_EQ(0, limit_node->Offset()) << "Offset should be 0";
+}
+
+TEST_F(LogicalOptimizerTest, ColumnPruningWithCount) {
+    const std::string query = "SELECT COUNT(name) FROM users;";
+    auto plan_result = PlanLogical(query, true /* optimize */);
+    VERIFY_RESULT(plan_result);
+
+    auto root = plan_result.value();
+    EXPECT_EQ(LogicalNodeType::Projection, root->Type());
+
+    auto projection = root->as<LogicalProjectionNode>();
+    auto aggregate = projection->Children()[0]->as<LogicalAggregateNode>();
+    auto scan = aggregate->Children()[0]->as<LogicalScanNode>();
+
+    // Verify scan schema has been pruned to first column only
+    auto scan_schema = scan->OutputSchema();
+    ASSERT_EQ(1, scan_schema.FieldCount()) << "Scan should have only one column";
+    EXPECT_EQ("name", scan_schema.Fields()[0].name) << "Should retain first column (name)";
+}
+
+TEST_F(LogicalOptimizerTest, ColumnPruningWithCountStar) {
+    const std::string query = "SELECT COUNT(*) FROM users;";
+    auto plan_result = PlanLogical(query, true /* optimize */);
+    VERIFY_RESULT(plan_result);
+
+    auto root = plan_result.value();
+    EXPECT_EQ(LogicalNodeType::Projection, root->Type());
+
+    auto projection = root->as<LogicalProjectionNode>();
+    auto aggregate = projection->Children()[0]->as<LogicalAggregateNode>();
+    auto scan = aggregate->Children()[0]->as<LogicalScanNode>();
+
+    // Verify scan schema has been pruned to first column only
+    auto scan_schema = scan->OutputSchema();
+    ASSERT_EQ(1, scan_schema.FieldCount()) << "Scan should have only one column";
+    EXPECT_EQ("id", scan_schema.Fields()[0].name) << "Should retain first column (id)";
 }
 
 }  // namespace pond::query

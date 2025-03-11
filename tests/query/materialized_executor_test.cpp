@@ -807,7 +807,7 @@ TEST_F(MaterializedExecutorTest, SimpleSum) {
     ASSERT_EQ(batch->num_columns(), 1) << "Batch should have 1 column";
 
     // Verify column names
-    ASSERT_EQ(batch->schema()->field(0)->name(), "age_sum");
+    ASSERT_EQ(batch->schema()->field(0)->name(), "sum_age");
 
     // Verify sum value (25 + 30 + 35 + 40 + 45 = 175)
     auto sum_array = std::static_pointer_cast<arrow::Int64Array>(batch->column(0));
@@ -820,9 +820,9 @@ TEST_F(MaterializedExecutorTest, SimpleSum) {
 // Test Result:
 //      Returns a single row with the average of the age column
 //
-TEST_F(MaterializedExecutorTest, DISABLED_SimpleAvg) {
+TEST_F(MaterializedExecutorTest, SimpleAvg) {
     // Create SQL query with AVG
-    std::string sql_query = "SELECT AVG(age) AS age_avg FROM users";
+    std::string sql_query = "SELECT AVG(age) FROM users";
 
     // Plan the query and get the physical plan
     auto physical_plan_result = PlanPhysical(sql_query);
@@ -842,7 +842,7 @@ TEST_F(MaterializedExecutorTest, DISABLED_SimpleAvg) {
     ASSERT_EQ(batch->num_columns(), 1) << "Batch should have 1 column";
 
     // Verify column names
-    ASSERT_EQ(batch->schema()->field(0)->name(), "age_avg");
+    ASSERT_EQ(batch->schema()->field(0)->name(), "avg_age");
 
     // Verify average value (25 + 30 + 35 + 40 + 45) / 5 = 35
     auto avg_array = std::static_pointer_cast<arrow::DoubleArray>(batch->column(0));
