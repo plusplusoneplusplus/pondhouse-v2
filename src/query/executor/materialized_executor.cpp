@@ -417,6 +417,12 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
             case common::ColumnType::INT64:
                 builders.push_back(std::make_unique<arrow::Int64Builder>());
                 break;
+            case common::ColumnType::UINT64:
+                builders.push_back(std::make_unique<arrow::UInt64Builder>());
+                break;
+            case common::ColumnType::UINT32:
+                builders.push_back(std::make_unique<arrow::UInt32Builder>());
+                break;
             case common::ColumnType::FLOAT:
                 builders.push_back(std::make_unique<arrow::FloatBuilder>());
                 break;
@@ -482,6 +488,26 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
                 case arrow::Type::INT64: {
                     auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
                     auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
+                    if (typed_array->IsNull(row_idx)) {
+                        typed_builder->AppendNull();
+                    } else {
+                        typed_builder->Append(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::UINT32: {
+                    auto typed_array = std::static_pointer_cast<arrow::UInt32Array>(input_array);
+                    auto typed_builder = static_cast<arrow::UInt32Builder*>(builders[output_col_idx].get());
+                    if (typed_array->IsNull(row_idx)) {
+                        typed_builder->AppendNull();
+                    } else {
+                        typed_builder->Append(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::UINT64: {
+                    auto typed_array = std::static_pointer_cast<arrow::UInt64Array>(input_array);
+                    auto typed_builder = static_cast<arrow::UInt64Builder*>(builders[output_col_idx].get());
                     if (typed_array->IsNull(row_idx)) {
                         typed_builder->AppendNull();
                     } else {

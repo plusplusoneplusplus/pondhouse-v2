@@ -38,9 +38,11 @@ common::Result<ArrowDataBatchSharedPtr> ExecutorUtil::CreateProjectionBatch(Phys
             auto input_expr = agg_expr->Input();
 
             // For now, only support column references in aggregate input
-            if (input_expr->Type() != common::ExprType::Column) {
-                return common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                    common::ErrorCode::NotImplemented, "Only column references are supported in aggregate input"));
+            if (input_expr->Type() != common::ExprType::Column && input_expr->Type() != common::ExprType::Star) {
+                return common::Result<ArrowDataBatchSharedPtr>::failure(
+                    common::Error(common::ErrorCode::NotImplemented,
+                                  std::format("Only column references or star are supported in aggregate input: {}",
+                                              input_expr->ToString())));
             }
 
             auto result_name = agg_expr->ResultName();
@@ -49,9 +51,9 @@ common::Result<ArrowDataBatchSharedPtr> ExecutorUtil::CreateProjectionBatch(Phys
             output_fields.push_back(format::SchemaConverter::ToArrowField(
                 common::ColumnSchema(result_name, result_type, common::Nullability::NOT_NULL)));
         } else {
-            // For now, only support column references
+            // For now, only support column references and star
             return common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                common::ErrorCode::NotImplemented, "Only column references are supported in projections"));
+                common::ErrorCode::NotImplemented, "Only column references and star are supported in projections"));
         }
     }
 
