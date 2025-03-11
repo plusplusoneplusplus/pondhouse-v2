@@ -186,6 +186,7 @@ add_library(pondhouse_common
     src/query/planner/physical_planner.cpp
     src/query/planner/planner.cpp
     src/query/executor/executor.cpp
+    src/query/executor/executor_util.cpp
     src/query/executor/materialized_executor.cpp
     src/query/executor/operator_iterators.cpp
     src/query/executor/vectorized_executor.cpp
@@ -303,6 +304,7 @@ add_executable(
     tests/query/operator_iterators_test.cpp
     tests/query/sql_table_executor_test.cpp
     tests/query/create_table_command_test.cpp
+    tests/query/executor_util_test.cpp
     tests/server/gRPC/pond_service_impl_test.cpp
     tests/sql/hyrise_parser_test.cpp
     tests/test_helper.cpp

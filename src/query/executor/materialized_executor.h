@@ -85,8 +85,6 @@ protected:
     // Helper methods for execution
     common::Result<ArrowDataBatchSharedPtr> ExecuteChildren(PhysicalPlanNode& node);
     common::Result<bool> ProduceResults(const common::Schema& schema);
-    common::Result<ArrowDataBatchSharedPtr> CreateProjectionBatch(PhysicalProjectionNode& node,
-                                                                  ArrowDataBatchSharedPtr input_batch);
 
 private:
     std::shared_ptr<catalog::Catalog> catalog_;
