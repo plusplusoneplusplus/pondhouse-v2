@@ -216,7 +216,7 @@ public:
                 return common::ColumnType::DOUBLE;
             case AggregateType::Min:
             case AggregateType::Max:
-                return common::ColumnType::UINT64;
+                return common::ColumnType::INT64;
             default:
                 return common::ColumnType::INVALID;
         }

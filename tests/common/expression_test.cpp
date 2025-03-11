@@ -116,14 +116,14 @@ TEST_F(ExpressionTest, TestAggregateExpression) {
     EXPECT_EQ(min_expr->Type(), ExprType::Aggregate);
     EXPECT_EQ(min_expr->AggType(), AggregateType::Min);
     EXPECT_EQ(min_expr->ToString(), "MIN(value)");
-    EXPECT_EQ(min_expr->ResultType(), ColumnType::UINT64);
+    EXPECT_EQ(min_expr->ResultType(), ColumnType::INT64);
     EXPECT_EQ(min_expr->ResultName(), "min_value");
 
     auto max_expr = std::make_shared<AggregateExpression>(AggregateType::Max, col_expr);
     EXPECT_EQ(max_expr->Type(), ExprType::Aggregate);
     EXPECT_EQ(max_expr->AggType(), AggregateType::Max);
     EXPECT_EQ(max_expr->ToString(), "MAX(value)");
-    EXPECT_EQ(max_expr->ResultType(), ColumnType::UINT64);
+    EXPECT_EQ(max_expr->ResultType(), ColumnType::INT64);
     EXPECT_EQ(max_expr->ResultName(), "max_value");
 }
 
