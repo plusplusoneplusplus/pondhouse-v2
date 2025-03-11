@@ -406,6 +406,114 @@ TEST_F(PondServiceImplTest, ListKVTables_Success) {
 
 //
 // Test Setup:
+//      Tests ListKVTables after recreating the service (simulating restart)
+//      to verify tables are correctly identified even if not loaded in memory
+// Test Result:
+//      ListKVTables should return all KV tables that exist on disk
+//
+TEST_F(PondServiceImplTest, ListKVTables_AfterRestart) {
+    // Create several KV tables
+    std::vector<std::string> test_tables = {"restart_kv_table1", "restart_kv_table2", "restart_kv_table3"};
+    for (const auto& table_name : test_tables) {
+        grpc::ServerContext context;
+        pond::proto::CreateKVTableRequest request;
+        pond::proto::CreateKVTableResponse response;
+        request.set_table_name(table_name);
+        service_->CreateKVTable(&context, &request, &response);
+        ASSERT_TRUE(response.success()) << "Failed to create test table " << table_name << ": " << response.error();
+    }
+    
+    // First verify the tables are discoverable in the current service instance
+    {
+        grpc::ServerContext context;
+        pond::proto::ListKVTablesRequest request;
+        pond::proto::ListKVTablesResponse response;
+        auto status = service_->ListKVTables(&context, &request, &response);
+        ASSERT_TRUE(status.ok());
+        ASSERT_TRUE(response.success());
+        
+        // Verify all created tables are found including default table
+        bool all_found = true;
+        for (const auto& table_name : test_tables) {
+            bool found = false;
+            for (int i = 0; i < response.table_names_size(); i++) {
+                if (response.table_names(i) == table_name) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                all_found = false;
+                ADD_FAILURE() << "Table " << table_name << " not found in first ListKVTables";
+            }
+        }
+        ASSERT_TRUE(all_found);
+    }
+    
+    // Create a new service instance using the same filesystem, simulating a restart
+    auto new_service = std::make_unique<PondServiceImpl>(db_, fs_);
+    
+    // Now test that the new service instance can still find all the tables
+    {
+        grpc::ServerContext context;
+        pond::proto::ListKVTablesRequest request;
+        pond::proto::ListKVTablesResponse response;
+        auto status = new_service->ListKVTables(&context, &request, &response);
+        ASSERT_TRUE(status.ok());
+        ASSERT_TRUE(response.success());
+        
+        // Verify all created tables are still found
+        ASSERT_GE(response.table_names_size(), test_tables.size());
+        
+        bool all_found = true;
+        for (const auto& table_name : test_tables) {
+            bool found = false;
+            for (int i = 0; i < response.table_names_size(); i++) {
+                if (response.table_names(i) == table_name) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                all_found = false;
+                ADD_FAILURE() << "Table " << table_name << " not found in ListKVTables after restart";
+            }
+        }
+        ASSERT_TRUE(all_found);
+    }
+    
+    // Verify we can also still get data from these tables
+    for (const auto& table_name : test_tables) {
+        // Put a test value in the table
+        {
+            grpc::ServerContext context;
+            pond::proto::PutRequest request;
+            pond::proto::PutResponse response;
+            request.set_key("test_key");
+            request.set_value("test_value");
+            request.set_table_name(table_name);
+            auto status = new_service->Put(&context, &request, &response);
+            ASSERT_TRUE(status.ok());
+            ASSERT_TRUE(response.success()) << "Failed to put value in table " << table_name;
+        }
+        
+        // Get the value back to verify
+        {
+            grpc::ServerContext context;
+            pond::proto::GetRequest request;
+            pond::proto::GetResponse response;
+            request.set_key("test_key");
+            request.set_table_name(table_name);
+            auto status = new_service->Get(&context, &request, &response);
+            ASSERT_TRUE(status.ok());
+            ASSERT_TRUE(response.found());
+            ASSERT_EQ("test_value", response.value());
+        }
+    }
+}
+
+//
+// Test Setup:
 //      Tests Get operation with a specific table parameter
 // Test Result:
 //      Should retrieve value from the correct table

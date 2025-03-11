@@ -333,14 +333,23 @@ class PondClient:
             if response.success:
                 # Sort tables with "default" first
                 kv_tables = list(response.table_names)
+                
+                # Always include the default table even if not returned by the server
+                if "default" not in kv_tables:
+                    kv_tables.append("default")
+                
+                # Sort alphabetically
                 kv_tables.sort()
+                
+                # Ensure default is first
                 if "default" in kv_tables:
                     kv_tables.remove("default")
                     kv_tables.insert(0, "default")
+                    
                 return kv_tables, None
-            return [], response.error
+            return ["default"], response.error  # Always include default table even on error
         except Exception as e:
-            return [], str(e)
+            return ["default"], str(e)  # Always include default table even on exception
     
     def create_kv_table(self, table_name: str) -> tuple[bool, Optional[str]]:
         """

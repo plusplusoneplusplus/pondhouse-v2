@@ -228,4 +228,68 @@ TEST_F(DBTest, InvalidOperations) {
     VERIFY_ERROR_CODE(drop_result, ErrorCode::InvalidArgument);
 }
 
+//
+// Test Setup:
+//      Creates tables, then creates a new DB instance (simulating restart)
+//      and verifies ListTables returns all tables without explicitly loading them
+// Test Result:
+//      ListTables should return all tables that exist on disk,
+//      even if they haven't been loaded into memory yet
+//
+TEST_F(DBTest, ListTablesAfterRestart) {
+    // Create multiple tables in the original DB
+    std::vector<std::string> table_names = {"test_table1", "test_table2", "test_table3"};
+    for (const auto& name : table_names) {
+        auto schema = CreateTestSchema();
+        auto create_result = db_->CreateTable(name, schema);
+        ASSERT_TRUE(create_result.ok()) << "Failed to create table: " << create_result.error().message();
+    }
+    
+    // Verify tables were created correctly
+    auto list_result = db_->ListTables();
+    ASSERT_TRUE(list_result.ok());
+    ASSERT_EQ(table_names.size(), list_result.value().size());
+    
+    // Create a new DB instance using the same filesystem to simulate server restart
+    // where tables exist on disk but aren't loaded in memory
+    auto new_db_result = DB::Create(fs_, "test_db");
+    ASSERT_TRUE(new_db_result.ok()) << "Failed to create new DB: " << new_db_result.error().message();
+    auto new_db = new_db_result.value();
+    
+    // Verify new DB instance has empty in-memory tables map but can still list all tables
+    auto new_list_result = new_db->ListTables();
+    ASSERT_TRUE(new_list_result.ok()) << "Failed to list tables: " << new_list_result.error().message();
+    
+    // Check that all original tables are found
+    auto& found_tables = new_list_result.value();
+    ASSERT_EQ(table_names.size(), found_tables.size()) 
+        << "Expected to find " << table_names.size() << " tables, but found " << found_tables.size();
+    
+    // Check each table name is in the result
+    for (const auto& name : table_names) {
+        bool found = false;
+        for (const auto& found_name : found_tables) {
+            if (found_name == name) {
+                found = true;
+                break;
+            }
+        }
+        ASSERT_TRUE(found) << "Table '" << name << "' not found in ListTables result";
+    }
+    
+    // Now verify that accessing each table works correctly
+    for (const auto& name : table_names) {
+        auto get_result = new_db->GetTable(name);
+        ASSERT_TRUE(get_result.ok()) << "Failed to get table '" << name << "': " << get_result.error().message();
+        
+        // Verify schema was correctly preserved
+        auto& table = get_result.value();
+        auto& schema = table->schema();
+        ASSERT_EQ(3, schema->Columns().size());
+        ASSERT_EQ("id", schema->Columns()[0].name);
+        ASSERT_EQ("name", schema->Columns()[1].name);
+        ASSERT_EQ("value", schema->Columns()[2].name);
+    }
+}
+
 }  // namespace pond::kv

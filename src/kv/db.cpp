@@ -1,9 +1,17 @@
 #include "kv/db.h"
 
-#include <filesystem>
+#include <algorithm>
+#include <chrono>
+#include <exception>
+#include <memory>
+#include <string>
+#include <unordered_set>
 
 #include "common/data_chunk.h"
+#include "common/error.h"
 #include "common/log.h"
+#include "common/result.h"
+#include "common/schema.h"
 #include "common/validation.h"
 #include "kv/record.h"
 
@@ -229,11 +237,35 @@ common::Result<std::shared_ptr<Table>> DB::GetTable(const std::string& table_nam
 common::Result<std::vector<std::string>> DB::ListTables() const {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    // First, include tables that are already loaded in memory
     std::vector<std::string> table_names;
-    table_names.reserve(tables_.size());
+    std::unordered_set<std::string> unique_tables;
+    
     for (const auto& [name, _] : tables_) {
         if (name != SYSTEM_TABLE) {
             table_names.push_back(name);
+            unique_tables.insert(name);
+        }
+    }
+
+    // Now, also check the system table to find any tables that aren't loaded yet
+    if (system_table_) {
+        auto iter_result = system_table_->NewIterator();
+        if (iter_result.ok()) {
+            auto iter = std::move(iter_result.value());
+
+            while (iter->Valid()) {
+                auto& record = iter->value();
+                auto name_result = record->Get<common::DataChunk>(0);
+                if (name_result.ok()) {
+                    std::string table_name = name_result.value().ToString();
+                    if (table_name != SYSTEM_TABLE && unique_tables.find(table_name) == unique_tables.end()) {
+                        table_names.push_back(table_name);
+                        unique_tables.insert(table_name);
+                    }
+                }
+                iter->Next();
+            }
         }
     }
 

@@ -532,6 +532,7 @@ grpc::Status PondServiceImpl::ListKVTables(grpc::ServerContext* context,
             
             // For each table, check if it has KV structure (single 'value' column of type STRING)
             for (const auto& table_name : list_result.value()) {
+                // Preload the table to ensure it's in memory
                 auto table_result = db_->GetTable(table_name);
                 if (table_result.ok()) {
                     auto table = table_result.value();
