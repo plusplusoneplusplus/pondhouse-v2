@@ -80,6 +80,12 @@ Result<std::vector<int>> ParquetReader::ConvertColumnNamesToIndices(const std::v
         return Result<std::vector<int>>::success(std::vector<int>());
     }
 
+    std::string column_names_str;
+    for (const auto& name : column_names) {
+        column_names_str += name + ", ";
+    }
+    LOG_VERBOSE("Converting column names to indices: %s", column_names_str.c_str());
+
     // Get the schema first
     auto schema_result = Schema();
     if (!schema_result.ok()) {
@@ -103,8 +109,9 @@ Result<std::vector<int>> ParquetReader::ConvertColumnNamesToIndices(const std::v
 
     // If no valid columns were found, return an error
     if (column_indices.empty()) {
-        return Result<std::vector<int>>::failure(ErrorCode::InvalidArgument,
-                                                 "None of the specified column names were found in the schema");
+        return Result<std::vector<int>>::failure(
+            ErrorCode::InvalidArgument,
+            "None of the specified column names were found in the schema: " + column_names_str);
     }
 
     return Result<std::vector<int>>::success(column_indices);

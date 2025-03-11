@@ -32,6 +32,19 @@
         }                                                                          \
     } while (false)
 
+#define RETURN_VOID_IF_ERROR(expr)                                   \
+    do {                                                             \
+        auto&& result_tmp = (expr);                                  \
+        if (result_tmp.hasError()) {                                 \
+            LOG_ERROR("Failed (%s): Result: %s. File: %s, Line: %d", \
+                      #expr,                                         \
+                      result_tmp.error().message().c_str(),          \
+                      __FILE__,                                      \
+                      __LINE__);                                     \
+            return;                                                  \
+        }                                                            \
+    } while (false)
+
 namespace pond::common {
 
 template <typename T>

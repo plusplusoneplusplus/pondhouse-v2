@@ -413,6 +413,14 @@ Result<std::shared_ptr<Expression>> LogicalPlanner::BuildExpression(const hsql::
             return Result<std::shared_ptr<Expression>>::success(ConstantExpression::CreateString(expr->name));
 
         case hsql::kExprFunctionRef: {
+            // Special case for COUNT(*)
+            if (expr->exprList && expr->exprList->size() == 1 && (*expr->exprList)[0]->type == hsql::kExprStar) {
+                if (std::string(expr->name) == "COUNT") {
+                    return Result<std::shared_ptr<Expression>>::success(std::make_shared<AggregateExpression>(
+                        AggregateType::Count, std::make_shared<StarExpression>()));
+                }
+            }
+
             // Check if we have an argument
             if (expr->exprList == nullptr || expr->exprList->size() != 1) {
                 return Result<std::shared_ptr<Expression>>::failure(ErrorCode::InvalidArgument,
@@ -657,35 +665,57 @@ std::string ExprToString(const hsql::Expr* expr) {
 Result<std::shared_ptr<LogicalPlanNode>> LogicalPlanner::PlanGroupBy(std::shared_ptr<LogicalPlanNode> input,
                                                                      const hsql::GroupByDescription* group_by,
                                                                      const std::vector<hsql::Expr*>* select_list) {
-    if (!group_by || group_by->columns == nullptr || group_by->columns->empty()) {
-        return Result<std::shared_ptr<LogicalPlanNode>>::success(input);
-    }
-
     std::vector<std::shared_ptr<Expression>> group_by_exprs;
     std::vector<std::shared_ptr<Expression>> agg_exprs;
 
-    // Convert GROUP BY expressions
-    for (const auto* expr : *group_by->columns) {
-        auto group_expr_result = BuildExpression(expr);
-        if (!group_expr_result.ok()) {
-            return Result<std::shared_ptr<LogicalPlanNode>>::failure(ErrorCode::InvalidArgument,
-                                                                     "Failed to build GROUP BY expression");
+    // Convert GROUP BY expressions if present
+    if (group_by && group_by->columns && !group_by->columns->empty()) {
+        for (const auto* expr : *group_by->columns) {
+            auto group_expr_result = BuildExpression(expr);
+            if (!group_expr_result.ok()) {
+                return Result<std::shared_ptr<LogicalPlanNode>>::failure(ErrorCode::InvalidArgument,
+                                                                         "Failed to build GROUP BY expression");
+            }
+            group_by_exprs.push_back(group_expr_result.value());
         }
-        group_by_exprs.push_back(group_expr_result.value());
     }
 
     // Convert aggregate expressions from SELECT list
+    bool has_aggregates = false;
     for (const auto* expr : *select_list) {
         if (expr->type == hsql::kExprFunctionRef) {
+            has_aggregates = true;
             auto agg_expr_result = BuildExpression(expr);
             if (!agg_expr_result.ok()) {
                 return Result<std::shared_ptr<LogicalPlanNode>>::failure(ErrorCode::InvalidArgument,
                                                                          "Failed to build aggregate expression");
             }
             agg_exprs.push_back(agg_expr_result.value());
-        } else {
-            // LOG_VERBOSE("Skipping non-aggregate expression: %s", ExprToString(expr).c_str());
+        } else if (group_by && group_by->columns && !group_by->columns->empty()) {
+            // For GROUP BY queries, non-aggregate expressions must be in GROUP BY
+            auto expr_result = BuildExpression(expr);
+            if (!expr_result.ok()) {
+                return Result<std::shared_ptr<LogicalPlanNode>>::failure(ErrorCode::InvalidArgument,
+                                                                         "Failed to build expression");
+            }
+            bool found = false;
+            for (const auto& group_expr : group_by_exprs) {
+                if (expr_result.value()->ToString() == group_expr->ToString()) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return Result<std::shared_ptr<LogicalPlanNode>>::failure(
+                    ErrorCode::InvalidArgument,
+                    "Non-aggregate expression must appear in GROUP BY: " + expr_result.value()->ToString());
+            }
         }
+    }
+
+    // If no aggregates and no GROUP BY, return input node
+    if (!has_aggregates && (group_by == nullptr || group_by->columns == nullptr || group_by->columns->empty())) {
+        return Result<std::shared_ptr<LogicalPlanNode>>::success(input);
     }
 
     // Create output schema for aggregate node

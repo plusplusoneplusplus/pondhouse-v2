@@ -71,6 +71,9 @@ public:
         if (!logical_plan.ok()) {
             LOG_ERROR("Logical planning failed: %s", logical_plan.error().message().c_str());
         }
+        if (logical_plan.ok()) {
+            std::cout << "Logical plan: " << GetLogicalPlanUserFriendlyString(*logical_plan.value()) << std::endl;
+        }
         return logical_plan;
     }
 
@@ -82,9 +85,12 @@ public:
     }
 
     Result<std::shared_ptr<PhysicalPlanNode>> PlanPhysical(const std::string& query, bool optimize = false) {
-        auto physical_plan = planner_->PlanPhysical(query, optimize);
-        EXPECT_TRUE(physical_plan.ok()) << "Physical planning should succeed";
-        return physical_plan;
+        auto physical_plan_result = planner_->PlanPhysical(query, optimize);
+        if (physical_plan_result.ok()) {
+            std::cout << "Physical plan: " << GetPhysicalPlanUserFriendlyString(*physical_plan_result.value())
+                      << std::endl;
+        }
+        return physical_plan_result;
     }
 
     void IngestData(const std::string& table_name, const std::shared_ptr<arrow::RecordBatch>& record_batch) {

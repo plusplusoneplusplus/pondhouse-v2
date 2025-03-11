@@ -10,6 +10,7 @@
 #include "common/error.h"
 #include "common/log.h"
 #include "format/parquet/parquet_reader.h"
+#include "format/parquet/schema_converter.h"
 #include "query/data/arrow_util.h"
 #include "query/planner/physical_plan_node.h"
 
@@ -326,8 +327,821 @@ void MaterializedExecutor::Visit(PhysicalNestedLoopJoinNode& node) {
 }
 
 void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
-    current_result_ =
-        common::Error(common::ErrorCode::NotImplemented, "Hash aggregate not implemented in simple executor");
+    // Execute the child node first to get the input data
+    auto result = ExecuteChildren(node);
+    if (!result.ok()) {
+        current_result_ = result;
+        return;
+    }
+
+    // Get input batch from child
+    auto input_batch = current_batch_;
+    if (!input_batch || input_batch->num_rows() == 0) {
+        // Create empty batch with the output schema
+        auto empty_batch_result = ArrowUtil::CreateEmptyBatch(node.OutputSchema());
+        if (!empty_batch_result.ok()) {
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(empty_batch_result.error());
+            return;
+        }
+        current_batch_ = empty_batch_result.value();
+        current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
+        return;
+    }
+
+    // Get the group by columns and aggregate expressions
+    const auto& group_by = node.GroupBy();
+    const auto& aggregates = node.Aggregates();
+
+    // If there are no group by columns and no aggregates, just return the input
+    if (group_by.empty() && aggregates.empty()) {
+        current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(input_batch);
+        return;
+    }
+
+    // Create a mapping from group keys to row indices
+    std::unordered_map<std::string, std::vector<int>> group_map;
+
+    // First pass: Group the rows by the group by columns
+    for (int row_idx = 0; row_idx < input_batch->num_rows(); ++row_idx) {
+        std::string group_key;
+
+        // Concatenate the group by column values to form a key
+        for (const auto& group_expr : group_by) {
+            // For now, only support column references in group by
+            if (group_expr->Type() != common::ExprType::Column) {
+                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+                    common::ErrorCode::NotImplemented, "Only column references are supported in GROUP BY"));
+                return;
+            }
+
+            auto col_expr = std::static_pointer_cast<common::ColumnExpression>(group_expr);
+            const std::string& col_name = col_expr->ColumnName();
+
+            // Find column index in the input batch
+            int col_idx = -1;
+            auto input_schema = input_batch->schema();
+            for (int i = 0; i < input_schema->num_fields(); ++i) {
+                if (input_schema->field(i)->name() == col_name) {
+                    col_idx = i;
+                    break;
+                }
+            }
+
+            if (col_idx == -1) {
+                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                    common::Error(common::ErrorCode::InvalidArgument, "Column not found in input: " + col_name));
+                return;
+            }
+
+            // Get the column array and value at this row
+            auto array = input_batch->column(col_idx);
+
+            // Append the value to the group key based on type
+            if (group_key.length() > 0) {
+                group_key += "|";  // Separator between values
+            }
+
+            switch (array->type_id()) {
+                case arrow::Type::INT32: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int32Array>(array);
+                    if (typed_array->IsNull(row_idx)) {
+                        group_key += "NULL";
+                    } else {
+                        group_key += std::to_string(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::INT64: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int64Array>(array);
+                    if (typed_array->IsNull(row_idx)) {
+                        group_key += "NULL";
+                    } else {
+                        group_key += std::to_string(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::FLOAT: {
+                    auto typed_array = std::static_pointer_cast<arrow::FloatArray>(array);
+                    if (typed_array->IsNull(row_idx)) {
+                        group_key += "NULL";
+                    } else {
+                        group_key += std::to_string(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::DOUBLE: {
+                    auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(array);
+                    if (typed_array->IsNull(row_idx)) {
+                        group_key += "NULL";
+                    } else {
+                        group_key += std::to_string(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::STRING: {
+                    auto typed_array = std::static_pointer_cast<arrow::StringArray>(array);
+                    if (typed_array->IsNull(row_idx)) {
+                        group_key += "NULL";
+                    } else {
+                        group_key += typed_array->GetString(row_idx);
+                    }
+                    break;
+                }
+                case arrow::Type::BOOL: {
+                    auto typed_array = std::static_pointer_cast<arrow::BooleanArray>(array);
+                    if (typed_array->IsNull(row_idx)) {
+                        group_key += "NULL";
+                    } else {
+                        group_key += typed_array->Value(row_idx) ? "1" : "0";
+                    }
+                    break;
+                }
+                default: {
+                    current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                        common::Error(common::ErrorCode::NotImplemented, "Unsupported type in GROUP BY"));
+                    return;
+                }
+            }
+        }
+
+        // Add this row to the appropriate group
+        group_map[group_key].push_back(row_idx);
+    }
+
+    // Prepare the output arrays
+    auto output_schema = node.OutputSchema();
+    const int num_groups = group_map.size();
+
+    // Create builders for each output column
+    std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
+    for (int i = 0; i < output_schema.NumColumns(); ++i) {
+        auto type = output_schema.Columns()[i].type;
+        switch (type) {
+            case common::ColumnType::INT32:
+                builders.push_back(std::make_unique<arrow::Int32Builder>());
+                break;
+            case common::ColumnType::INT64:
+                builders.push_back(std::make_unique<arrow::Int64Builder>());
+                break;
+            case common::ColumnType::FLOAT:
+                builders.push_back(std::make_unique<arrow::FloatBuilder>());
+                break;
+            case common::ColumnType::DOUBLE:
+                builders.push_back(std::make_unique<arrow::DoubleBuilder>());
+                break;
+            case common::ColumnType::STRING:
+                builders.push_back(std::make_unique<arrow::StringBuilder>());
+                break;
+            case common::ColumnType::BOOLEAN:
+                builders.push_back(std::make_unique<arrow::BooleanBuilder>());
+                break;
+            default:
+                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                    common::Error(common::ErrorCode::NotImplemented, "Unsupported type in output schema"));
+                return;
+        }
+    }
+
+    // Second pass: Compute the aggregates for each group
+    int output_col_idx = 0;
+
+    // First, add the group by columns to the output
+    for (const auto& group_expr : group_by) {
+        auto col_expr = std::static_pointer_cast<common::ColumnExpression>(group_expr);
+        const std::string& col_name = col_expr->ColumnName();
+
+        // Find column index in the input batch
+        int input_col_idx = -1;
+        auto input_schema = input_batch->schema();
+        for (int i = 0; i < input_schema->num_fields(); ++i) {
+            if (input_schema->field(i)->name() == col_name) {
+                input_col_idx = i;
+                break;
+            }
+        }
+
+        if (input_col_idx == -1) {
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                common::Error(common::ErrorCode::InvalidArgument, "Column not found in input: " + col_name));
+            return;
+        }
+
+        // Get the column array
+        auto input_array = input_batch->column(input_col_idx);
+
+        // For each group, add the group by column value to the output
+        for (const auto& [group_key, row_indices] : group_map) {
+            // Take the first row in the group for the group by columns
+            int row_idx = row_indices[0];
+
+            switch (input_array->type_id()) {
+                case arrow::Type::INT32: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int32Array>(input_array);
+                    auto typed_builder = static_cast<arrow::Int32Builder*>(builders[output_col_idx].get());
+                    if (typed_array->IsNull(row_idx)) {
+                        typed_builder->AppendNull();
+                    } else {
+                        typed_builder->Append(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::INT64: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
+                    auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
+                    if (typed_array->IsNull(row_idx)) {
+                        typed_builder->AppendNull();
+                    } else {
+                        typed_builder->Append(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::FLOAT: {
+                    auto typed_array = std::static_pointer_cast<arrow::FloatArray>(input_array);
+                    auto typed_builder = static_cast<arrow::FloatBuilder*>(builders[output_col_idx].get());
+                    if (typed_array->IsNull(row_idx)) {
+                        typed_builder->AppendNull();
+                    } else {
+                        typed_builder->Append(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::DOUBLE: {
+                    auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(input_array);
+                    auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
+                    if (typed_array->IsNull(row_idx)) {
+                        typed_builder->AppendNull();
+                    } else {
+                        typed_builder->Append(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::STRING: {
+                    auto typed_array = std::static_pointer_cast<arrow::StringArray>(input_array);
+                    auto typed_builder = static_cast<arrow::StringBuilder*>(builders[output_col_idx].get());
+                    if (typed_array->IsNull(row_idx)) {
+                        typed_builder->AppendNull();
+                    } else {
+                        typed_builder->Append(typed_array->GetString(row_idx));
+                    }
+                    break;
+                }
+                case arrow::Type::BOOL: {
+                    auto typed_array = std::static_pointer_cast<arrow::BooleanArray>(input_array);
+                    auto typed_builder = static_cast<arrow::BooleanBuilder*>(builders[output_col_idx].get());
+                    if (typed_array->IsNull(row_idx)) {
+                        typed_builder->AppendNull();
+                    } else {
+                        typed_builder->Append(typed_array->Value(row_idx));
+                    }
+                    break;
+                }
+                default: {
+                    current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                        common::Error(common::ErrorCode::NotImplemented, "Unsupported type in GROUP BY"));
+                    return;
+                }
+            }
+        }
+
+        output_col_idx++;
+    }
+
+    // Now, compute the aggregates
+    for (const auto& agg_expr : aggregates) {
+        if (agg_expr->Type() != common::ExprType::Aggregate) {
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+                common::ErrorCode::NotImplemented, "Only aggregate expressions are supported in aggregates list"));
+            return;
+        }
+
+        auto agg = std::static_pointer_cast<common::AggregateExpression>(agg_expr);
+        auto agg_type = agg->AggType();
+        auto input_expr = agg->Input();
+
+        // For now, only support column references in aggregate input
+        if (input_expr->Type() != common::ExprType::Column && input_expr->Type() != common::ExprType::Star) {
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+                common::ErrorCode::NotImplemented, "Only column references or * are supported in aggregate input"));
+            return;
+        }
+
+        // Special case for COUNT(*)
+        if (agg_type == common::AggregateType::Count && input_expr->Type() == common::ExprType::Star) {
+            auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
+
+            // Count the number of rows in each group
+            for (const auto& [group_key, row_indices] : group_map) {
+                typed_builder->Append(row_indices.size());
+            }
+
+            output_col_idx++;
+            continue;
+        }
+
+        // For other aggregates, we need the column
+        auto col_expr = std::static_pointer_cast<common::ColumnExpression>(input_expr);
+        const std::string& col_name = col_expr->ColumnName();
+
+        // Find column index in the input batch
+        int input_col_idx = -1;
+        auto input_schema = input_batch->schema();
+        for (int i = 0; i < input_schema->num_fields(); ++i) {
+            if (input_schema->field(i)->name() == col_name) {
+                input_col_idx = i;
+                break;
+            }
+        }
+
+        if (input_col_idx == -1) {
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                common::Error(common::ErrorCode::InvalidArgument, "Column not found in input: " + col_name));
+            return;
+        }
+
+        // Get the column array
+        auto input_array = input_batch->column(input_col_idx);
+
+        // Apply the aggregate function to each group
+        for (const auto& [group_key, row_indices] : group_map) {
+            // Compute the aggregate value based on the type
+            switch (agg_type) {
+                case common::AggregateType::Count: {
+                    auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
+
+                    // Count non-null values
+                    int64_t count = 0;
+                    for (int row_idx : row_indices) {
+                        if (!input_array->IsNull(row_idx)) {
+                            count++;
+                        }
+                    }
+
+                    typed_builder->Append(count);
+                    break;
+                }
+                case common::AggregateType::Sum: {
+                    // Handle different numeric types
+                    switch (input_array->type_id()) {
+                        case arrow::Type::INT32: {
+                            auto typed_array = std::static_pointer_cast<arrow::Int32Array>(input_array);
+                            auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
+
+                            int64_t sum = 0;
+                            bool all_null = true;
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    sum += typed_array->Value(row_idx);
+                                    all_null = false;
+                                }
+                            }
+
+                            if (all_null) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(sum);
+                            }
+                            break;
+                        }
+                        case arrow::Type::INT64: {
+                            auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
+                            auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
+
+                            int64_t sum = 0;
+                            bool all_null = true;
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    sum += typed_array->Value(row_idx);
+                                    all_null = false;
+                                }
+                            }
+
+                            if (all_null) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(sum);
+                            }
+                            break;
+                        }
+                        case arrow::Type::FLOAT: {
+                            auto typed_array = std::static_pointer_cast<arrow::FloatArray>(input_array);
+                            auto typed_builder = static_cast<arrow::FloatBuilder*>(builders[output_col_idx].get());
+
+                            float sum = 0.0f;
+                            bool all_null = true;
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    sum += typed_array->Value(row_idx);
+                                    all_null = false;
+                                }
+                            }
+
+                            if (all_null) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(sum);
+                            }
+                            break;
+                        }
+                        case arrow::Type::DOUBLE: {
+                            auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(input_array);
+                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
+
+                            double sum = 0.0;
+                            bool all_null = true;
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    sum += typed_array->Value(row_idx);
+                                    all_null = false;
+                                }
+                            }
+
+                            if (all_null) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(sum);
+                            }
+                            break;
+                        }
+                        default: {
+                            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                                common::Error(common::ErrorCode::NotImplemented, "SUM only supports numeric types"));
+                            return;
+                        }
+                    }
+                    break;
+                }
+                case common::AggregateType::Avg: {
+                    // Handle different numeric types
+                    switch (input_array->type_id()) {
+                        case arrow::Type::INT32: {
+                            auto typed_array = std::static_pointer_cast<arrow::Int32Array>(input_array);
+                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
+
+                            double sum = 0.0;
+                            int count = 0;
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    sum += typed_array->Value(row_idx);
+                                    count++;
+                                }
+                            }
+
+                            if (count == 0) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(sum / count);
+                            }
+                            break;
+                        }
+                        case arrow::Type::INT64: {
+                            auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
+                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
+
+                            double sum = 0.0;
+                            int count = 0;
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    sum += typed_array->Value(row_idx);
+                                    count++;
+                                }
+                            }
+
+                            if (count == 0) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(sum / count);
+                            }
+                            break;
+                        }
+                        case arrow::Type::FLOAT: {
+                            auto typed_array = std::static_pointer_cast<arrow::FloatArray>(input_array);
+                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
+
+                            double sum = 0.0;
+                            int count = 0;
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    sum += typed_array->Value(row_idx);
+                                    count++;
+                                }
+                            }
+
+                            if (count == 0) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(sum / count);
+                            }
+                            break;
+                        }
+                        case arrow::Type::DOUBLE: {
+                            auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(input_array);
+                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
+
+                            double sum = 0.0;
+                            int count = 0;
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    sum += typed_array->Value(row_idx);
+                                    count++;
+                                }
+                            }
+
+                            if (count == 0) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(sum / count);
+                            }
+                            break;
+                        }
+                        default: {
+                            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                                common::Error(common::ErrorCode::NotImplemented, "AVG only supports numeric types"));
+                            return;
+                        }
+                    }
+                    break;
+                }
+                case common::AggregateType::Min: {
+                    // Handle different types
+                    switch (input_array->type_id()) {
+                        case arrow::Type::INT32: {
+                            auto typed_array = std::static_pointer_cast<arrow::Int32Array>(input_array);
+                            auto typed_builder = static_cast<arrow::Int32Builder*>(builders[output_col_idx].get());
+
+                            bool found_value = false;
+                            int32_t min_val = std::numeric_limits<int32_t>::max();
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    min_val = std::min(min_val, typed_array->Value(row_idx));
+                                    found_value = true;
+                                }
+                            }
+
+                            if (!found_value) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(min_val);
+                            }
+                            break;
+                        }
+                        case arrow::Type::INT64: {
+                            auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
+                            auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
+
+                            bool found_value = false;
+                            int64_t min_val = std::numeric_limits<int64_t>::max();
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    min_val = std::min(min_val, typed_array->Value(row_idx));
+                                    found_value = true;
+                                }
+                            }
+
+                            if (!found_value) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(min_val);
+                            }
+                            break;
+                        }
+                        case arrow::Type::FLOAT: {
+                            auto typed_array = std::static_pointer_cast<arrow::FloatArray>(input_array);
+                            auto typed_builder = static_cast<arrow::FloatBuilder*>(builders[output_col_idx].get());
+
+                            bool found_value = false;
+                            float min_val = std::numeric_limits<float>::max();
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    min_val = std::min(min_val, typed_array->Value(row_idx));
+                                    found_value = true;
+                                }
+                            }
+
+                            if (!found_value) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(min_val);
+                            }
+                            break;
+                        }
+                        case arrow::Type::DOUBLE: {
+                            auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(input_array);
+                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
+
+                            bool found_value = false;
+                            double min_val = std::numeric_limits<double>::max();
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    min_val = std::min(min_val, typed_array->Value(row_idx));
+                                    found_value = true;
+                                }
+                            }
+
+                            if (!found_value) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(min_val);
+                            }
+                            break;
+                        }
+                        case arrow::Type::STRING: {
+                            auto typed_array = std::static_pointer_cast<arrow::StringArray>(input_array);
+                            auto typed_builder = static_cast<arrow::StringBuilder*>(builders[output_col_idx].get());
+
+                            bool found_value = false;
+                            std::string min_val;
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    std::string current = typed_array->GetString(row_idx);
+                                    if (!found_value || current < min_val) {
+                                        min_val = current;
+                                        found_value = true;
+                                    }
+                                }
+                            }
+
+                            if (!found_value) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(min_val);
+                            }
+                            break;
+                        }
+                        default: {
+                            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                                common::Error(common::ErrorCode::NotImplemented, "Unsupported type for MIN"));
+                            return;
+                        }
+                    }
+                    break;
+                }
+                case common::AggregateType::Max: {
+                    // Handle different types
+                    switch (input_array->type_id()) {
+                        case arrow::Type::INT32: {
+                            auto typed_array = std::static_pointer_cast<arrow::Int32Array>(input_array);
+                            auto typed_builder = static_cast<arrow::Int32Builder*>(builders[output_col_idx].get());
+
+                            bool found_value = false;
+                            int32_t max_val = std::numeric_limits<int32_t>::min();
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    max_val = std::max(max_val, typed_array->Value(row_idx));
+                                    found_value = true;
+                                }
+                            }
+
+                            if (!found_value) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(max_val);
+                            }
+                            break;
+                        }
+                        case arrow::Type::INT64: {
+                            auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
+                            auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
+
+                            bool found_value = false;
+                            int64_t max_val = std::numeric_limits<int64_t>::min();
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    max_val = std::max(max_val, typed_array->Value(row_idx));
+                                    found_value = true;
+                                }
+                            }
+
+                            if (!found_value) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(max_val);
+                            }
+                            break;
+                        }
+                        case arrow::Type::FLOAT: {
+                            auto typed_array = std::static_pointer_cast<arrow::FloatArray>(input_array);
+                            auto typed_builder = static_cast<arrow::FloatBuilder*>(builders[output_col_idx].get());
+
+                            bool found_value = false;
+                            float max_val = std::numeric_limits<float>::lowest();
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    max_val = std::max(max_val, typed_array->Value(row_idx));
+                                    found_value = true;
+                                }
+                            }
+
+                            if (!found_value) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(max_val);
+                            }
+                            break;
+                        }
+                        case arrow::Type::DOUBLE: {
+                            auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(input_array);
+                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
+
+                            bool found_value = false;
+                            double max_val = std::numeric_limits<double>::lowest();
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    max_val = std::max(max_val, typed_array->Value(row_idx));
+                                    found_value = true;
+                                }
+                            }
+
+                            if (!found_value) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(max_val);
+                            }
+                            break;
+                        }
+                        case arrow::Type::STRING: {
+                            auto typed_array = std::static_pointer_cast<arrow::StringArray>(input_array);
+                            auto typed_builder = static_cast<arrow::StringBuilder*>(builders[output_col_idx].get());
+
+                            bool found_value = false;
+                            std::string max_val;
+
+                            for (int row_idx : row_indices) {
+                                if (!typed_array->IsNull(row_idx)) {
+                                    std::string current = typed_array->GetString(row_idx);
+                                    if (!found_value || current > max_val) {
+                                        max_val = current;
+                                        found_value = true;
+                                    }
+                                }
+                            }
+
+                            if (!found_value) {
+                                typed_builder->AppendNull();
+                            } else {
+                                typed_builder->Append(max_val);
+                            }
+                            break;
+                        }
+                        default: {
+                            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                                common::Error(common::ErrorCode::NotImplemented, "Unsupported type for MAX"));
+                            return;
+                        }
+                    }
+                    break;
+                }
+                default: {
+                    current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                        common::Error(common::ErrorCode::NotImplemented, "Unsupported aggregate function"));
+                    return;
+                }
+            }
+        }
+
+        output_col_idx++;
+    }
+
+    // Finalize the arrays and create the record batch
+    std::vector<std::shared_ptr<arrow::Array>> output_arrays;
+    for (auto& builder : builders) {
+        std::shared_ptr<arrow::Array> array;
+        auto status = builder->Finish(&array);
+        if (!status.ok()) {
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                common::Error(common::ErrorCode::Failure, "Failed to finalize array: " + status.ToString()));
+            return;
+        }
+        output_arrays.push_back(array);
+    }
+
+    // Create arrow schema from output schema
+    auto arrow_schema_result = format::SchemaConverter::ToArrowSchema(output_schema);
+    if (!arrow_schema_result.ok()) {
+        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(arrow_schema_result.error());
+        return;
+    }
+    auto arrow_schema = arrow_schema_result.value();
+
+    // Create the output batch
+    current_batch_ = arrow::RecordBatch::Make(arrow_schema, num_groups, output_arrays);
+    current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
 }
 
 void MaterializedExecutor::Visit(PhysicalSortNode& node) {

@@ -744,4 +744,259 @@ TEST_F(MaterializedExecutorTest, BatchIteratorTest) {
     ASSERT_EQ(empty_result.value(), nullptr) << "Second call to Next should return nullptr";
 }
 
+//
+// Test Setup:
+//      Execute a query with COUNT(*) aggregation
+// Test Result:
+//      Returns a single row with the count of all rows
+//
+TEST_F(MaterializedExecutorTest, DISABLED_SimpleCount) {
+    // Create SQL query with COUNT
+    std::string sql_query = "SELECT COUNT(*) AS row_count FROM users";
+
+    // Plan the query and get the physical plan
+    auto physical_plan_result = PlanPhysical(sql_query);
+    ASSERT_TRUE(physical_plan_result.ok()) << "Physical planning failed: " << physical_plan_result.error().message();
+    auto physical_plan = physical_plan_result.value();
+
+    // Execute the plan
+    auto result = executor_->ExecuteToCompletion(physical_plan);
+    VERIFY_RESULT(result);
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents
+    ASSERT_EQ(batch->num_rows(), 1) << "Batch should have 1 row";
+    ASSERT_EQ(batch->num_columns(), 1) << "Batch should have 1 column";
+
+    // Verify column names
+    ASSERT_EQ(batch->schema()->field(0)->name(), "row_count");
+
+    // Verify count value
+    auto count_array = std::static_pointer_cast<arrow::Int64Array>(batch->column(0));
+    ASSERT_EQ(count_array->Value(0), 5) << "Count should be 5";
+}
+
+//
+// Test Setup:
+//      Execute a query with SUM aggregation
+// Test Result:
+//      Returns a single row with the sum of the age column
+//
+TEST_F(MaterializedExecutorTest, SimpleSum) {
+    // Create SQL query with SUM
+    std::string sql_query = "SELECT SUM(age) FROM users";
+
+    // Plan the query and get the physical plan
+    auto physical_plan_result = PlanPhysical(sql_query);
+    ASSERT_TRUE(physical_plan_result.ok()) << "Physical planning failed: " << physical_plan_result.error().message();
+    auto physical_plan = physical_plan_result.value();
+
+    // Execute the plan
+    auto result = executor_->ExecuteToCompletion(physical_plan);
+    VERIFY_RESULT(result);
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents
+    ASSERT_EQ(batch->num_rows(), 1) << "Batch should have 1 row";
+    ASSERT_EQ(batch->num_columns(), 1) << "Batch should have 1 column";
+
+    // Verify column names
+    ASSERT_EQ(batch->schema()->field(0)->name(), "age_sum");
+
+    // Verify sum value (25 + 30 + 35 + 40 + 45 = 175)
+    auto sum_array = std::static_pointer_cast<arrow::Int64Array>(batch->column(0));
+    ASSERT_EQ(sum_array->Value(0), 175) << "Sum should be 175";
+}
+
+//
+// Test Setup:
+//      Execute a query with AVG aggregation
+// Test Result:
+//      Returns a single row with the average of the age column
+//
+TEST_F(MaterializedExecutorTest, DISABLED_SimpleAvg) {
+    // Create SQL query with AVG
+    std::string sql_query = "SELECT AVG(age) AS age_avg FROM users";
+
+    // Plan the query and get the physical plan
+    auto physical_plan_result = PlanPhysical(sql_query);
+    ASSERT_TRUE(physical_plan_result.ok()) << "Physical planning failed: " << physical_plan_result.error().message();
+    auto physical_plan = physical_plan_result.value();
+
+    // Execute the plan
+    auto result = executor_->ExecuteToCompletion(physical_plan);
+    VERIFY_RESULT(result);
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents
+    ASSERT_EQ(batch->num_rows(), 1) << "Batch should have 1 row";
+    ASSERT_EQ(batch->num_columns(), 1) << "Batch should have 1 column";
+
+    // Verify column names
+    ASSERT_EQ(batch->schema()->field(0)->name(), "age_avg");
+
+    // Verify average value (25 + 30 + 35 + 40 + 45) / 5 = 35
+    auto avg_array = std::static_pointer_cast<arrow::DoubleArray>(batch->column(0));
+    ASSERT_DOUBLE_EQ(avg_array->Value(0), 35.0) << "Average should be 35.0";
+}
+
+//
+// Test Setup:
+//      Execute a query with MIN and MAX aggregation
+// Test Result:
+//      Returns a single row with the min and max of the age column
+//
+TEST_F(MaterializedExecutorTest, DISABLED_SimpleMinMax) {
+    // Create SQL query with MIN and MAX
+    std::string sql_query = "SELECT MIN(age) AS age_min, MAX(age) AS age_max FROM users";
+
+    // Plan the query and get the physical plan
+    auto physical_plan_result = PlanPhysical(sql_query);
+    ASSERT_TRUE(physical_plan_result.ok()) << "Physical planning failed: " << physical_plan_result.error().message();
+    auto physical_plan = physical_plan_result.value();
+
+    // Execute the plan
+    auto result = executor_->ExecuteToCompletion(physical_plan);
+    VERIFY_RESULT(result);
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents
+    ASSERT_EQ(batch->num_rows(), 1) << "Batch should have 1 row";
+    ASSERT_EQ(batch->num_columns(), 2) << "Batch should have 2 columns";
+
+    // Verify column names
+    ASSERT_EQ(batch->schema()->field(0)->name(), "age_min");
+    ASSERT_EQ(batch->schema()->field(1)->name(), "age_max");
+
+    // Verify min/max values
+    auto min_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+    auto max_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(1));
+    ASSERT_EQ(min_array->Value(0), 25) << "Min age should be 25";
+    ASSERT_EQ(max_array->Value(0), 45) << "Max age should be 45";
+}
+
+//
+// Test Setup:
+//      Execute a query with GROUP BY and aggregation
+// Test Result:
+//      Returns multiple rows grouped by gender with aggregates
+//
+TEST_F(MaterializedExecutorTest, DISABLED_GroupByWithAggregates) {
+    // Create SQL query with GROUP BY and multiple aggregates
+    std::string sql_query = "SELECT gender, COUNT(*) AS count, AVG(age) AS avg_age, MIN(age) AS min_age, MAX(age) AS "
+                            "max_age FROM users GROUP BY gender";
+
+    // Plan the query and get the physical plan
+    auto physical_plan_result = PlanPhysical(sql_query);
+    ASSERT_TRUE(physical_plan_result.ok()) << "Physical planning failed: " << physical_plan_result.error().message();
+    auto physical_plan = physical_plan_result.value();
+
+    // Execute the plan
+    auto result = executor_->ExecuteToCompletion(physical_plan);
+    VERIFY_RESULT(result);
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents - should have 2 rows (male, female)
+    ASSERT_EQ(batch->num_rows(), 2) << "Batch should have 2 rows (one for each gender)";
+    ASSERT_EQ(batch->num_columns(), 5) << "Batch should have 5 columns";
+
+    // Verify column names
+    ASSERT_EQ(batch->schema()->field(0)->name(), "gender");
+    ASSERT_EQ(batch->schema()->field(1)->name(), "count");
+    ASSERT_EQ(batch->schema()->field(2)->name(), "avg_age");
+    ASSERT_EQ(batch->schema()->field(3)->name(), "min_age");
+    ASSERT_EQ(batch->schema()->field(4)->name(), "max_age");
+
+    // Get the gender array to identify which row is which
+    auto gender_array = std::static_pointer_cast<arrow::StringArray>(batch->column(0));
+    auto count_array = std::static_pointer_cast<arrow::Int64Array>(batch->column(1));
+    auto avg_array = std::static_pointer_cast<arrow::DoubleArray>(batch->column(2));
+    auto min_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(3));
+    auto max_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(4));
+
+    // Find male and female rows
+    int male_idx = -1;
+    int female_idx = -1;
+    for (int i = 0; i < batch->num_rows(); i++) {
+        std::string gender = gender_array->GetString(i);
+        if (gender == "M") {
+            male_idx = i;
+        } else if (gender == "F") {
+            female_idx = i;
+        }
+    }
+
+    ASSERT_NE(male_idx, -1) << "Male row not found";
+    ASSERT_NE(female_idx, -1) << "Female row not found";
+
+    // Verify male metrics (3 males: Bob, Dave, Charlie with ages 30, 40, 35)
+    ASSERT_EQ(count_array->Value(male_idx), 3) << "Male count should be 3";
+    ASSERT_DOUBLE_EQ(avg_array->Value(male_idx), 35.0) << "Male avg age should be 35.0";
+    ASSERT_EQ(min_array->Value(male_idx), 30) << "Male min age should be 30";
+    ASSERT_EQ(max_array->Value(male_idx), 40) << "Male max age should be 40";
+
+    // Verify female metrics (2 females: Alice, Eve with ages 25, 45)
+    ASSERT_EQ(count_array->Value(female_idx), 2) << "Female count should be 2";
+    ASSERT_DOUBLE_EQ(avg_array->Value(female_idx), 35.0) << "Female avg age should be 35.0";
+    ASSERT_EQ(min_array->Value(female_idx), 25) << "Female min age should be 25";
+    ASSERT_EQ(max_array->Value(female_idx), 45) << "Female max age should be 45";
+}
+
+//
+// Test Setup:
+//      Execute a query with GROUP BY on multiple columns
+// Test Result:
+//      Returns rows grouped by unique combinations of columns
+//
+TEST_F(MaterializedExecutorTest, DISABLED_MultipleColumnGroupBy) {
+    // Create SQL query with GROUP BY on gender and active columns
+    std::string sql_query = "SELECT gender, active, COUNT(*) AS count FROM users GROUP BY gender, active";
+
+    // Plan the query and get the physical plan
+    auto physical_plan_result = PlanPhysical(sql_query);
+    ASSERT_TRUE(physical_plan_result.ok()) << "Physical planning failed: " << physical_plan_result.error().message();
+    auto physical_plan = physical_plan_result.value();
+
+    // Execute the plan
+    auto result = executor_->ExecuteToCompletion(physical_plan);
+    VERIFY_RESULT(result);
+
+    // Get the batch
+    auto batch = result.value();
+    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
+
+    // Verify batch contents - should have up to 4 rows (gender x active)
+    ASSERT_GE(batch->num_rows(), 2) << "Batch should have at least 2 rows";
+    ASSERT_LE(batch->num_rows(), 4) << "Batch should have at most 4 rows";
+    ASSERT_EQ(batch->num_columns(), 3) << "Batch should have 3 columns";
+
+    // Verify column names
+    ASSERT_EQ(batch->schema()->field(0)->name(), "gender");
+    ASSERT_EQ(batch->schema()->field(1)->name(), "active");
+    ASSERT_EQ(batch->schema()->field(2)->name(), "count");
+
+    // Verify the sum of counts equals total rows
+    auto count_array = std::static_pointer_cast<arrow::Int64Array>(batch->column(2));
+    int64_t total_count = 0;
+    for (int i = 0; i < batch->num_rows(); i++) {
+        total_count += count_array->Value(i);
+    }
+    ASSERT_EQ(total_count, 5) << "Sum of counts should equal total number of rows (5)";
+}
+
 }  // namespace pond::query

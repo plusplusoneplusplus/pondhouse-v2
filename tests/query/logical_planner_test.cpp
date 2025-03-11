@@ -113,8 +113,7 @@ TEST_F(LogicalPlannerTest, ComplexPredicate) {
 TEST_F(LogicalPlannerTest, InvalidTable) {
     const std::string query = "SELECT * FROM nonexistent_table;";
     auto plan_result = PlanLogical(query, false);
-    EXPECT_FALSE(plan_result.ok()) << "Planning should fail for nonexistent table";
-    EXPECT_EQ(ErrorCode::TableNotFoundInCatalog, plan_result.error().code()) << "Should have table not found error";
+    VERIFY_ERROR_CODE(plan_result, ErrorCode::TableNotFoundInCatalog);
 }
 
 //
@@ -126,8 +125,7 @@ TEST_F(LogicalPlannerTest, InvalidTable) {
 TEST_F(LogicalPlannerTest, InvalidColumn) {
     const std::string query = "SELECT nonexistent_column FROM users;";
     auto plan_result = PlanLogical(query, false);
-    EXPECT_FALSE(plan_result.ok()) << "Planning should fail for nonexistent column";
-    EXPECT_EQ(ErrorCode::SchemaFieldNotFound, plan_result.error().code()) << "Should have column not found error";
+    VERIFY_ERROR_CODE(plan_result, ErrorCode::SchemaFieldNotFound);
 }
 
 //
@@ -477,6 +475,32 @@ TEST_F(LogicalPlannerTest, Aggregate) {
     auto scan = agg_node->Children()[0]->as<LogicalScanNode>();
     EXPECT_EQ(LogicalNodeType::Scan, scan->Type()) << "Leaf should be scan";
     EXPECT_EQ("users", scan->TableName()) << "Should scan users table";
+}
+
+TEST_F(LogicalPlannerTest, AggregateWithoutGroupBy) {
+    const std::string query = "SELECT COUNT(*) FROM users;";
+    auto plan_result = PlanLogical(query, false);
+    VERIFY_RESULT(plan_result);
+
+    auto root = plan_result.value();
+    EXPECT_EQ(LogicalNodeType::Projection, root->Type()) << "Root should be projection";
+
+    auto projection = root->as<LogicalProjectionNode>();
+    EXPECT_EQ(1, projection->GetExpressions().size()) << "Should have one projection expression";
+
+    auto agg = projection->Children()[0];
+    EXPECT_EQ(LogicalNodeType::Aggregate, agg->Type()) << "Child should be aggregate";
+
+    auto agg_node = agg->as<LogicalAggregateNode>();
+    EXPECT_EQ(0, agg_node->GetGroupBy().size()) << "Should have no group by expressions";
+    EXPECT_EQ(1, agg_node->GetAggregates().size()) << "Should have one aggregate expression";
+
+    auto agg_expr = agg_node->GetAggregates()[0]->as<AggregateExpression>();
+    EXPECT_EQ(AggregateType::Count, agg_expr->AggType()) << "Should be COUNT aggregate";
+
+    auto scan = agg_node->Children()[0];
+    EXPECT_EQ(LogicalNodeType::Scan, scan->Type()) << "Leaf should be scan";
+    EXPECT_EQ("users", scan->as<LogicalScanNode>()->TableName()) << "Should scan users table";
 }
 
 //
