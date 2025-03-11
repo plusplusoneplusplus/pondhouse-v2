@@ -388,9 +388,9 @@ TEST_F(MaterializedExecutorTest, MultiFileQueryWithFilter) {
     SetupMultipleFiles(3, 5);
 
     // Add a filter: id > 7 (should return the last 7 rows)
-    auto id_column = common::MakeColumn("", "id");
+    auto id_column = common::MakeColumnExpression("", "id");
     auto constant = common::MakeIntegerConstant(7);
-    auto predicate = common::MakeComparison(common::BinaryOpType::Greater, id_column, constant);
+    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, id_column, constant);
 
     auto schema = GetSchema("multi_users");
 
@@ -429,8 +429,8 @@ TEST_F(MaterializedExecutorTest, ProjectionTest) {
     auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *schema);
 
     // Add a projection to select only id and name columns
-    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("users", "id"),
-                                                                    common::MakeColumn("users", "name")};
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumnExpression("users", "id"),
+                                                                    common::MakeColumnExpression("users", "name")};
 
     // Create a schema for the projection
     auto proj_schema = std::make_shared<common::Schema>(
@@ -481,7 +481,7 @@ TEST_F(MaterializedExecutorTest, ProjectionSingleColumnTest) {
     auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *schema);
 
     // Add a projection to select only the age column
-    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("", "age")};
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumnExpression("", "age")};
 
     // Create a schema for the projection
     auto proj_schema =
@@ -528,17 +528,17 @@ TEST_F(MaterializedExecutorTest, ProjectionAfterFilterTest) {
     auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *schema);
 
     // Add a filter: age > 30
-    auto age_column = common::MakeColumn("users", "age");
+    auto age_column = common::MakeColumnExpression("users", "age");
     auto constant = common::MakeIntegerConstant(30);
-    auto predicate = common::MakeComparison(common::BinaryOpType::Greater, age_column, constant);
+    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, age_column, constant);
 
     // Create a filter node
     auto filter_node = std::make_shared<PhysicalFilterNode>(predicate, scan_node->OutputSchema());
     filter_node->AddChild(scan_node);
 
     // Add a projection to select id and name columns
-    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("users", "id"),
-                                                                    common::MakeColumn("users", "name")};
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumnExpression("users", "id"),
+                                                                    common::MakeColumnExpression("users", "name")};
 
     // Create a schema for the projection
     auto proj_schema = std::make_shared<common::Schema>(
@@ -590,8 +590,8 @@ TEST_F(MaterializedExecutorTest, MultiFileQueryWithProjection) {
     auto scan_node = std::make_shared<PhysicalSequentialScanNode>("multi_users", *schema);
 
     // Add a projection to select only id and name columns
-    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("", "id"),
-                                                                    common::MakeColumn("", "name")};
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumnExpression("", "id"),
+                                                                    common::MakeColumnExpression("", "name")};
 
     // Create a schema for the projection
     auto proj_schema = std::make_shared<common::Schema>(
@@ -646,8 +646,8 @@ TEST_F(MaterializedExecutorTest, ProjectionInvalidColumnTest) {
     auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *schema);
 
     // Add a projection with a non-existent column
-    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("", "id"),
-                                                                    common::MakeColumn("", "non_existent_column")};
+    std::vector<std::shared_ptr<common::Expression>> projections = {
+        common::MakeColumnExpression("", "id"), common::MakeColumnExpression("", "non_existent_column")};
 
     // Create a schema for the projection (with a non-existent column)
     auto proj_schema = std::make_shared<common::Schema>(std::vector<common::ColumnSchema>{

@@ -146,9 +146,9 @@ TEST_F(OperatorIteratorsTest, MockOperatorIterator) {
 //
 TEST_F(OperatorIteratorsTest, FilterIterator) {
     // Create a predicate (age > 25)
-    auto age_column = common::MakeColumn("", "age");
+    auto age_column = common::MakeColumnExpression("", "age");
     auto twenty_five = common::MakeIntegerConstant(25);
-    auto predicate = common::MakeComparison(common::BinaryOpType::Greater, age_column, twenty_five);
+    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, age_column, twenty_five);
 
     // Create a mock iterator as the child
     auto mock_iterator = NewMockIterator();
@@ -198,8 +198,8 @@ TEST_F(OperatorIteratorsTest, FilterIterator) {
 //
 TEST_F(OperatorIteratorsTest, ProjectionIterator) {
     // Create projections for only id and name
-    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("", "id"),
-                                                                    common::MakeColumn("", "name")};
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumnExpression("", "id"),
+                                                                    common::MakeColumnExpression("", "name")};
 
     // Create output schema for the projection
     auto projection_schema = common::CreateSchemaBuilder()
@@ -453,15 +453,15 @@ TEST_F(OperatorIteratorsTest, ChainedIterators) {
         data_accessor_, "chain_test", std::shared_ptr<common::Expression>(), std::vector<std::string>{}, *schema);
 
     // Step 2: Create a filter iterator (age >= 30)
-    auto age_column = common::MakeColumn("", "age");
+    auto age_column = common::MakeColumnExpression("", "age");
     auto thirty = common::MakeIntegerConstant(30);
-    auto predicate = common::MakeComparison(common::BinaryOpType::GreaterEqual, age_column, thirty);
+    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::GreaterEqual, age_column, thirty);
 
     auto filter_iterator = std::make_unique<FilterIterator>(std::move(scan_iterator), predicate, *schema);
 
     // Step 3: Create a projection iterator (id and name only)
-    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("", "id"),
-                                                                    common::MakeColumn("", "name")};
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumnExpression("", "id"),
+                                                                    common::MakeColumnExpression("", "name")};
 
     auto projection_schema = common::CreateSchemaBuilder()
                                  .AddField("id", common::ColumnType::INT32)

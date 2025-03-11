@@ -82,9 +82,9 @@ TEST_F(ArrowUtilTest, ApplyPredicateEmptyBatch) {
     auto batch = batch_result.value();
 
     // Create a simple predicate (int32_col > 5)
-    auto col_expr = common::MakeColumn("", "int32_col");
+    auto col_expr = common::MakeColumnExpression("", "int32_col");
     auto const_expr = common::MakeIntegerConstant(5);
-    auto predicate = common::MakeComparison(common::BinaryOpType::Greater, col_expr, const_expr);
+    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, col_expr, const_expr);
 
     // Apply predicate
     auto result = ArrowUtil::ApplyPredicate(batch, predicate);
@@ -114,9 +114,9 @@ TEST_F(ArrowUtilTest, ApplyPredicateInvalidColumn) {
     auto batch = batch_result.value();
 
     // Create predicate with non-existent column
-    auto col_expr = common::MakeColumn("", "non_existent_col");
+    auto col_expr = common::MakeColumnExpression("", "non_existent_col");
     auto const_expr = common::MakeIntegerConstant(5);
-    auto predicate = common::MakeComparison(common::BinaryOpType::Greater, col_expr, const_expr);
+    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, col_expr, const_expr);
 
     // Apply predicate
     auto result = ArrowUtil::ApplyPredicate(batch, predicate);
@@ -130,7 +130,7 @@ TEST_F(ArrowUtilTest, ApplyPredicateUnsupportedExpression) {
     auto batch = batch_result.value();
 
     // Create an unsupported expression type (e.g., a star expression)
-    auto star_expr = common::MakeStar();
+    auto star_expr = common::MakeStarExpression();
 
     // Apply predicate
     auto result = ArrowUtil::ApplyPredicate(batch, star_expr);

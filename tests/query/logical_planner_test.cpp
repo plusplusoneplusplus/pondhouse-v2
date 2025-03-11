@@ -510,6 +510,81 @@ TEST_F(LogicalPlannerTest, AggregateWithoutGroupBy) {
 
 //
 // Test Setup:
+//      Create SELECT queries with aggregate functions using AS keyword
+// Test Result:
+//      Verify the logical plan structure preserves the aliases
+//
+TEST_F(LogicalPlannerTest, AggregateWithAlias) {
+    // Test simple COUNT(*) with alias
+    {
+        const std::string query = "SELECT COUNT(*) AS total_count FROM users;";
+        auto plan_result = PlanLogical(query, false);
+        VERIFY_RESULT(plan_result);
+
+        auto root = plan_result.value();
+        EXPECT_EQ(LogicalNodeType::Projection, root->Type()) << "Root should be projection";
+
+        auto projection = root->as<LogicalProjectionNode>();
+        EXPECT_EQ(1, projection->GetExpressions().size()) << "Should have one projection expression";
+
+        auto agg_expr = projection->GetExpressions()[0]->as<AggregateExpression>();
+        EXPECT_EQ(AggregateType::Count, agg_expr->AggType()) << "Should be COUNT aggregate";
+        EXPECT_EQ("total_count", agg_expr->ResultName()) << "Alias should be preserved";
+    }
+
+    // Test multiple aggregates with aliases
+    {
+        const std::string query = "SELECT COUNT(*) AS total_users, "
+                                  "AVG(age) AS avg_user_age, "
+                                  "MAX(salary) AS highest_salary "
+                                  "FROM users;";
+        auto plan_result = PlanLogical(query, false);
+        VERIFY_RESULT(plan_result);
+
+        auto root = plan_result.value();
+        auto projection = root->as<LogicalProjectionNode>();
+        EXPECT_EQ(3, projection->GetExpressions().size()) << "Should have three projection expressions";
+
+        {
+            auto count_expr = projection->GetExpressions()[0]->as<AggregateExpression>();
+            EXPECT_EQ(AggregateType::Count, count_expr->AggType()) << "First should be COUNT";
+            EXPECT_EQ("total_users", count_expr->ResultName()) << "COUNT alias should be preserved";
+
+            auto avg_expr = projection->GetExpressions()[1]->as<AggregateExpression>();
+            EXPECT_EQ(AggregateType::Avg, avg_expr->AggType()) << "Second should be AVG";
+            EXPECT_EQ("avg_user_age", avg_expr->ResultName()) << "AVG alias should be preserved";
+
+            auto max_expr = projection->GetExpressions()[2]->as<AggregateExpression>();
+            EXPECT_EQ(AggregateType::Max, max_expr->AggType()) << "Third should be MAX";
+            EXPECT_EQ("highest_salary", max_expr->ResultName()) << "MAX alias should be preserved";
+        }
+    }
+
+    // Test mix of aliased and non-aliased aggregates
+    {
+        const std::string query = "SELECT COUNT(*) AS total_count, AVG(age), MAX(salary) AS max_salary FROM users;";
+        auto plan_result = PlanLogical(query, false);
+        VERIFY_RESULT(plan_result);
+
+        auto root = plan_result.value();
+        auto projection = root->as<LogicalProjectionNode>();
+        EXPECT_EQ(3, projection->GetExpressions().size()) << "Should have three projection expressions";
+
+        {
+            auto count_expr = projection->GetExpressions()[0]->as<AggregateExpression>();
+            EXPECT_EQ("total_count", count_expr->ResultName()) << "COUNT alias should be preserved";
+
+            auto avg_expr = projection->GetExpressions()[1]->as<AggregateExpression>();
+            EXPECT_EQ("avg_age", avg_expr->ResultName()) << "AVG should have default name";
+
+            auto max_expr = projection->GetExpressions()[2]->as<AggregateExpression>();
+            EXPECT_EQ("max_salary", max_expr->ResultName()) << "MAX alias should be preserved";
+        }
+    }
+}
+
+//
+// Test Setup:
 //      Create a SELECT query with ORDER BY
 // Test Result:
 //      Verify the logical plan structure for sorting

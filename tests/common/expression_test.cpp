@@ -317,4 +317,69 @@ TEST_F(ExpressionTest, TestExpressionTypeValidation) {
     EXPECT_EQ(count_str->ResultType(), ColumnType::UINT64);
 }
 
+//
+// Test Setup:
+//      Create aggregate expressions with and without aliases
+// Test Result:
+//      Verify result name generation and alias setting
+//
+TEST_F(ExpressionTest, AggregateExpressionAlias) {
+    // Test default name generation for COUNT(*)
+    {
+        auto count_expr = std::make_shared<AggregateExpression>(AggregateType::Count, nullptr);
+        EXPECT_EQ("count", count_expr->ResultName()) << "COUNT(*) should have default name 'count'";
+    }
+
+    // Test default name generation for column aggregates
+    {
+        auto col_expr = std::make_shared<ColumnExpression>("", "age");
+        auto avg_expr = std::make_shared<AggregateExpression>(AggregateType::Avg, col_expr);
+        EXPECT_EQ("avg_age", avg_expr->ResultName()) << "AVG(age) should have default name 'avg_age'";
+
+        auto sum_expr = std::make_shared<AggregateExpression>(AggregateType::Sum, col_expr);
+        EXPECT_EQ("sum_age", sum_expr->ResultName()) << "SUM(age) should have default name 'sum_age'";
+
+        auto min_expr = std::make_shared<AggregateExpression>(AggregateType::Min, col_expr);
+        EXPECT_EQ("min_age", min_expr->ResultName()) << "MIN(age) should have default name 'min_age'";
+
+        auto max_expr = std::make_shared<AggregateExpression>(AggregateType::Max, col_expr);
+        EXPECT_EQ("max_age", max_expr->ResultName()) << "MAX(age) should have default name 'max_age'";
+    }
+
+    // Test setting custom aliases
+    {
+        auto count_expr = std::make_shared<AggregateExpression>(AggregateType::Count, nullptr);
+        count_expr->SetResultName("total_count");
+        EXPECT_EQ("total_count", count_expr->ResultName()) << "Custom alias should override default name";
+
+        auto col_expr = std::make_shared<ColumnExpression>("", "salary");
+        auto avg_expr = std::make_shared<AggregateExpression>(AggregateType::Avg, col_expr);
+        avg_expr->SetResultName("average_salary");
+        EXPECT_EQ("average_salary", avg_expr->ResultName()) << "Custom alias should override default name";
+    }
+
+    // Test default name generation with complex expressions
+    {
+        auto col_expr = std::make_shared<ColumnExpression>("users", "age");
+        auto avg_expr = std::make_shared<AggregateExpression>(AggregateType::Avg, col_expr);
+        EXPECT_EQ("avg_age", avg_expr->ResultName()) << "Should use column name without table prefix";
+
+        auto star_expr = std::make_shared<StarExpression>();
+        auto count_star = std::make_shared<AggregateExpression>(AggregateType::Count, star_expr);
+        EXPECT_EQ("count", count_star->ResultName()) << "COUNT(*) should have simple name";
+    }
+
+    // Test ToString() with aliases
+    {
+        auto col_expr = std::make_shared<ColumnExpression>("", "age");
+        auto avg_expr = std::make_shared<AggregateExpression>(AggregateType::Avg, col_expr);
+        avg_expr->SetResultName("custom_name");
+        EXPECT_EQ("AVG(age)", avg_expr->ToString()) << "ToString() should not include alias";
+
+        auto count_expr = std::make_shared<AggregateExpression>(AggregateType::Count, nullptr);
+        count_expr->SetResultName("total");
+        EXPECT_EQ("COUNT(*)", count_expr->ToString()) << "ToString() should not include alias for COUNT(*)";
+    }
+}
+
 }  // namespace pond::common

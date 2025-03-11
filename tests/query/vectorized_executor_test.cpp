@@ -148,9 +148,9 @@ TEST_F(VectorizedExecutorTest, ScanWithFilterIterator) {
     IngestTestData(3, 50);  // 3 files, 50 rows each
 
     // Add a filter (age > 50)
-    auto age_column = common::MakeColumn("", "age");
+    auto age_column = common::MakeColumnExpression("", "age");
     auto fifty = common::MakeIntegerConstant(50);
-    auto predicate = common::MakeComparison(common::BinaryOpType::Greater, age_column, fifty);
+    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, age_column, fifty);
 
     // Create a scan node
     auto scan_node = CreateScanPlan(predicate);
@@ -200,8 +200,8 @@ TEST_F(VectorizedExecutorTest, ScanWithProjectionIterator) {
     IngestTestData(1, 5);
 
     // Add projections for only id and name
-    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("", "id"),
-                                                                    common::MakeColumn("", "name")};
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumnExpression("", "id"),
+                                                                    common::MakeColumnExpression("", "name")};
 
     // Create projection node with scan as child
     auto projection_schema = common::CreateSchemaBuilder()
@@ -253,16 +253,16 @@ TEST_F(VectorizedExecutorTest, ComplexQuery) {
     auto scan_node = CreateScanPlan();
 
     // Add a filter (age > 50)
-    auto age_column = common::MakeColumn("", "age");
+    auto age_column = common::MakeColumnExpression("", "age");
     auto fifty = common::MakeIntegerConstant(50);
-    auto predicate = common::MakeComparison(common::BinaryOpType::Greater, age_column, fifty);
+    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, age_column, fifty);
 
     auto filter_node = std::make_shared<PhysicalFilterNode>(predicate, *GetSchema("users"));
     filter_node->AddChild(scan_node);
 
     // Add projections for id and name
-    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumn("", "id"),
-                                                                    common::MakeColumn("", "name")};
+    std::vector<std::shared_ptr<common::Expression>> projections = {common::MakeColumnExpression("", "id"),
+                                                                    common::MakeColumnExpression("", "name")};
 
     // Create projection node with filter as child
     auto projection_schema = common::CreateSchemaBuilder()

@@ -416,8 +416,15 @@ Result<std::shared_ptr<Expression>> LogicalPlanner::BuildExpression(const hsql::
             // Special case for COUNT(*)
             if (expr->exprList && expr->exprList->size() == 1 && (*expr->exprList)[0]->type == hsql::kExprStar) {
                 if (std::string(expr->name) == "COUNT") {
-                    return Result<std::shared_ptr<Expression>>::success(std::make_shared<AggregateExpression>(
-                        AggregateType::Count, std::make_shared<StarExpression>()));
+                    auto agg_expr =
+                        std::make_shared<AggregateExpression>(AggregateType::Count, std::make_shared<StarExpression>());
+
+                    // Check for an alias and set it if present
+                    if (expr->alias != nullptr) {
+                        agg_expr->SetResultName(expr->alias);
+                    }
+
+                    return Result<std::shared_ptr<Expression>>::success(agg_expr);
                 }
 
                 // TODO: handle other aggregate functions
@@ -453,8 +460,14 @@ Result<std::shared_ptr<Expression>> LogicalPlanner::BuildExpression(const hsql::
                     ErrorCode::NotImplemented, std::string("Aggregate function not supported: ") + func_name);
             }
 
-            return Result<std::shared_ptr<Expression>>::success(
-                std::make_shared<AggregateExpression>(agg_type, input_result.value()));
+            auto agg_expr = std::make_shared<AggregateExpression>(agg_type, input_result.value());
+
+            // Check for an alias and set it if present
+            if (expr->alias != nullptr) {
+                agg_expr->SetResultName(expr->alias);
+            }
+
+            return Result<std::shared_ptr<Expression>>::success(agg_expr);
         }
 
         case hsql::kExprStar:

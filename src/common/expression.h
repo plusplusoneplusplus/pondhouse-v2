@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <sstream>
 #include <string>
 
 #include "common/column_type.h"
@@ -178,85 +179,97 @@ using BinaryExpressionPtr = std::shared_ptr<BinaryExpression>;
  */
 class AggregateExpression : public Expression {
 public:
-    AggregateExpression(AggregateType agg_type, ExpressionPtr input)
-        : Expression(ExprType::Aggregate), agg_type_(agg_type), input_(std::move(input)) {}
-
-    AggregateType AggType() const { return agg_type_; }
-    const ExpressionPtr& Input() const { return input_; }
+    AggregateExpression(AggregateType agg_type, std::shared_ptr<Expression> input)
+        : Expression(ExprType::Aggregate), agg_type_(agg_type), input_(std::move(input)) {
+        // Generate default result name if not overridden later
+        result_name_ = AggFunctionToString(agg_type_);
+        if (input_) {
+            if (input_->Type() == ExprType::Column) {
+                auto col = std::static_pointer_cast<ColumnExpression>(input_);
+                result_name_ += "_" + col->ColumnName();
+            } else if (input_->Type() == ExprType::Constant || input_->Type() == ExprType::Star) {
+                // pass
+            } else {
+                result_name_ += "_" + input_->ToString();
+            }
+        }
+    }
 
     std::string ToString() const override {
-        std::string agg_str;
-        switch (agg_type_) {
-            case AggregateType::Count:
-                agg_str = "COUNT";
-                break;
-            case AggregateType::Sum:
-                agg_str = "SUM";
-                break;
-            case AggregateType::Avg:
-                agg_str = "AVG";
-                break;
-            case AggregateType::Min:
-                agg_str = "MIN";
-                break;
-            case AggregateType::Max:
-                agg_str = "MAX";
-                break;
-        }
-        return agg_str + "(" + input_->ToString() + ")";
-    }
-
-    common::ColumnType ResultType() const {
-        switch (agg_type_) {
-            case AggregateType::Count:
-                return common::ColumnType::UINT64;
-            case AggregateType::Sum:
-                return common::ColumnType::DOUBLE;
-            case AggregateType::Avg:
-                return common::ColumnType::DOUBLE;
-            case AggregateType::Min:
-            case AggregateType::Max:
-                return common::ColumnType::INT64;
-            default:
-                return common::ColumnType::INVALID;
-        }
-    }
-
-    std::string AggName() const {
-        std::string agg_str;
-        switch (agg_type_) {
-            case AggregateType::Count:
-                agg_str = "count";
-                break;
-            case AggregateType::Sum:
-                agg_str = "sum";
-                break;
-            case AggregateType::Avg:
-                agg_str = "avg";
-                break;
-            case AggregateType::Min:
-                agg_str = "min";
-                break;
-            case AggregateType::Max:
-                agg_str = "max";
-                break;
-        }
-        return agg_str;
-    }
-
-    std::string ResultName() const {
-        if (input_->Type() == ExprType::Column) {
-            return AggName() + "_" + input_->ToString();
-        } else if (input_->Type() == ExprType::Constant || input_->Type() == ExprType::Star) {
-            return AggName();
+        std::ostringstream oss;
+        oss << AggFunctionToString(agg_type_, true /* uppercase */) << "(";
+        if (input_) {
+            oss << input_->ToString();
         } else {
-            return AggName() + "_" + input_->ToString();
+            oss << "*";
+        }
+        oss << ")";
+        return oss.str();
+    }
+
+    // Getters
+    AggregateType AggType() const { return agg_type_; }
+    std::shared_ptr<Expression> Input() const { return input_; }
+    bool HasInput() const { return input_ != nullptr; }
+
+    // Return the result name (either default generated or custom alias)
+    std::string ResultName() const { return result_name_; }
+
+    // Set a custom result name (alias)
+    void SetResultName(const std::string& alias) { result_name_ = alias; }
+
+    // Return the data type of the aggregate result
+    ColumnType ResultType() const {
+        switch (agg_type_) {
+            case AggregateType::Count:
+                return ColumnType::UINT64;
+            case AggregateType::Sum:
+                // Sum type depends on input type
+                if (input_ && input_->Type() == ExprType::Column) {
+                    auto col = std::static_pointer_cast<ColumnExpression>(input_);
+                    // For now, assume sum of integers yields int64, floats yield double
+                    // This is simplistic and should be improved
+                    // TODO: properly infer result type based on input type
+                    return ColumnType::DOUBLE;
+                }
+                return ColumnType::DOUBLE;
+            case AggregateType::Avg:
+                return ColumnType::DOUBLE;
+            case AggregateType::Min:
+            case AggregateType::Max:
+                // Min/Max have same type as input
+                if (input_ && input_->Type() == ExprType::Column) {
+                    // TODO: properly infer type
+                    return ColumnType::INT64;
+                }
+                return ColumnType::INT64;
+            default:
+                // Default to double for unknown aggregates
+                return ColumnType::INVALID;
         }
     }
 
 private:
     AggregateType agg_type_;
-    ExpressionPtr input_;
+    std::shared_ptr<Expression> input_;
+    std::string result_name_;  // Either generated or custom alias
+
+    static std::string AggFunctionToString(AggregateType type, bool uppercase = false) {
+        switch (type) {
+            case AggregateType::Count:
+                return uppercase ? "COUNT" : "count";
+            case AggregateType::Sum:
+                return uppercase ? "SUM" : "sum";
+            case AggregateType::Avg:
+                return uppercase ? "AVG" : "avg";
+            case AggregateType::Min:
+                return uppercase ? "MIN" : "min";
+            case AggregateType::Max:
+                return uppercase ? "MAX" : "max";
+            default:
+                return uppercase ? "UNKNOWN" : "unknown";
+        }
+    }
 };
 
 using AggregateExpressionPtr = std::shared_ptr<AggregateExpression>;
@@ -274,23 +287,23 @@ public:
 using StarExpressionPtr = std::shared_ptr<StarExpression>;
 
 // Convenience functions for creating expressions
-inline BinaryExpressionPtr MakeAnd(ExpressionPtr left, ExpressionPtr right) {
+inline BinaryExpressionPtr MakeAndExpression(ExpressionPtr left, ExpressionPtr right) {
     return std::make_shared<BinaryExpression>(BinaryOpType::And, std::move(left), std::move(right));
 }
 
-inline BinaryExpressionPtr MakeOr(ExpressionPtr left, ExpressionPtr right) {
+inline BinaryExpressionPtr MakeOrExpression(ExpressionPtr left, ExpressionPtr right) {
     return std::make_shared<BinaryExpression>(BinaryOpType::Or, std::move(left), std::move(right));
 }
 
-inline BinaryExpressionPtr MakeComparison(BinaryOpType op, ExpressionPtr left, ExpressionPtr right) {
+inline BinaryExpressionPtr MakeComparisonExpression(BinaryOpType op, ExpressionPtr left, ExpressionPtr right) {
     return std::make_shared<BinaryExpression>(op, std::move(left), std::move(right));
 }
 
-inline ColumnExpressionPtr MakeColumn(const std::string& table_name, const std::string& column_name) {
+inline ColumnExpressionPtr MakeColumnExpression(const std::string& table_name, const std::string& column_name) {
     return std::make_shared<ColumnExpression>(table_name, column_name);
 }
 
-inline StarExpressionPtr MakeStar() {
+inline StarExpressionPtr MakeStarExpression() {
     return std::make_shared<StarExpression>();
 }
 
