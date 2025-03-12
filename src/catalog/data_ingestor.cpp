@@ -233,13 +233,10 @@ common::Result<bool> DataIngestor::Commit() {
 
 common::Result<std::string> DataIngestor::GenerateDataFilePath(
     const std::unordered_map<std::string, std::string>& partition_values) {
+    using ReturnType = common::Result<std::string>;
+
     // Start with the base path from metadata
     std::string base_path = current_metadata_.location;
-
-    // If base path doesn't start with /, add it
-    if (!base_path.empty() && base_path[0] != '/') {
-        base_path = "/" + base_path;
-    }
 
     // Ensure base path ends with /
     if (!base_path.empty() && base_path.back() != '/') {
@@ -255,6 +252,10 @@ common::Result<std::string> DataIngestor::GenerateDataFilePath(
     // Generate unique file name using snapshot ID and pending files count
     std::string file_name = "part_" + std::to_string(current_metadata_.current_snapshot_id) + "_"
                             + std::to_string(pending_files_.size()) + ".parquet";
+
+    // Create the directory for the table
+    auto create_result = fs_->CreateDirectory(base_path + partition_path);
+    RETURN_IF_ERROR_T(ReturnType, create_result);
 
     // Combine all parts
     return common::Result<std::string>::success(base_path + partition_path + "/" + file_name);

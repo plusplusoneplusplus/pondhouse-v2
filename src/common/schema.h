@@ -114,7 +114,9 @@ public:
     }
 
     bool operator==(const Schema& other) const {
-        return column_indices_ == other.column_indices_ && columns_ == other.columns_;
+        // Only compare the columns vector since column_indices_ is just an optimization structure
+        // that might have different internal ordering for identical schemas
+        return columns_ == other.columns_;
     }
 
     Schema() = default;

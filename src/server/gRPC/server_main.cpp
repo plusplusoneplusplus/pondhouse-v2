@@ -12,6 +12,8 @@
 int main(int argc, char** argv) {
     // Initialize logging
     pond::common::Logger::instance().init("server.log");
+    pond::common::Logger::instance().setLogLevel(pond::common::LogLevel::Verbose);
+    LOG_STATUS("Starting Pond gRPC server");
 
     // Parse command line arguments
     std::string server_address = "0.0.0.0:50051";

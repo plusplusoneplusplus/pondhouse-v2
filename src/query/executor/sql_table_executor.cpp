@@ -58,7 +58,8 @@ Result<catalog::TableMetadata> SQLTableExecutor::ExecuteCreateTable(
     auto partition_spec = CreateDefaultPartitionSpec();
 
     // Create the table in the catalog
-    auto create_result = catalog_->CreateTable(table_name, schema, partition_spec, location, properties);
+    // create under the location if provided, otherwise use the table name
+    auto create_result = catalog_->CreateTable(table_name, schema, partition_spec, location.empty() ? table_name : location, properties);
     RETURN_IF_ERROR_T(ReturnType, create_result);
 
     LOG_STATUS("Created table '%s' with %zu columns", table_name.c_str(), schema->NumColumns());

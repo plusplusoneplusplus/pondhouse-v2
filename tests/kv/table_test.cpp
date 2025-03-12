@@ -778,4 +778,52 @@ TEST_F(TableTest, PrefixScanWithRecords) {
     // }
 }
 
+TEST_F(TableTest, SchemaMismatchPut) {
+    // Create a new schema with different column types
+    std::vector<ColumnSchema> mismatched_columns = {
+        {"id", ColumnType::STRING},      // Different type (STRING instead of INT32)
+        {"name", ColumnType::INT32},     // Different type (INT32 instead of STRING)
+        {"value", ColumnType::BINARY}    // Same type
+    };
+    auto mismatched_schema = std::make_shared<Schema>(std::move(mismatched_columns));
+
+    // Create a record with the mismatched schema
+    auto record = std::make_unique<Record>(mismatched_schema);
+    record->Set(0, std::string("1"));           // String instead of int
+    record->Set(1, 42);                         // Int instead of string
+    record->Set(2, DataChunk::FromString("value1"));
+
+    // Attempt to put the record with mismatched schema
+    auto result = table_->Put("key1", std::move(record));
+    
+    // Verify that the operation fails with schema mismatch error
+    VERIFY_ERROR_CODE(result, ErrorCode::SchemaMismatch);
+
+    // Create another schema with different number of columns
+    std::vector<ColumnSchema> different_columns = {
+        {"id", ColumnType::INT32},
+        {"name", ColumnType::STRING}
+        // Missing 'value' column
+    };
+    auto different_schema = std::make_shared<Schema>(std::move(different_columns));
+
+    // Create a record with different number of columns
+    auto record2 = std::make_unique<Record>(different_schema);
+    record2->Set(0, 1);
+    record2->Set(1, std::string("test"));
+
+    // Attempt to put the record with different number of columns
+    result = table_->Put("key2", std::move(record2));
+    
+    // Verify that the operation fails with schema mismatch error
+    VERIFY_ERROR_CODE(result, ErrorCode::SchemaMismatch);
+
+    // Verify that no records were actually inserted
+    auto get_result = table_->Get("key1");
+    EXPECT_FALSE(get_result.ok());
+    
+    get_result = table_->Get("key2");
+    EXPECT_FALSE(get_result.ok());
+}
+
 }  // namespace pond::kv

@@ -98,6 +98,14 @@
                                 <input type="hidden" name="order" value="{{ order }}">
                                 <div class="mb-3">
                                     <label for="json-data-textarea" class="form-label">JSON Data (array of objects)</label>
+                                    <div class="d-flex gap-2 mb-2">
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#generateDataModal">
+                                            <i class="bi bi-database-fill-gear"></i> Generate Sample Data
+                                        </button>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="formatJsonData()">
+                                            <i class="bi bi-code"></i> Format JSON
+                                        </button>
+                                    </div>
                                     <textarea class="form-control font-monospace" id="json-data-textarea" name="json_data" rows="10" placeholder='[
   {"column1": "value1", "column2": 123},
   {"column1": "value2", "column2": 456}
@@ -274,5 +282,123 @@
 {% else %}
 <div class="alert alert-info">No data files found.</div>
 {% endif %}
+
+<!-- Generate Sample Data Modal -->
+<div class="modal fade" id="generateDataModal" tabindex="-1" aria-labelledby="generateDataModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="generateDataModalLabel">Generate Sample Data</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="numRowsInput" class="form-label">Number of rows to generate</label>
+                    <input type="number" class="form-control" id="numRowsInput" value="10" min="1" max="1000">
+                </div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="realDataCheck" checked>
+                    <label class="form-check-label" for="realDataCheck">
+                        Generate realistic data (names, dates, etc.)
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="generateSampleData()">Generate</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function formatJsonData() {
+        const textarea = document.getElementById('json-data-textarea');
+        try {
+            const json = JSON.parse(textarea.value);
+            textarea.value = JSON.stringify(json, null, 2);
+        } catch (e) {
+            alert('Invalid JSON: ' + e.message);
+        }
+    }
+
+    function generateSampleData() {
+        const numRows = parseInt(document.getElementById('numRowsInput').value);
+        const useRealisticData = document.getElementById('realDataCheck').checked;
+        
+        if (isNaN(numRows) || numRows < 1) {
+            alert('Please enter a valid number of rows');
+            return;
+        }
+        
+        // Get the schema from the page
+        const columns = [];
+        {% for column in metadata.columns %}
+        columns.push({
+            name: "{{ column.name }}",
+            type: "{{ column.type }}"
+        });
+        {% endfor %}
+        
+        // Generate the sample data
+        const sampleData = [];
+        
+        for (let i = 0; i < numRows; i++) {
+            const row = {};
+            
+            columns.forEach(column => {
+                // Generate appropriate value based on column type
+                if (column.type.includes('INT')) {
+                    row[column.name] = Math.floor(Math.random() * 1000) + 1;
+                } 
+                else if (column.type.includes('FLOAT') || column.type.includes('DOUBLE')) {
+                    row[column.name] = parseFloat((Math.random() * 100).toFixed(2));
+                } 
+                else if (column.type.includes('BOOL')) {
+                    row[column.name] = Math.random() > 0.5;
+                }
+                else if (column.type.includes('STRING')) {
+                    const columnName = column.name.toLowerCase();
+                    
+                    if (useRealisticData) {
+                        // Generate values based on column name hints
+                        if (columnName.includes('name')) {
+                            const names = ['John Smith', 'Jane Doe', 'Alice Johnson', 'Bob Brown', 'Charlie Davis'];
+                            row[column.name] = names[Math.floor(Math.random() * names.length)];
+                        }
+                        else if (columnName.includes('email')) {
+                            const id = Math.floor(Math.random() * 900) + 100;
+                            row[column.name] = `user${id}@example.com`;
+                        }
+                        else if (columnName.includes('date')) {
+                            const year = Math.floor(Math.random() * 4) + 2020;
+                            const month = String(Math.floor(Math.random() * 12) + 1).padStart(2, '0');
+                            const day = String(Math.floor(Math.random() * 28) + 1).padStart(2, '0');
+                            row[column.name] = `${year}-${month}-${day}`;
+                        }
+                        else {
+                            row[column.name] = `Value ${i + 1}`;
+                        }
+                    } else {
+                        row[column.name] = `Value ${i + 1}`;
+                    }
+                }
+                else {
+                    row[column.name] = `Unsupported type: ${column.type}`;
+                }
+            });
+            
+            sampleData.push(row);
+        }
+        
+        // Update the textarea with the generated data
+        const textarea = document.getElementById('json-data-textarea');
+        textarea.value = JSON.stringify(sampleData, null, 2);
+        
+        // Close the modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('generateDataModal'));
+        modal.hide();
+    }
+</script>
 {% endif %}
 {% endblock %} 

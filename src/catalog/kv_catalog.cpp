@@ -111,6 +111,7 @@ common::Result<void> KVCatalog::PutTableMetadata(bool create_if_not_exists,
         LOG_STATUS("Created table '%s' in catalog.", name.c_str());
     } else {
         auto put_result = tables_table_->Put(name, std::move(record));
+
         RETURN_IF_ERROR_T(common::Result<void>, put_result);
 
         LOG_STATUS("Updated table '%s' in catalog.", name.c_str());
