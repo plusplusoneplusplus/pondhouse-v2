@@ -82,6 +82,11 @@ public:
                                  const pond::proto::ReadParquetFileRequest* request,
                                  grpc::ServerWriter<pond::proto::ReadParquetFileResponse>* writer) override;
 
+    // Update partition specification for a table
+    grpc::Status UpdatePartitionSpec(grpc::ServerContext* context,
+                                    const pond::proto::UpdatePartitionSpecRequest* request,
+                                    pond::proto::UpdatePartitionSpecResponse* response) override;
+
 protected:
     // Helper method to get the default table
     common::Result<std::shared_ptr<pond::kv::Table>> GetDefaultTable();

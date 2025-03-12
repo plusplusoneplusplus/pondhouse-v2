@@ -9,20 +9,138 @@
     <div class="col-md-12">
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">Create Table with SQL</h5>
+                <ul class="nav nav-tabs card-header-tabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="sql-tab" data-bs-toggle="tab" data-bs-target="#sql-pane" type="button" role="tab" aria-controls="sql-pane" aria-selected="true">SQL</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="ui-tab" data-bs-toggle="tab" data-bs-target="#ui-pane" type="button" role="tab" aria-controls="ui-pane" aria-selected="false">UI</button>
+                    </li>
+                </ul>
             </div>
             <div class="card-body">
-                <form action="/catalog/execute-sql" method="post" class="mb-3">
-                    <div class="mb-3">
-                        <label for="sql_query" class="form-label">SQL Query (CREATE TABLE only)</label>
-                        <textarea class="form-control" id="sql_query" name="sql_query" rows="5" 
-                            placeholder="CREATE TABLE example (id INT, name VARCHAR(100))" required></textarea>
-                        <div class="form-text text-muted">
-                            Example: CREATE TABLE users (id INT, name VARCHAR(100) NOT NULL, email VARCHAR(1000));
-                        </div>
+                <div class="tab-content">
+                    <!-- SQL Tab -->
+                    <div class="tab-pane fade show active" id="sql-pane" role="tabpanel" aria-labelledby="sql-tab">
+                        <h5 class="mb-3">Create Table with SQL</h5>
+                        <form action="/catalog/execute-sql" method="post" class="mb-3">
+                            <div class="mb-3">
+                                <label for="sql_query" class="form-label">SQL Query (CREATE TABLE only)</label>
+                                <textarea class="form-control" id="sql_query" name="sql_query" rows="5" 
+                                    placeholder="CREATE TABLE example (id INT, name VARCHAR(100))" required></textarea>
+                                <div class="form-text text-muted">
+                                    Example: CREATE TABLE users (id INT, name VARCHAR(100) NOT NULL, email VARCHAR(1000));
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Create Table</button>
+                        </form>
                     </div>
-                    <button type="submit" class="btn btn-primary">Create Table</button>
-                </form>
+
+                    <!-- UI Tab -->
+                    <div class="tab-pane fade" id="ui-pane" role="tabpanel" aria-labelledby="ui-tab">
+                        <h5 class="mb-3">Create Table with UI</h5>
+                        <form action="/catalog/create-table" method="post" id="ui-create-table-form">
+                            <!-- Table Name and Location -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="table_name" class="form-label">Table Name</label>
+                                    <input type="text" class="form-control" id="table_name" name="table_name" required
+                                           pattern="[a-zA-Z][a-zA-Z0-9_]*"
+                                           title="Table name must start with a letter and contain only letters, numbers, and underscores">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="location" class="form-label">Location (Optional)</label>
+                                    <input type="text" class="form-control" id="location" name="location">
+                                </div>
+                            </div>
+
+                            <!-- Columns -->
+                            <div class="mb-3">
+                                <label class="form-label">Columns</label>
+                                <div id="columns-container">
+                                    <!-- Column template will be cloned here -->
+                                </div>
+                                <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="add-column-btn">
+                                    <i class="bi bi-plus"></i> Add Column
+                                </button>
+                            </div>
+
+                            <!-- Partitioning -->
+                            <div class="mb-3">
+                                <label class="form-label">Partitioning</label>
+                                <div id="partition-fields-container">
+                                    <!-- Partition fields will be added here -->
+                                </div>
+                                <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="add-partition-btn">
+                                    <i class="bi bi-plus"></i> Add Partition Field
+                                </button>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary">Create Table</button>
+                        </form>
+
+                        <!-- Column Template (hidden) -->
+                        <template id="column-template">
+                            <div class="row mb-2 column-row">
+                                <div class="col-md-4">
+                                    <input type="text" class="form-control" name="column_names[]" placeholder="Column Name" required>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select" name="column_types[]" required>
+                                        <option value="INT32">INT32</option>
+                                        <option value="INT64">INT64</option>
+                                        <option value="FLOAT">FLOAT</option>
+                                        <option value="DOUBLE">DOUBLE</option>
+                                        <option value="STRING">STRING</option>
+                                        <option value="BOOL">BOOL</option>
+                                        <option value="BINARY">BINARY</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="column_nullables[]" value="1" checked>
+                                        <label class="form-check-label">Nullable</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-2">
+                                    <button type="button" class="btn btn-outline-danger btn-sm remove-column-btn">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- Partition Field Template (hidden) -->
+                        <template id="partition-field-template">
+                            <div class="row mb-2 partition-field-row">
+                                <div class="col-md-4">
+                                    <select class="form-select partition-column-select" name="partition_columns[]" required>
+                                        <option value="">Select Column</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <select class="form-select" name="partition_transforms[]" required>
+                                        <option value="IDENTITY">IDENTITY</option>
+                                        <option value="YEAR">YEAR</option>
+                                        <option value="MONTH">MONTH</option>
+                                        <option value="DAY">DAY</option>
+                                        <option value="HOUR">HOUR</option>
+                                        <option value="BUCKET">BUCKET</option>
+                                        <option value="TRUNCATE">TRUNCATE</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <input type="number" class="form-control transform-param" name="transform_params[]" placeholder="Param" disabled>
+                                </div>
+                                <div class="col-md-2">
+                                    <button type="button" class="btn btn-outline-danger btn-sm remove-partition-btn">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -66,7 +184,7 @@
                 </div>
                 {% else %}
                 <div class="alert alert-info">
-                    No tables found. Use the SQL editor above to create a table.
+                    No tables found. Use the form above to create a table.
                 </div>
                 {% endif %}
             </div>
@@ -77,10 +195,119 @@
 
 {% block scripts %}
 <script>
-    // Add SQL syntax highlighting if desired
-    document.addEventListener('DOMContentLoaded', function() {
-        const textarea = document.getElementById('sql_query');
-        // Optionally implement SQL syntax highlighting here
+document.addEventListener('DOMContentLoaded', function() {
+    const columnsContainer = document.getElementById('columns-container');
+    const partitionFieldsContainer = document.getElementById('partition-fields-container');
+    const columnTemplate = document.getElementById('column-template');
+    const partitionFieldTemplate = document.getElementById('partition-field-template');
+    const addColumnBtn = document.getElementById('add-column-btn');
+    const addPartitionBtn = document.getElementById('add-partition-btn');
+
+    // Add initial column
+    if (columnsContainer.children.length === 0) {
+        addColumn();
+    }
+
+    // Add Column button click handler
+    addColumnBtn.addEventListener('click', addColumn);
+
+    // Add Partition Field button click handler
+    addPartitionBtn.addEventListener('click', addPartitionField);
+
+    // Remove buttons click handler
+    document.addEventListener('click', function(e) {
+        if (e.target.closest('.remove-column-btn')) {
+            const row = e.target.closest('.column-row');
+            if (columnsContainer.children.length > 1) {
+                row.remove();
+                updatePartitionColumnSelects();
+            }
+        }
+        if (e.target.closest('.remove-partition-btn')) {
+            const row = e.target.closest('.partition-field-row');
+            row.remove();
+        }
     });
+
+    // Transform type change handler
+    document.addEventListener('change', function(e) {
+        if (e.target.matches('select[name="partition_transforms[]"]')) {
+            const row = e.target.closest('.partition-field-row');
+            const paramInput = row.querySelector('.transform-param');
+            paramInput.disabled = !['BUCKET', 'TRUNCATE'].includes(e.target.value);
+            paramInput.required = !paramInput.disabled;
+        }
+    });
+
+    // Column name change handler
+    document.addEventListener('change', function(e) {
+        if (e.target.matches('input[name="column_names[]"]')) {
+            updatePartitionColumnSelects();
+        }
+    });
+
+    function addColumn() {
+        const clone = columnTemplate.content.cloneNode(true);
+        columnsContainer.appendChild(clone);
+        updatePartitionColumnSelects();
+    }
+
+    function addPartitionField() {
+        const clone = partitionFieldTemplate.content.cloneNode(true);
+        partitionFieldsContainer.appendChild(clone);
+        updatePartitionColumnSelects();
+    }
+
+    function updatePartitionColumnSelects() {
+        // Get all column names
+        const columnNames = Array.from(document.getElementsByName('column_names[]'))
+            .map(input => input.value)
+            .filter(name => name.trim() !== '');
+
+        // Update all partition column selects
+        const selects = document.getElementsByClassName('partition-column-select');
+        Array.from(selects).forEach(select => {
+            const currentValue = select.value;
+            select.innerHTML = '<option value="">Select Column</option>';
+            columnNames.forEach(name => {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = name;
+                option.selected = name === currentValue;
+                select.appendChild(option);
+            });
+        });
+    }
+
+    // Form submission handler
+    document.getElementById('ui-create-table-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        // Validate that partition columns are unique
+        const partitionColumns = Array.from(document.getElementsByName('partition_columns[]'))
+            .map(select => select.value)
+            .filter(value => value !== '');
+        
+        if (new Set(partitionColumns).size !== partitionColumns.length) {
+            alert('Each column can only be used once for partitioning');
+            return;
+        }
+
+        // Validate transform parameters
+        const transforms = document.getElementsByName('partition_transforms[]');
+        const params = document.getElementsByName('transform_params[]');
+        for (let i = 0; i < transforms.length; i++) {
+            if (['BUCKET', 'TRUNCATE'].includes(transforms[i].value)) {
+                if (!params[i].value || parseInt(params[i].value) <= 0) {
+                    alert('Please provide a positive number for BUCKET/TRUNCATE transform parameter');
+                    return;
+                }
+            }
+        }
+
+        // Submit the form
+        this.submit();
+    });
+});
 </script>
 {% endblock %} 

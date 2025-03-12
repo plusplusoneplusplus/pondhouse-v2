@@ -696,4 +696,56 @@ grpc::Status PondServiceImpl::ReadParquetFile(grpc::ServerContext* context,
     }
 }
 
+grpc::Status PondServiceImpl::UpdatePartitionSpec(grpc::ServerContext* context,
+                                                  const pond::proto::UpdatePartitionSpecRequest* request,
+                                                  pond::proto::UpdatePartitionSpecResponse* response) {
+    LOG_STATUS("Received UpdatePartitionSpec request for table: %s", request->table_name().c_str());
+
+    try {
+        // Convert protobuf partition spec to catalog partition spec
+        catalog::PartitionSpec spec;
+        spec.spec_id = 0;  // New spec gets ID 0
+
+
+        for (const auto& pb_field : request->partition_spec().fields()) {
+            std::string transform = pb_field.transform();
+            std::transform(transform.begin(), transform.end(), transform.begin(), ::tolower);
+
+            catalog::PartitionField field(
+                pb_field.source_id(),
+                pb_field.field_id(),
+                pb_field.name(),
+                catalog::TransformFromString(transform)
+            );
+            
+            // Only set transform_param if it's not empty
+            if (!pb_field.transform_param().empty()) {
+                // Convert string parameter to integer if needed
+                try {
+                    field.transform_param = std::stoi(pb_field.transform_param());
+                } catch (const std::exception& e) {
+                    LOG_WARNING("Failed to convert transform parameter to integer: %s", e.what());
+                }
+            }
+            
+            spec.fields.push_back(std::move(field));
+        }
+
+        // Update the partition spec in the catalog
+        auto result = catalog_->UpdatePartitionSpec(request->table_name(), spec);
+
+        if (result.ok()) {
+            response->set_success(true);
+        } else {
+            response->set_success(false);
+            response->set_error(result.error().message());
+        }
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error(std::string("Error updating partition spec: ") + e.what());
+    }
+
+    return grpc::Status::OK;
+}
+
 }  // namespace pond::server

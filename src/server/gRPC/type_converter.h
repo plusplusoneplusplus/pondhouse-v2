@@ -29,11 +29,26 @@ public:
             }
         }
 
-        // Set partition columns
+        // Set partition columns and spec
         if (!table_metadata.partition_specs.empty()) {
-            const auto& partition_spec = table_metadata.partition_specs.front();
+            const auto& partition_spec = table_metadata.partition_specs.back();  // Use the latest spec
+            
+            // Add partition columns
             for (const auto& field : partition_spec.fields) {
                 pb_metadata.add_partition_columns(field.name);
+            }
+
+            // Set partition spec
+            auto* pb_spec = pb_metadata.mutable_partition_spec();
+            for (const auto& field : partition_spec.fields) {
+                auto* pb_field = pb_spec->add_fields();
+                pb_field->set_source_id(field.source_id);
+                pb_field->set_field_id(field.field_id);
+                pb_field->set_name(field.name);
+                pb_field->set_transform(pond::catalog::TransformToString(field.transform));
+                if (field.transform_param) {
+                    pb_field->set_transform_param(std::to_string(*field.transform_param));
+                }
             }
         }
 

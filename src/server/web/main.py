@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 import grpc
@@ -65,6 +65,7 @@ class TableMetadata:
     properties: Dict[str, str]
     last_updated_time: int
     data_files: List[DataFile] = field(default_factory=list)
+    partition_spec: List[Dict[str, any]] = field(default_factory=list)
     error: Optional[str] = None
 
 def normalize_path(path: str) -> str:
@@ -272,6 +273,18 @@ class PondClient:
                     for file in meta.data_files
                 ]
                 
+                partition_spec = []
+                for field in meta.partition_spec.fields:
+                    spec = {
+                        "source_id": field.source_id,
+                        "field_id": field.field_id,
+                        "name": field.name,
+                        "transform": field.transform
+                    }
+                    if field.transform_param:
+                        spec["transform_param"] = field.transform_param
+                    partition_spec.append(spec)
+                
                 return TableMetadata(
                     name=meta.name,
                     location=meta.location,
@@ -279,7 +292,8 @@ class PondClient:
                     partition_columns=list(meta.partition_columns),
                     properties=dict(meta.properties),
                     last_updated_time=meta.last_updated_time,
-                    data_files=data_files
+                    data_files=data_files,
+                    partition_spec=partition_spec
                 )
             else:
                 return TableMetadata(
@@ -290,6 +304,7 @@ class PondClient:
                     properties={},
                     last_updated_time=0,
                     data_files=[],
+                    partition_spec=[],
                     error=response.error
                 )
         except Exception as e:
@@ -301,6 +316,7 @@ class PondClient:
                 properties={},
                 last_updated_time=0,
                 data_files=[],
+                partition_spec=[],
                 error=str(e)
             )
 
@@ -417,6 +433,48 @@ class PondClient:
             return rows, total_rows, None
         except Exception as e:
             return [], 0, str(e)
+
+    def update_partition_spec(self, table_name: str, partition_spec: List[Dict[str, any]]) -> tuple[bool, Optional[str]]:
+        """
+        Update the partition specification for a table.
+        
+        Args:
+            table_name: Name of the table
+            partition_spec: List of partition field specifications, each containing:
+                - source_id: Column index in the schema
+                - field_id: Unique ID for the partition field
+                - name: Column name
+                - transform: Transform type (e.g., 'identity', 'year', 'month', etc.)
+                - transform_param: Optional parameter for transforms like 'bucket' or 'truncate'
+                
+        Returns:
+            Tuple of (success, error)
+        """
+        try:
+            # Convert partition spec to protobuf format
+            pb_fields = []
+            for field in partition_spec:
+                pb_field = pb2.PartitionField(
+                    source_id=field["source_id"],
+                    field_id=field["field_id"],
+                    name=field["name"],
+                    transform=field["transform"]
+                )
+                if "transform_param" in field:
+                    pb_field.transform_param = str(field["transform_param"])
+                pb_fields.append(pb_field)
+            
+            request = pb2.UpdatePartitionSpecRequest(
+                table_name=table_name,
+                partition_spec=pb2.PartitionSpec(fields=pb_fields)
+            )
+            response = self.stub.UpdatePartitionSpec(request)
+            
+            if response.success:
+                return True, None
+            return False, response.error
+        except Exception as e:
+            return False, str(e)
 
 # Create a global client instance
 pond_client = PondClient(GRPC_HOST, GRPC_PORT)
@@ -674,29 +732,100 @@ async def catalog_home(request: Request):
     )
 
 @app.post("/catalog/execute-sql", response_class=HTMLResponse)
-async def execute_sql(request: Request, sql_query: str = Form(...)):
-    success, message, error = pond_client.execute_sql(sql_query)
+async def execute_sql(request: Request):
+    form = await request.form()
+    sql_query = form.get("sql_query", "")
     
-    # Get the updated list of tables
-    tables, list_error = pond_client.list_tables()
+    try:
+        await pond_client.execute_sql(sql_query)
+        return RedirectResponse(url="/catalog", status_code=303)
+    except Exception as e:
+        tables = await pond_client.list_tables()
+        return templates.TemplateResponse(
+            "catalog.html",
+            {"request": request, "tables": tables, "result": f"Error: {str(e)}"}
+        )
+
+@app.post("/catalog/create-table")
+async def create_table(request: Request):
+    form = await request.form()
+    table_name = form.get("table_name", "")
+    location = form.get("location", "")
     
-    result = None
-    if error:
-        result = f"Error executing SQL: {error}"
-    elif message:
-        result = message
-    else:
-        result = "SQL executed successfully"
+    # Get column information
+    column_names = form.getlist("column_names[]")
+    column_types = form.getlist("column_types[]")
+    column_nullables = form.getlist("column_nullables[]")
     
-    return templates.TemplateResponse(
-        "catalog.html",
-        {
-            "request": request,
-            "tables": tables,
-            "result": result,
-            "active_page": "catalog"
-        }
-    )
+    # Get partition information
+    partition_columns = form.getlist("partition_columns[]")
+    partition_transforms = form.getlist("partition_transforms[]")
+    transform_params = form.getlist("transform_params[]")
+    
+    try:
+        # Build schema
+        schema = []
+        for i, name in enumerate(column_names):
+            schema.append({
+                "name": name,
+                "type": column_types[i],
+                "nullable": str(i) in column_nullables or f"{i}" in column_nullables or "1" in column_nullables
+            })
+        
+        # Build partition spec
+        partition_spec = []
+        for i, col in enumerate(partition_columns):
+            if not col:  # Skip empty selections
+                continue
+                
+            # Find the source_id (index) of the column in the schema
+            source_id = next(
+                (idx for idx, s in enumerate(schema) if s["name"] == col),
+                None
+            )
+            if source_id is None:
+                raise ValueError(f"Partition column {col} not found in schema")
+                
+            transform = partition_transforms[i]
+            field = {
+                "source_id": source_id,
+                "field_id": i,  # Use index as field_id
+                "name": col,
+                "transform": transform,
+            }
+            
+            # Add transform_param for BUCKET and TRUNCATE
+            if transform in ["BUCKET", "TRUNCATE"]:
+                param = transform_params[i]
+                if param and param.isdigit() and int(param) > 0:
+                    field["transform_param"] = int(param)
+                else:
+                    raise ValueError(f"Invalid transform parameter for {transform}")
+            
+            partition_spec.append(field)
+        
+        # Create SQL for table creation
+        columns_sql = []
+        for col in schema:
+            nullable_str = "" if col["nullable"] else " NOT NULL"
+            columns_sql.append(f"{col['name']} {col['type']}{nullable_str}")
+        
+        sql = f"CREATE TABLE {table_name} ({', '.join(columns_sql)})"
+        
+        # Execute table creation
+        await pond_client.execute_sql(sql)
+        
+        # Update partition spec if needed
+        if partition_spec:
+            await pond_client.update_partition_spec(table_name, partition_spec)
+        
+        return RedirectResponse(url="/catalog", status_code=303)
+    except Exception as e:
+        tables = await pond_client.list_tables()
+        return templates.TemplateResponse(
+            "catalog.html",
+            {"request": request, "tables": tables, "result": f"Error: {str(e)}"}
+        )
 
 @app.get("/catalog/table/{table_name}", response_class=HTMLResponse)
 async def table_details(request: Request, table_name: str, sort_by: str = None, order: str = None):
@@ -898,6 +1027,82 @@ async def view_parquet_file(
             "rows_per_page": rows_per_page
         }
     )
+
+@app.post("/catalog/table/{table_name}/update-partition-spec")
+async def update_partition_spec(request: Request, table_name: str):
+    form = await request.form()
+    
+    try:
+        # Get partition information from form
+        columns = form.getlist("columns[]")
+        transforms = form.getlist("transforms[]")
+        transform_params = form.getlist("transform_params[]")
+        
+        # Get table metadata to get column indices
+        metadata = pond_client.get_table_metadata(table_name)
+        if metadata.error:
+            raise ValueError(f"Error getting table metadata: {metadata.error}")
+        
+        # Build partition spec
+        partition_spec = []
+        for i, col in enumerate(columns):
+            if not col:  # Skip empty selections
+                continue
+                
+            # Find the source_id (index) of the column in the schema
+            source_id = next(
+                (idx for idx, c in enumerate(metadata.columns) if c.name == col),
+                None
+            )
+            if source_id is None:
+                raise ValueError(f"Partition column {col} not found in schema")
+                
+            transform = transforms[i].upper()
+            field = {
+                "source_id": source_id,
+                "field_id": i,  # Use index as field_id
+                "name": col,
+                "transform": transform,
+            }
+            
+            # Add transform_param for BUCKET and TRUNCATE
+            if transform in ["BUCKET", "TRUNCATE"]:
+                param = transform_params[i]
+                if param and param.isdigit() and int(param) > 0:
+                    field["transform_param"] = int(param)
+                else:
+                    raise ValueError(f"Invalid transform parameter for {transform}")
+            
+            partition_spec.append(field)
+        
+        # Update partition spec
+        success, error = pond_client.update_partition_spec(table_name, partition_spec)
+        if not success:
+            raise ValueError(f"Failed to update partition spec: {error}")
+        
+        return RedirectResponse(url=f"/catalog/table/{table_name}", status_code=303)
+    except Exception as e:
+        # Get updated metadata
+        metadata = pond_client.get_table_metadata(table_name)
+        
+        # Calculate totals for summary
+        total_size = sum(file.content_length for file in metadata.data_files) if metadata.data_files else 0
+        total_records = sum(file.record_count for file in metadata.data_files) if metadata.data_files else 0
+        
+        return templates.TemplateResponse(
+            "table_details.html",
+            {
+                "request": request,
+                "metadata": metadata,
+                "active_page": "catalog",
+                "total_size": total_size,
+                "total_records": total_records,
+                "upload_result": {
+                    "success": False,
+                    "message": f"Error updating partition spec: {str(e)}"
+                }
+            }
+        )
 
 if __name__ == "__main__":
     import argparse

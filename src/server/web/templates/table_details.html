@@ -49,13 +49,31 @@
                         {% endif %}
                     </div>
                     <div class="col-md-6">
-                        <h6>Partition Columns:</h6>
-                        {% if metadata.partition_columns %}
-                        <ul>
-                            {% for col in metadata.partition_columns %}
-                            <li>{{ col }}</li>
-                            {% endfor %}
-                        </ul>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">Partition Specification:</h6>
+                            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editPartitionModal">
+                                <i class="bi bi-pencil"></i> Edit
+                            </button>
+                        </div>
+                        {% if metadata.partition_spec %}
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Column</th>
+                                    <th>Transform</th>
+                                    <th>Parameter</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for field in metadata.partition_spec %}
+                                <tr>
+                                    <td>{{ field.name }}</td>
+                                    <td>{{ field.transform }}</td>
+                                    <td>{{ field.transform_param if field.transform_param else '-' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                         {% else %}
                         <p>This table is not partitioned.</p>
                         {% endif %}
@@ -311,6 +329,74 @@
     </div>
 </div>
 
+<!-- Edit Partition Modal -->
+<div class="modal fade" id="editPartitionModal" tabindex="-1" aria-labelledby="editPartitionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editPartitionModalLabel">Edit Partition Specification</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post" action="/catalog/table/{{ metadata.name }}/update-partition-spec">
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i> Changes to partition specification will only affect future data files.
+                    </div>
+                    <div id="partitionFields">
+                        {% if metadata.partition_spec %}
+                        {% for field in metadata.partition_spec %}
+                        <div class="partition-field mb-3 border rounded p-3">
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">Column</label>
+                                    <select name="columns[]" class="form-select" required>
+                                        {% for column in metadata.columns %}
+                                        <option value="{{ column.name }}" {% if column.name == field.name %}selected{% endif %}>{{ column.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Transform</label>
+                                    <select name="transforms[]" class="form-select transform-select" required onchange="toggleTransformParam(this)">
+                                        <option value="identity" {% if field.transform == 'identity' %}selected{% endif %}>Identity</option>
+                                        <option value="year" {% if field.transform == 'year' %}selected{% endif %}>Year</option>
+                                        <option value="month" {% if field.transform == 'month' %}selected{% endif %}>Month</option>
+                                        <option value="day" {% if field.transform == 'day' %}selected{% endif %}>Day</option>
+                                        <option value="hour" {% if field.transform == 'hour' %}selected{% endif %}>Hour</option>
+                                        <option value="bucket" {% if field.transform == 'bucket' %}selected{% endif %}>Bucket</option>
+                                        <option value="truncate" {% if field.transform == 'truncate' %}selected{% endif %}>Truncate</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Parameter</label>
+                                    <input type="text" name="transform_params[]" class="form-control transform-param" 
+                                           {% if field.transform not in ['bucket', 'truncate'] %}disabled{% endif %}
+                                           value="{{ field.transform_param if field.transform_param else '' }}"
+                                           placeholder="e.g., 4 for bucket">
+                                </div>
+                                <div class="col-md-1 d-flex align-items-end">
+                                    <button type="button" class="btn btn-outline-danger" onclick="removePartitionField(this)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                        {% endif %}
+                    </div>
+                    <button type="button" class="btn btn-outline-secondary" onclick="addPartitionField()">
+                        <i class="bi bi-plus"></i> Add Partition Field
+                    </button>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
     function formatJsonData() {
         const textarea = document.getElementById('json-data-textarea');
@@ -398,6 +484,58 @@
         // Close the modal
         const modal = bootstrap.Modal.getInstance(document.getElementById('generateDataModal'));
         modal.hide();
+    }
+
+    function addPartitionField() {
+        const template = `
+            <div class="partition-field mb-3 border rounded p-3">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Column</label>
+                        <select name="columns[]" class="form-select" required>
+                            {% for column in metadata.columns %}
+                            <option value="{{ column.name }}">{{ column.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Transform</label>
+                        <select name="transforms[]" class="form-select transform-select" required onchange="toggleTransformParam(this)">
+                            <option value="identity">Identity</option>
+                            <option value="year">Year</option>
+                            <option value="month">Month</option>
+                            <option value="day">Day</option>
+                            <option value="hour">Hour</option>
+                            <option value="bucket">Bucket</option>
+                            <option value="truncate">Truncate</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Parameter</label>
+                        <input type="text" name="transform_params[]" class="form-control transform-param" disabled placeholder="e.g., 4 for bucket">
+                    </div>
+                    <div class="col-md-1 d-flex align-items-end">
+                        <button type="button" class="btn btn-outline-danger" onclick="removePartitionField(this)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.getElementById('partitionFields').insertAdjacentHTML('beforeend', template);
+    }
+
+    function removePartitionField(button) {
+        const field = button.closest('.partition-field');
+        field.remove();
+    }
+
+    function toggleTransformParam(select) {
+        const paramInput = select.closest('.row').querySelector('.transform-param');
+        paramInput.disabled = !['bucket', 'truncate'].includes(select.value);
+        if (paramInput.disabled) {
+            paramInput.value = '';
+        }
     }
 </script>
 {% endif %}
