@@ -57,47 +57,15 @@ public:
      */
     static common::Result<void> AppendGroupValue(const std::shared_ptr<arrow::Array>& input_array,
                                                  std::shared_ptr<arrow::ArrayBuilder> builder,
-                                                 int row_idx) {
-        switch (input_array->type_id()) {
-            case arrow::Type::INT32:
-                ArrowUtil::AppendGroupValueInternal<arrow::Int32Array, arrow::Int32Builder>(
-                    input_array, builder, row_idx);
-                break;
-            case arrow::Type::INT64:
-                ArrowUtil::AppendGroupValueInternal<arrow::Int64Array, arrow::Int64Builder>(
-                    input_array, builder, row_idx);
-                break;
-            case arrow::Type::UINT32:
-                ArrowUtil::AppendGroupValueInternal<arrow::UInt32Array, arrow::UInt32Builder>(
-                    input_array, builder, row_idx);
-                break;
-            case arrow::Type::UINT64:
-                ArrowUtil::AppendGroupValueInternal<arrow::UInt64Array, arrow::UInt64Builder>(
-                    input_array, builder, row_idx);
-                break;
-            case arrow::Type::FLOAT:
-                ArrowUtil::AppendGroupValueInternal<arrow::FloatArray, arrow::FloatBuilder>(
-                    input_array, builder, row_idx);
-                break;
-            case arrow::Type::DOUBLE:
-                ArrowUtil::AppendGroupValueInternal<arrow::DoubleArray, arrow::DoubleBuilder>(
-                    input_array, builder, row_idx);
-                break;
-            case arrow::Type::STRING:
-                ArrowUtil::AppendGroupValueInternal<arrow::StringArray, arrow::StringBuilder>(
-                    input_array, builder, row_idx);
-                break;
-            case arrow::Type::BOOL:
-                ArrowUtil::AppendGroupValueInternal<arrow::BooleanArray, arrow::BooleanBuilder>(
-                    input_array, builder, row_idx);
-                break;
-            default: {
-                return common::Error(common::ErrorCode::NotImplemented, "Unsupported type in GROUP BY");
-            }
-        }
-        return common::Result<void>::success();
-    }
+                                                 int row_idx);
 
+    /**
+     * @brief Append a value to an array builder
+     * @param builder The array builder
+     * @param value The value to append
+     * @param is_null Whether the value is null
+     * @return A result containing the void or an error
+     */
     template <typename BuilderType, typename ValueType>
     static common::Result<void> AppendValue(std::shared_ptr<arrow::ArrayBuilder> builder,
                                             const ValueType& value,
@@ -122,147 +90,60 @@ public:
      * @brief Compute the sum of a column
      * @param input_array The input array
      * @param row_indices The row indices from the input array
-     * @param builder The array builder
+     * @param builder The array builder, must match the type of the input array
      * @return A result containing the void or an error
      */
     static common::Result<void> ComputeSum(const std::shared_ptr<arrow::Array>& input_array,
                                            const std::vector<int>& row_indices,
                                            std::shared_ptr<arrow::ArrayBuilder> builder) {
-        switch (input_array->type_id()) {
-            case arrow::Type::INT32: {
-                return ArrowUtil::ComputeSumInternal<arrow::Int32Array, arrow::Int64Builder, int64_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::INT64: {
-                return ArrowUtil::ComputeSumInternal<arrow::Int64Array, arrow::Int64Builder, int64_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::UINT32: {
-                return ArrowUtil::ComputeSumInternal<arrow::UInt32Array, arrow::Int64Builder, int64_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::UINT64: {
-                return ArrowUtil::ComputeSumInternal<arrow::UInt64Array, arrow::Int64Builder, int64_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::FLOAT: {
-                return ArrowUtil::ComputeSumInternal<arrow::FloatArray, arrow::FloatBuilder, float>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::DOUBLE: {
-                return ArrowUtil::ComputeSumInternal<arrow::DoubleArray, arrow::DoubleBuilder, double>(
-                    input_array, row_indices, builder);
-            }
-            default: {
-                return common::Error(common::ErrorCode::NotImplemented, "SUM only supports numeric types");
-            }
-        }
+        return ComputeAggregate<SumOperation>(input_array, row_indices, builder);
     }
 
+    /**
+     * @brief Compute the average of a column
+     * @param input_array The input array
+     * @param row_indices The row indices from the input array
+     * @param builder The array builder, must match the type of the input array
+     * @return A result containing the void or an error
+     */
     static common::Result<void> ComputeAverage(const std::shared_ptr<arrow::Array>& input_array,
                                                const std::vector<int>& row_indices,
                                                std::shared_ptr<arrow::ArrayBuilder> builder) {
-        switch (input_array->type_id()) {
-            case arrow::Type::INT32: {
-                return ArrowUtil::ComputeAverageInternal<arrow::Int32Array>(input_array, row_indices, builder);
-            }
-            case arrow::Type::INT64: {
-                return ArrowUtil::ComputeAverageInternal<arrow::Int64Array>(input_array, row_indices, builder);
-            }
-            case arrow::Type::UINT32: {
-                return ArrowUtil::ComputeAverageInternal<arrow::UInt32Array>(input_array, row_indices, builder);
-            }
-            case arrow::Type::UINT64: {
-                return ArrowUtil::ComputeAverageInternal<arrow::UInt64Array>(input_array, row_indices, builder);
-            }
-            case arrow::Type::FLOAT: {
-                return ArrowUtil::ComputeAverageInternal<arrow::FloatArray>(input_array, row_indices, builder);
-            }
-            case arrow::Type::DOUBLE: {
-                return ArrowUtil::ComputeAverageInternal<arrow::DoubleArray>(input_array, row_indices, builder);
-            }
-            default: {
-                return common::Error(common::ErrorCode::NotImplemented, "AVG only supports numeric types");
-            }
-        }
+        return ComputeAggregate<AverageOperation>(input_array, row_indices, builder);
     }
 
+    /**
+     * @brief Compute the minimum of a column
+     * @param input_array The input array
+     * @param row_indices The row indices from the input array
+     * @param builder The array builder, must match the type of the input array
+     * @return A result containing the void or an error
+     */
     static common::Result<void> ComputeMin(const std::shared_ptr<arrow::Array>& input_array,
                                            const std::vector<int>& row_indices,
                                            std::shared_ptr<arrow::ArrayBuilder> builder) {
-        switch (input_array->type_id()) {
-            case arrow::Type::INT32: {
-                return ArrowUtil::ComputeMinInternal<arrow::Int32Array, arrow::Int32Builder, int32_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::INT64: {
-                return ArrowUtil::ComputeMinInternal<arrow::Int64Array, arrow::Int64Builder, int64_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::UINT32: {
-                return ArrowUtil::ComputeMinInternal<arrow::UInt32Array, arrow::UInt32Builder, uint32_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::UINT64: {
-                return ArrowUtil::ComputeMinInternal<arrow::UInt64Array, arrow::UInt64Builder, uint64_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::FLOAT: {
-                return ArrowUtil::ComputeMinInternal<arrow::FloatArray, arrow::FloatBuilder, float>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::DOUBLE: {
-                return ArrowUtil::ComputeMinInternal<arrow::DoubleArray, arrow::DoubleBuilder, double>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::STRING: {
-                return ArrowUtil::ComputeMinInternal<arrow::StringArray, arrow::StringBuilder, std::string>(
-                    input_array, row_indices, builder);
-            }
-            default: {
-                return common::Error(common::ErrorCode::NotImplemented, "MIN only supports numeric types");
-            }
-        }
+        return ComputeAggregate<MinOperation>(input_array, row_indices, builder);
     }
 
+    /**
+     * @brief Compute the maximum of a column
+     * @param input_array The input array
+     * @param row_indices The row indices from the input array
+     * @param builder The array builder, must match the type of the input array
+     * @return A result containing the void or an error
+     */
     static common::Result<void> ComputeMax(const std::shared_ptr<arrow::Array>& input_array,
                                            const std::vector<int>& row_indices,
                                            std::shared_ptr<arrow::ArrayBuilder> builder) {
-        switch (input_array->type_id()) {
-            case arrow::Type::INT32: {
-                return ArrowUtil::ComputeMaxInternal<arrow::Int32Array, arrow::Int32Builder, int32_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::INT64: {
-                return ArrowUtil::ComputeMaxInternal<arrow::Int64Array, arrow::Int64Builder, int64_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::UINT32: {
-                return ArrowUtil::ComputeMaxInternal<arrow::UInt32Array, arrow::UInt32Builder, uint32_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::UINT64: {
-                return ArrowUtil::ComputeMaxInternal<arrow::UInt64Array, arrow::UInt64Builder, uint64_t>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::FLOAT: {
-                return ArrowUtil::ComputeMaxInternal<arrow::FloatArray, arrow::FloatBuilder, float>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::DOUBLE: {
-                return ArrowUtil::ComputeMaxInternal<arrow::DoubleArray, arrow::DoubleBuilder, double>(
-                    input_array, row_indices, builder);
-            }
-            case arrow::Type::STRING: {
-                return ArrowUtil::ComputeMaxInternal<arrow::StringArray, arrow::StringBuilder, std::string>(
-                    input_array, row_indices, builder);
-            }
-            default: {
-                return common::Error(common::ErrorCode::NotImplemented, "MAX only supports numeric types");
-            }
-        }
+        return ComputeAggregate<MaxOperation>(input_array, row_indices, builder);
     }
 
+    /**
+     * @brief Compute the count of a column
+     * @param input_array The input array
+     * @param row_indices The row indices from the input array
+     * @param builder The array builder, must be an Int64Builder
+     */
     static common::Result<void> ComputeCount(const std::shared_ptr<arrow::Array>& input_array,
                                              const std::vector<int>& row_indices,
                                              std::shared_ptr<arrow::Int64Builder> builder) {
@@ -277,40 +158,7 @@ public:
      */
     static common::Result<void> AppendGroupKeyValue(const std::shared_ptr<arrow::Array>& array,
                                                     int row_idx,
-                                                    std::string& group_key) {
-        switch (array->type_id()) {
-            case arrow::Type::INT32:
-                ArrowUtil::AppendGroupKeyValue<arrow::Int32Array>(array, row_idx, group_key);
-                break;
-            case arrow::Type::INT64:
-                ArrowUtil::AppendGroupKeyValue<arrow::Int64Array>(array, row_idx, group_key);
-                break;
-            case arrow::Type::UINT32:
-                ArrowUtil::AppendGroupKeyValue<arrow::UInt32Array>(array, row_idx, group_key);
-                break;
-            case arrow::Type::UINT64:
-                ArrowUtil::AppendGroupKeyValue<arrow::UInt64Array>(array, row_idx, group_key);
-                break;
-            case arrow::Type::FLOAT:
-                ArrowUtil::AppendGroupKeyValue<arrow::FloatArray>(array, row_idx, group_key);
-                break;
-            case arrow::Type::DOUBLE:
-                ArrowUtil::AppendGroupKeyValue<arrow::DoubleArray>(array, row_idx, group_key);
-                break;
-            case arrow::Type::STRING:
-                ArrowUtil::AppendGroupKeyValue<arrow::StringArray>(array, row_idx, group_key);
-                break;
-            case arrow::Type::BOOL:
-                ArrowUtil::AppendGroupKeyValue<arrow::BooleanArray>(array, row_idx, group_key);
-                break;
-            default: {
-                return common::Error(common::ErrorCode::NotImplemented, "Unsupported type in GROUP BY");
-            }
-        }
-
-        return common::Result<void>::success();
-    }
-
+                                                    std::string& group_key);
     /**
      * @brief Apply a filter expression to a record batch
      * @param batch The record batch to filter
@@ -443,7 +291,7 @@ private:
      * @param builder The array builder
      * @return A result containing the void or an error
      */
-    template <typename ArrayType>
+    template <typename ArrayType, typename BuilderType, typename ValueType>
     static common::Result<void> ComputeAverageInternal(const std::shared_ptr<arrow::Array>& input_array,
                                                        const std::vector<int>& row_indices,
                                                        std::shared_ptr<arrow::ArrayBuilder> builder) {
@@ -475,31 +323,235 @@ private:
         return common::Result<void>::success();
     }
 
+    // Add a template helper to handle the type mapping
+    template <typename T>
+    struct AggregateTypeMap {
+        using ArrayType = void;
+        using BuilderType = void;
+        using ValueType = void;
+    };
+
+    // Specializations for each type
+    template <>
+    struct AggregateTypeMap<arrow::Int32Type> {
+        using ArrayType = arrow::Int32Array;
+        using BuilderType = arrow::Int32Builder;
+        using ValueType = int32_t;
+    };
+
+    template <>
+    struct AggregateTypeMap<arrow::Int64Type> {
+        using ArrayType = arrow::Int64Array;
+        using BuilderType = arrow::Int64Builder;
+        using ValueType = int64_t;
+    };
+
+    template <>
+    struct AggregateTypeMap<arrow::UInt32Type> {
+        using ArrayType = arrow::UInt32Array;
+        using BuilderType = arrow::UInt32Builder;
+        using ValueType = uint32_t;
+    };
+
+    template <>
+    struct AggregateTypeMap<arrow::UInt64Type> {
+        using ArrayType = arrow::UInt64Array;
+        using BuilderType = arrow::UInt64Builder;
+        using ValueType = uint64_t;
+    };
+
+    template <>
+    struct AggregateTypeMap<arrow::FloatType> {
+        using ArrayType = arrow::FloatArray;
+        using BuilderType = arrow::FloatBuilder;
+        using ValueType = float;
+    };
+
+    template <>
+    struct AggregateTypeMap<arrow::DoubleType> {
+        using ArrayType = arrow::DoubleArray;
+        using BuilderType = arrow::DoubleBuilder;
+        using ValueType = double;
+    };
+
+    template <>
+    struct AggregateTypeMap<arrow::StringType> {
+        using ArrayType = arrow::StringArray;
+        using BuilderType = arrow::StringBuilder;
+        using ValueType = std::string;
+    };
+
+    // Template for Sum operation
     template <typename ArrayType, typename BuilderType, typename ValueType>
-    static common::Result<void> ComputeMinInternal(const std::shared_ptr<arrow::Array>& input_array,
-                                                   const std::vector<int>& row_indices,
-                                                   std::shared_ptr<arrow::ArrayBuilder> builder) {
+    struct SumOperation {
+        static common::Result<void> compute(const std::shared_ptr<arrow::Array>& input_array,
+                                            const std::vector<int>& row_indices,
+                                            std::shared_ptr<arrow::ArrayBuilder> builder) {
+            return ComputeSumInternal<ArrayType, BuilderType, ValueType>(input_array, row_indices, builder);
+        }
+    };
+
+    // Template for Average operation
+    template <typename ArrayType, typename BuilderType, typename ValueType>
+    struct AverageOperation {
+        static common::Result<void> compute(const std::shared_ptr<arrow::Array>& input_array,
+                                            const std::vector<int>& row_indices,
+                                            std::shared_ptr<arrow::ArrayBuilder> builder) {
+            // Average is special because it always uses DoubleBuilder
+            auto typed_array = std::static_pointer_cast<ArrayType>(input_array);
+            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builder.get());
+
+            double sum = 0.0;
+            int count = 0;
+
+            for (int row_idx : row_indices) {
+                if (!typed_array->IsNull(row_idx)) {
+                    sum += typed_array->Value(row_idx);
+                    count++;
+                }
+            }
+
+            if (count == 0) {
+                auto status = typed_builder->AppendNull();
+                if (!status.ok()) {
+                    return common::Error(common::ErrorCode::Failure, "Failed to append null: " + status.ToString());
+                }
+            } else {
+                auto status = typed_builder->Append(sum / count);
+                if (!status.ok()) {
+                    return common::Error(common::ErrorCode::Failure, "Failed to append value: " + status.ToString());
+                }
+            }
+
+            return common::Result<void>::success();
+        }
+    };
+
+    // Helper trait to detect numeric-only operations
+    template <template <typename, typename, typename> class>
+    struct IsNumericOnly : std::false_type {};
+
+    template <>
+    struct IsNumericOnly<SumOperation> : std::true_type {};
+
+    template <>
+    struct IsNumericOnly<AverageOperation> : std::true_type {};
+
+    // Helper function to handle the switch cases
+    template <template <typename, typename, typename> class AggregateFunc>
+    static common::Result<void> ComputeAggregate(const std::shared_ptr<arrow::Array>& input_array,
+                                                 const std::vector<int>& row_indices,
+                                                 std::shared_ptr<arrow::ArrayBuilder> builder) {
+        constexpr bool numeric_only = IsNumericOnly<AggregateFunc>::value;
+
+        switch (input_array->type_id()) {
+            case arrow::Type::INT32:
+                return AggregateFunc<typename AggregateTypeMap<arrow::Int32Type>::ArrayType,
+                                     typename AggregateTypeMap<arrow::Int32Type>::BuilderType,
+                                     typename AggregateTypeMap<arrow::Int32Type>::ValueType>::compute(input_array,
+                                                                                                      row_indices,
+                                                                                                      builder);
+            case arrow::Type::INT64:
+                return AggregateFunc<typename AggregateTypeMap<arrow::Int64Type>::ArrayType,
+                                     typename AggregateTypeMap<arrow::Int64Type>::BuilderType,
+                                     typename AggregateTypeMap<arrow::Int64Type>::ValueType>::compute(input_array,
+                                                                                                      row_indices,
+                                                                                                      builder);
+            case arrow::Type::UINT32:
+                return AggregateFunc<typename AggregateTypeMap<arrow::UInt32Type>::ArrayType,
+                                     typename AggregateTypeMap<arrow::UInt32Type>::BuilderType,
+                                     typename AggregateTypeMap<arrow::UInt32Type>::ValueType>::compute(input_array,
+                                                                                                       row_indices,
+                                                                                                       builder);
+            case arrow::Type::UINT64:
+                return AggregateFunc<typename AggregateTypeMap<arrow::UInt64Type>::ArrayType,
+                                     typename AggregateTypeMap<arrow::UInt64Type>::BuilderType,
+                                     typename AggregateTypeMap<arrow::UInt64Type>::ValueType>::compute(input_array,
+                                                                                                       row_indices,
+                                                                                                       builder);
+            case arrow::Type::FLOAT:
+                return AggregateFunc<typename AggregateTypeMap<arrow::FloatType>::ArrayType,
+                                     typename AggregateTypeMap<arrow::FloatType>::BuilderType,
+                                     typename AggregateTypeMap<arrow::FloatType>::ValueType>::compute(input_array,
+                                                                                                      row_indices,
+                                                                                                      builder);
+            case arrow::Type::DOUBLE:
+                return AggregateFunc<typename AggregateTypeMap<arrow::DoubleType>::ArrayType,
+                                     typename AggregateTypeMap<arrow::DoubleType>::BuilderType,
+                                     typename AggregateTypeMap<arrow::DoubleType>::ValueType>::compute(input_array,
+                                                                                                       row_indices,
+                                                                                                       builder);
+            case arrow::Type::STRING:
+                if constexpr (numeric_only) {
+                    return common::Error(common::ErrorCode::NotImplemented, "Operation only supports numeric types");
+                } else {
+                    return AggregateFunc<typename AggregateTypeMap<arrow::StringType>::ArrayType,
+                                         typename AggregateTypeMap<arrow::StringType>::BuilderType,
+                                         typename AggregateTypeMap<arrow::StringType>::ValueType>::compute(input_array,
+                                                                                                           row_indices,
+                                                                                                           builder);
+                }
+            default:
+                return common::Error(common::ErrorCode::NotImplemented,
+                                     numeric_only ? "Operation only supports numeric types"
+                                                  : "Operation only supports numeric and string types");
+        }
+    }
+
+    // Template for Min operation
+    template <typename ArrayType, typename BuilderType, typename ValueType>
+    struct MinOperation {
+        static common::Result<void> compute(const std::shared_ptr<arrow::Array>& input_array,
+                                            const std::vector<int>& row_indices,
+                                            std::shared_ptr<arrow::ArrayBuilder> builder) {
+            return ComputeMinInternal<ArrayType, BuilderType, ValueType>(input_array, row_indices, builder);
+        }
+    };
+
+    // Template for Max operation
+    template <typename ArrayType, typename BuilderType, typename ValueType>
+    struct MaxOperation {
+        static common::Result<void> compute(const std::shared_ptr<arrow::Array>& input_array,
+                                            const std::vector<int>& row_indices,
+                                            std::shared_ptr<arrow::ArrayBuilder> builder) {
+            return ComputeMaxInternal<ArrayType, BuilderType, ValueType>(input_array, row_indices, builder);
+        }
+    };
+
+    /**
+     * @brief Compute the min or max of a column
+     * @param input_array The input array
+     * @param row_indices The row indices from the input array
+     * @param builder The array builder
+     * @param compute_min Whether to compute the min or max
+     */
+    template <typename ArrayType, typename BuilderType, typename ValueType>
+    static common::Result<void> ComputeMinMaxInternal(const std::shared_ptr<arrow::Array>& input_array,
+                                                      const std::vector<int>& row_indices,
+                                                      std::shared_ptr<arrow::ArrayBuilder> builder,
+                                                      bool compute_min) {
         auto typed_array = std::static_pointer_cast<ArrayType>(input_array);
         auto typed_builder = static_cast<BuilderType*>(builder.get());
 
         bool found_value = false;
-        ValueType min_val;
+        ValueType val;
         if constexpr (std::is_same_v<ArrayType, arrow::StringArray>) {
-            min_val = std::string();
+            val = std::string();
         } else {
-            min_val = std::numeric_limits<ValueType>::max();
+            val = compute_min ? std::numeric_limits<ValueType>::max() : std::numeric_limits<ValueType>::min();
         }
 
         for (int row_idx : row_indices) {
             if (!typed_array->IsNull(row_idx)) {
                 if constexpr (std::is_same_v<ArrayType, arrow::StringArray>) {
                     std::string current = typed_array->GetString(row_idx);
-                    if (!found_value || current < min_val) {
-                        min_val = current;
+                    if (!found_value || (compute_min ? current < val : current > val)) {
+                        val = current;
                         found_value = true;
                     }
                 } else {
-                    min_val = std::min(min_val, typed_array->Value(row_idx));
+                    val = compute_min ? std::min(val, typed_array->Value(row_idx))
+                                      : std::max(val, typed_array->Value(row_idx));
                     found_value = true;
                 }
             }
@@ -511,7 +563,7 @@ private:
                 return common::Error(common::ErrorCode::Failure, "Failed to append null");
             }
         } else {
-            auto status = typed_builder->Append(min_val);
+            auto status = typed_builder->Append(val);
             if (!status.ok()) {
                 return common::Error(common::ErrorCode::Failure, "Failed to append value");
             }
@@ -520,49 +572,32 @@ private:
         return common::Result<void>::success();
     }
 
+    /**
+     * @brief Compute the min of a column
+     * @param input_array The input array
+     * @param row_indices The row indices from the input array
+     * @param builder The array builder
+     * @return A result containing the void or an error
+     */
+    template <typename ArrayType, typename BuilderType, typename ValueType>
+    static common::Result<void> ComputeMinInternal(const std::shared_ptr<arrow::Array>& input_array,
+                                                   const std::vector<int>& row_indices,
+                                                   std::shared_ptr<arrow::ArrayBuilder> builder) {
+        return ComputeMinMaxInternal<ArrayType, BuilderType, ValueType>(input_array, row_indices, builder, true);
+    }
+
+    /**
+     * @brief Compute the max of a column
+     * @param input_array The input array
+     * @param row_indices The row indices from the input array
+     * @param builder The array builder
+     * @return A result containing the void or an error
+     */
     template <typename ArrayType, typename BuilderType, typename ValueType>
     static common::Result<void> ComputeMaxInternal(const std::shared_ptr<arrow::Array>& input_array,
                                                    const std::vector<int>& row_indices,
                                                    std::shared_ptr<arrow::ArrayBuilder> builder) {
-        auto typed_array = std::static_pointer_cast<ArrayType>(input_array);
-        auto typed_builder = static_cast<BuilderType*>(builder.get());
-
-        bool found_value = false;
-        ValueType max_val;
-        if constexpr (std::is_same_v<ArrayType, arrow::StringArray>) {
-            max_val = std::string();
-        } else {
-            max_val = std::numeric_limits<ValueType>::min();
-        }
-
-        for (int row_idx : row_indices) {
-            if (!typed_array->IsNull(row_idx)) {
-                if constexpr (std::is_same_v<ArrayType, arrow::StringArray>) {
-                    std::string current = typed_array->GetString(row_idx);
-                    if (!found_value || current > max_val) {
-                        max_val = current;
-                        found_value = true;
-                    }
-                } else {
-                    max_val = std::max(max_val, typed_array->Value(row_idx));
-                    found_value = true;
-                }
-            }
-        }
-
-        if (!found_value) {
-            auto status = typed_builder->AppendNull();
-            if (!status.ok()) {
-                return common::Error(common::ErrorCode::Failure, "Failed to append null");
-            }
-        } else {
-            auto status = typed_builder->Append(max_val);
-            if (!status.ok()) {
-                return common::Error(common::ErrorCode::Failure, "Failed to append value");
-            }
-        }
-
-        return common::Result<void>::success();
+        return ComputeMinMaxInternal<ArrayType, BuilderType, ValueType>(input_array, row_indices, builder, false);
     }
 };
 

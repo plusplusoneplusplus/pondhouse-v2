@@ -710,14 +710,14 @@ TEST_F(ArrowUtilTest, ComputeSum) {
         ASSERT_OK(builder->AppendValues({1, 2, 3, 4, 5}));
         ASSERT_OK(builder->Finish(&array));
 
-        auto output_builder = std::make_shared<arrow::Int64Builder>();
+        auto output_builder = std::make_shared<arrow::Int32Builder>();
         std::vector<int> indices = {0, 2, 4};  // Sum 1 + 3 + 5 = 9
         auto result = ArrowUtil::ComputeSum(array, indices, output_builder);
         ASSERT_TRUE(result.ok());
 
         std::shared_ptr<arrow::Array> output_array;
         ASSERT_OK(output_builder->Finish(&output_array));
-        auto typed_array = std::static_pointer_cast<arrow::Int64Array>(output_array);
+        auto typed_array = std::static_pointer_cast<arrow::Int32Array>(output_array);
         ASSERT_EQ(typed_array->Value(0), 9);
     }
 

@@ -636,4 +636,80 @@ common::Result<ArrowDataBatchSharedPtr> ArrowUtil::JsonToRecordBatch(const rapid
     return ResultType::success(record_batch);
 }
 
+common::Result<void> ArrowUtil::AppendGroupValue(const std::shared_ptr<arrow::Array>& input_array,
+                                                 std::shared_ptr<arrow::ArrayBuilder> builder,
+                                                 int row_idx) {
+    switch (input_array->type_id()) {
+        case arrow::Type::INT32:
+            ArrowUtil::AppendGroupValueInternal<arrow::Int32Array, arrow::Int32Builder>(input_array, builder, row_idx);
+            break;
+        case arrow::Type::INT64:
+            ArrowUtil::AppendGroupValueInternal<arrow::Int64Array, arrow::Int64Builder>(input_array, builder, row_idx);
+            break;
+        case arrow::Type::UINT32:
+            ArrowUtil::AppendGroupValueInternal<arrow::UInt32Array, arrow::UInt32Builder>(
+                input_array, builder, row_idx);
+            break;
+        case arrow::Type::UINT64:
+            ArrowUtil::AppendGroupValueInternal<arrow::UInt64Array, arrow::UInt64Builder>(
+                input_array, builder, row_idx);
+            break;
+        case arrow::Type::FLOAT:
+            ArrowUtil::AppendGroupValueInternal<arrow::FloatArray, arrow::FloatBuilder>(input_array, builder, row_idx);
+            break;
+        case arrow::Type::DOUBLE:
+            ArrowUtil::AppendGroupValueInternal<arrow::DoubleArray, arrow::DoubleBuilder>(
+                input_array, builder, row_idx);
+            break;
+        case arrow::Type::STRING:
+            ArrowUtil::AppendGroupValueInternal<arrow::StringArray, arrow::StringBuilder>(
+                input_array, builder, row_idx);
+            break;
+        case arrow::Type::BOOL:
+            ArrowUtil::AppendGroupValueInternal<arrow::BooleanArray, arrow::BooleanBuilder>(
+                input_array, builder, row_idx);
+            break;
+        default: {
+            return common::Error(common::ErrorCode::NotImplemented, "Unsupported type in GROUP BY");
+        }
+    }
+    return common::Result<void>::success();
+}
+
+common::Result<void> ArrowUtil::AppendGroupKeyValue(const std::shared_ptr<arrow::Array>& array,
+                                                    int row_idx,
+                                                    std::string& group_key) {
+    switch (array->type_id()) {
+        case arrow::Type::INT32:
+            ArrowUtil::AppendGroupKeyValue<arrow::Int32Array>(array, row_idx, group_key);
+            break;
+        case arrow::Type::INT64:
+            ArrowUtil::AppendGroupKeyValue<arrow::Int64Array>(array, row_idx, group_key);
+            break;
+        case arrow::Type::UINT32:
+            ArrowUtil::AppendGroupKeyValue<arrow::UInt32Array>(array, row_idx, group_key);
+            break;
+        case arrow::Type::UINT64:
+            ArrowUtil::AppendGroupKeyValue<arrow::UInt64Array>(array, row_idx, group_key);
+            break;
+        case arrow::Type::FLOAT:
+            ArrowUtil::AppendGroupKeyValue<arrow::FloatArray>(array, row_idx, group_key);
+            break;
+        case arrow::Type::DOUBLE:
+            ArrowUtil::AppendGroupKeyValue<arrow::DoubleArray>(array, row_idx, group_key);
+            break;
+        case arrow::Type::STRING:
+            ArrowUtil::AppendGroupKeyValue<arrow::StringArray>(array, row_idx, group_key);
+            break;
+        case arrow::Type::BOOL:
+            ArrowUtil::AppendGroupKeyValue<arrow::BooleanArray>(array, row_idx, group_key);
+            break;
+        default: {
+            return common::Error(common::ErrorCode::NotImplemented, "Unsupported type in GROUP BY");
+        }
+    }
+
+    return common::Result<void>::success();
+}
+
 }  // namespace pond::query
