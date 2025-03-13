@@ -706,25 +706,46 @@ grpc::Status PondServiceImpl::UpdatePartitionSpec(grpc::ServerContext* context,
         catalog::PartitionSpec spec;
         spec.spec_id = 0;  // New spec gets ID 0
 
-
         for (const auto& pb_field : request->partition_spec().fields()) {
             std::string transform = pb_field.transform();
             std::transform(transform.begin(), transform.end(), transform.begin(), ::tolower);
+
+            catalog::Transform transform_type;
+            try {
+                transform_type = catalog::TransformFromString(transform);
+            } catch (const std::exception& e) {
+                response->set_success(false);
+                response->set_error("Invalid transform type: " + transform);
+                return grpc::Status::OK;
+            }
 
             catalog::PartitionField field(
                 pb_field.source_id(),
                 pb_field.field_id(),
                 pb_field.name(),
-                catalog::TransformFromString(transform)
+                transform_type
             );
             
-            // Only set transform_param if it's not empty
-            if (!pb_field.transform_param().empty()) {
-                // Convert string parameter to integer if needed
+            // Validate transform parameters
+            if (transform_type == catalog::Transform::BUCKET || transform_type == catalog::Transform::TRUNCATE) {
+                if (pb_field.transform_param().empty()) {
+                    response->set_success(false);
+                    response->set_error("Transform parameter is required for " + transform + " transform");
+                    return grpc::Status::OK;
+                }
+                
                 try {
-                    field.transform_param = std::stoi(pb_field.transform_param());
+                    int param = std::stoi(pb_field.transform_param());
+                    if (param <= 0) {
+                        response->set_success(false);
+                        response->set_error("Transform parameter must be positive for " + transform + " transform");
+                        return grpc::Status::OK;
+                    }
+                    field.transform_param = param;
                 } catch (const std::exception& e) {
-                    LOG_WARNING("Failed to convert transform parameter to integer: %s", e.what());
+                    response->set_success(false);
+                    response->set_error("Invalid transform parameter for " + transform + " transform: " + pb_field.transform_param());
+                    return grpc::Status::OK;
                 }
             }
             
@@ -744,7 +765,7 @@ grpc::Status PondServiceImpl::UpdatePartitionSpec(grpc::ServerContext* context,
         response->set_success(false);
         response->set_error(std::string("Error updating partition spec: ") + e.what());
     }
-
+    
     return grpc::Status::OK;
 }
 

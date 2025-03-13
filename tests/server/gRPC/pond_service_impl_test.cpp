@@ -36,10 +36,10 @@ protected:
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // Create a test table
-        auto catalog = service_->catalog_;  // Direct access via friend relationship
-        ASSERT_TRUE(catalog != nullptr) << "Catalog is null";
+        catalog_ = service_->catalog_;  // Direct access via friend relationship
+        ASSERT_TRUE(catalog_ != nullptr) << "Catalog is null";
 
-        auto create_result = catalog->CreateTable("test_table",
+        auto create_result = catalog_->CreateTable("test_table",
                                                   CreateTestSchema(),
                                                   {},  // empty partition spec
                                                   "/tables/test_table");
@@ -56,6 +56,7 @@ protected:
     std::shared_ptr<common::MemoryAppendOnlyFileSystem> fs_;
     std::shared_ptr<pond::kv::DB> db_;
     std::unique_ptr<PondServiceImpl> service_;
+    std::shared_ptr<pond::catalog::Catalog> catalog_;
 };
 
 //
@@ -831,6 +832,155 @@ TEST_F(PondServiceImplTest, Scan_WithTableParameter) {
             EXPECT_FALSE(response.found()) << "Key " << key << " from default table found in custom table";
         }
     }
+}
+
+//
+// Test Setup:
+//      Test successful update of partition specification
+// Test Result:
+//      Should successfully update the partition spec with all fields correctly set
+//
+TEST_F(PondServiceImplTest, UpdatePartitionSpec_Success) {
+    grpc::ServerContext context;
+    pond::proto::UpdatePartitionSpecRequest request;
+    pond::proto::UpdatePartitionSpecResponse response;
+
+    // Set up the request
+    request.set_table_name("test_table");
+    auto* spec = request.mutable_partition_spec();
+    
+    // Add identity transform field
+    auto* field1 = spec->add_fields();
+    field1->set_source_id(0);  // int_col
+    field1->set_field_id(1);
+    field1->set_name("int_col_part");
+    field1->set_transform("identity");
+
+    // Add bucket transform field with parameter
+    auto* field2 = spec->add_fields();
+    field2->set_source_id(1);  // string_col
+    field2->set_field_id(2);
+    field2->set_name("string_bucket");
+    field2->set_transform("bucket");
+    field2->set_transform_param("4");  // 4 buckets
+
+    // Call the method
+    auto status = service_->UpdatePartitionSpec(&context, &request, &response);
+
+    // Verify results
+    EXPECT_TRUE(status.ok());
+    EXPECT_TRUE(response.success()) << "Error: " << response.error();
+
+    // Verify the partition spec was updated in the catalog
+    auto table_result = catalog_->LoadTable("test_table");
+    ASSERT_TRUE(table_result.ok()) << "Failed to load table: " << table_result.error().message();
+    
+    const auto& metadata = table_result.value();
+    ASSERT_FALSE(metadata.partition_specs.empty());
+    
+    const auto& latest_spec = metadata.partition_specs.back();
+    ASSERT_EQ(latest_spec.fields.size(), 2);
+    
+    // Verify first field (identity transform)
+    EXPECT_EQ(latest_spec.fields[0].source_id, 0);
+    EXPECT_EQ(latest_spec.fields[0].field_id, 1);
+    EXPECT_EQ(latest_spec.fields[0].name, "int_col_part");
+    EXPECT_EQ(latest_spec.fields[0].transform, catalog::Transform::IDENTITY);
+    
+    // Verify second field (bucket transform)
+    EXPECT_EQ(latest_spec.fields[1].source_id, 1);
+    EXPECT_EQ(latest_spec.fields[1].field_id, 2);
+    EXPECT_EQ(latest_spec.fields[1].name, "string_bucket");
+    EXPECT_EQ(latest_spec.fields[1].transform, catalog::Transform::BUCKET);
+    EXPECT_EQ(latest_spec.fields[1].transform_param, 4);
+}
+
+//
+// Test Setup:
+//      Test updating partition spec for non-existent table
+// Test Result:
+//      Should fail with appropriate error message
+//
+TEST_F(PondServiceImplTest, UpdatePartitionSpec_TableNotFound) {
+    grpc::ServerContext context;
+    pond::proto::UpdatePartitionSpecRequest request;
+    pond::proto::UpdatePartitionSpecResponse response;
+
+    // Set up the request with non-existent table
+    request.set_table_name("non_existent_table");
+    auto* spec = request.mutable_partition_spec();
+    auto* field = spec->add_fields();
+    field->set_source_id(0);
+    field->set_field_id(1);
+    field->set_name("test");
+    field->set_transform("identity");
+
+    // Call the method
+    auto status = service_->UpdatePartitionSpec(&context, &request, &response);
+
+    // Verify results
+    EXPECT_TRUE(status.ok());
+    EXPECT_FALSE(response.success());
+    EXPECT_FALSE(response.error().empty());
+}
+
+//
+// Test Setup:
+//      Test updating partition spec with invalid transform type
+// Test Result:
+//      Should fail with appropriate error message
+//
+TEST_F(PondServiceImplTest, UpdatePartitionSpec_InvalidTransform) {
+    grpc::ServerContext context;
+    pond::proto::UpdatePartitionSpecRequest request;
+    pond::proto::UpdatePartitionSpecResponse response;
+
+    // Set up the request
+    request.set_table_name("test_table");
+    auto* spec = request.mutable_partition_spec();
+    auto* field = spec->add_fields();
+    field->set_source_id(0);
+    field->set_field_id(1);
+    field->set_name("test");
+    field->set_transform("invalid_transform");  // Invalid transform type
+
+    // Call the method
+    auto status = service_->UpdatePartitionSpec(&context, &request, &response);
+
+    // Verify results
+    EXPECT_TRUE(status.ok());
+    EXPECT_FALSE(response.success());
+    EXPECT_FALSE(response.error().empty());
+}
+
+//
+// Test Setup:
+//      Test updating partition spec with invalid transform parameter
+// Test Result:
+//      Should fail with appropriate error message
+//
+TEST_F(PondServiceImplTest, UpdatePartitionSpec_InvalidTransformParam) {
+    grpc::ServerContext context;
+    pond::proto::UpdatePartitionSpecRequest request;
+    pond::proto::UpdatePartitionSpecResponse response;
+
+    // Set up the request
+    request.set_table_name("test_table");
+    auto* spec = request.mutable_partition_spec();
+    auto* field = spec->add_fields();
+    field->set_source_id(0);
+    field->set_field_id(1);
+    field->set_name("test");
+    field->set_transform("bucket");
+    field->set_transform_param("invalid_number");  // Invalid parameter for bucket transform
+
+    // Call the method
+    auto status = service_->UpdatePartitionSpec(&context, &request, &response);
+
+    // Verify results
+    EXPECT_TRUE(status.ok());
+    EXPECT_FALSE(response.success());
+    EXPECT_FALSE(response.error().empty());
 }
 
 }  // namespace pond::server
