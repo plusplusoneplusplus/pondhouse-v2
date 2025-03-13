@@ -476,6 +476,55 @@ class PondClient:
         except Exception as e:
             return False, str(e)
 
+    def execute_query(self, sql_query: str, batch_size: int = 1000) -> tuple[List[Dict[str, str]], int, Optional[str]]:
+        """
+        Execute a SQL query and return the results.
+        
+        Args:
+            sql_query: The SQL query to execute
+            batch_size: Number of rows to fetch per batch
+            
+        Returns:
+            Tuple of (rows, total_rows, error)
+            where rows is a list of dictionaries with column names as keys
+        """
+        try:
+            request = pb2.ExecuteQueryRequest(
+                sql_query=sql_query,
+                batch_size=batch_size
+            )
+            
+            rows = []
+            total_rows = 0
+            error = None
+            column_names = []
+            
+            for response in self.stub.ExecuteQuery(request):
+                if not response.success:
+                    return [], 0, response.error
+                
+                total_rows = response.total_rows
+                
+                # Get column names from first response
+                if not column_names and response.columns:
+                    column_names = [col.name for col in response.columns]
+                
+                # Convert columnar data to row-based format
+                if response.columns:
+                    num_rows_in_batch = len(response.columns[0].values)
+                    for row_idx in range(num_rows_in_batch):
+                        row = {}
+                        for col in response.columns:
+                            if col.nulls[row_idx]:
+                                row[col.name] = None
+                            else:
+                                row[col.name] = col.values[row_idx]
+                        rows.append(row)
+            
+            return rows, total_rows, None
+        except Exception as e:
+            return [], 0, str(e)
+
 # Create a global client instance
 pond_client = PondClient(GRPC_HOST, GRPC_PORT)
 
@@ -1101,6 +1150,52 @@ async def update_partition_spec(request: Request, table_name: str):
                     "success": False,
                     "message": f"Error updating partition spec: {str(e)}"
                 }
+            }
+        )
+
+@app.post("/catalog/execute-query", response_class=HTMLResponse)
+async def execute_query(request: Request):
+    form = await request.form()
+    sql_query = form.get("sql_query", "")
+    
+    try:
+        rows, total_rows, error = pond_client.execute_query(sql_query)
+        
+        if error:
+            return templates.TemplateResponse(
+                "catalog.html",
+                {
+                    "request": request,
+                    "active_page": "catalog",
+                    "result": f"Error executing query: {error}",
+                    "tables": await pond_client.list_tables()[0]
+                }
+            )
+        
+        # Get column names from first row
+        columns = []
+        if rows:
+            columns = list(rows[0].keys())
+        
+        return templates.TemplateResponse(
+            "query_results.html",
+            {
+                "request": request,
+                "active_page": "catalog",
+                "rows": rows,
+                "columns": columns,
+                "total_rows": total_rows,
+                "query": sql_query
+            }
+        )
+    except Exception as e:
+        return templates.TemplateResponse(
+            "catalog.html",
+            {
+                "request": request,
+                "active_page": "catalog",
+                "result": f"Error: {str(e)}",
+                "tables": await pond_client.list_tables()[0]
             }
         )
 

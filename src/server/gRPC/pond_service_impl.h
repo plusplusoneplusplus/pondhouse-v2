@@ -8,6 +8,8 @@
 #include "common/result.h"
 #include "kv/db.h"
 #include "proto/build/proto/pond_service.grpc.pb.h"
+#include "query/executor/executor.h"
+#include "query/data/data_accessor.h"
 
 namespace pond::server {
 
@@ -87,6 +89,11 @@ public:
                                     const pond::proto::UpdatePartitionSpecRequest* request,
                                     pond::proto::UpdatePartitionSpecResponse* response) override;
 
+    // Execute a SQL query and stream results back
+    grpc::Status ExecuteQuery(grpc::ServerContext* context,
+                            const pond::proto::ExecuteQueryRequest* request,
+                            grpc::ServerWriter<pond::proto::ExecuteQueryResponse>* writer) override;
+
 protected:
     // Helper method to get the default table
     common::Result<std::shared_ptr<pond::kv::Table>> GetDefaultTable();
@@ -95,6 +102,8 @@ protected:
     std::shared_ptr<pond::common::IAppendOnlyFileSystem> fs_;
     std::shared_ptr<pond::catalog::Catalog> catalog_;
     std::shared_ptr<pond::kv::DB> catalog_db_;
+    std::shared_ptr<pond::query::Executor> query_executor_;
+    std::shared_ptr<pond::query::DataAccessor> data_accessor_;
 
     // Friend test declarations for unit tests
     friend class PondServiceImplTest;

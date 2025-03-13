@@ -8,9 +8,7 @@
 #include "catalog/kv_catalog.h"
 #include "common/memory_append_only_fs.h"
 #include "format/parquet/schema_converter.h"
-#include "query/planner/logical_optimizer.h"
-#include "query/planner/logical_planner.h"
-#include "query/planner/physical_planner.h"
+#include "query/planner/planner.h"
 #include "test_helper.h"
 
 namespace pond::query {
@@ -64,17 +62,14 @@ public:
         for (const auto& [name, table_info] : tables_) {
             catalog_->CreateTable(name, table_info->Schema(), partition_spec_, "test_catalog/" + name);
         }
+
+        planner_ = std::make_shared<query::Planner>(catalog_);
     }
 
     Result<std::shared_ptr<LogicalPlanNode>> PlanLogical(const std::string& query, bool optimize = false) {
-        LogicalPlanner planner(*catalog_);
-        hsql::SQLParserResult parse_result;
-        hsql::SQLParser::parse(query, &parse_result);
-        EXPECT_TRUE(parse_result.isValid()) << "SQL parsing should succeed";
-        EXPECT_EQ(1, parse_result.size()) << "Should have one statement";
-        auto logical_plan = planner.Plan(parse_result.getStatement(0));
-        if (optimize) {
-            return Optimize(logical_plan.value());
+        auto logical_plan = planner_->PlanLogical(query, optimize);
+        if (!logical_plan.ok()) {
+            LOG_ERROR("Logical planning failed: %s", logical_plan.error().message().c_str());
         }
         return logical_plan;
     }
@@ -87,10 +82,9 @@ public:
     }
 
     Result<std::shared_ptr<PhysicalPlanNode>> PlanPhysical(const std::string& query, bool optimize = false) {
-        PhysicalPlanner planner(*catalog_);
-        auto logical_plan = PlanLogical(query, optimize);
-        EXPECT_TRUE(logical_plan.ok()) << "Logical planning should succeed";
-        return planner.Plan(logical_plan.value());
+        auto physical_plan = planner_->PlanPhysical(query, optimize);
+        EXPECT_TRUE(physical_plan.ok()) << "Physical planning should succeed";
+        return physical_plan;
     }
 
     void IngestData(const std::string& table_name, const std::shared_ptr<arrow::RecordBatch>& record_batch) {
@@ -164,6 +158,7 @@ public:
     std::shared_ptr<kv::DB> db_;
     std::shared_ptr<catalog::KVCatalog> catalog_;
     catalog::PartitionSpec partition_spec_;
+    std::shared_ptr<query::Planner> planner_;
 };
 
 }  // namespace pond::query

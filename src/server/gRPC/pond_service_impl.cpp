@@ -21,6 +21,9 @@
 #include "query/data/arrow_util.h"
 #include "query/executor/sql_table_executor.h"
 #include "server/gRPC/type_converter.h"
+#include "query/executor/materialized_executor.h"
+#include "query/data/catalog_data_accessor.h"
+#include "query/planner/planner.h"
 
 namespace pond::server {
 
@@ -46,6 +49,10 @@ PondServiceImpl::PondServiceImpl(std::shared_ptr<pond::kv::DB> db,
     }
     catalog_db_ = std::move(catalog_db_result.value());
     catalog_ = std::make_shared<pond::catalog::KVCatalog>(catalog_db_);
+
+    data_accessor_ = std::make_shared<pond::query::CatalogDataAccessor>(catalog_, fs_);
+    // Initialize the query executor
+    query_executor_ = std::make_shared<pond::query::MaterializedExecutor>(catalog_, data_accessor_);
 }
 
 // Helper method to get the default table
@@ -765,6 +772,141 @@ grpc::Status PondServiceImpl::UpdatePartitionSpec(grpc::ServerContext* context,
     }
     
     return grpc::Status::OK;
+}
+
+grpc::Status PondServiceImpl::ExecuteQuery(grpc::ServerContext* context,
+                                         const pond::proto::ExecuteQueryRequest* request,
+                                         grpc::ServerWriter<pond::proto::ExecuteQueryResponse>* writer) {
+    LOG_STATUS("Received ExecuteQuery request with query: %s", request->sql_query().c_str());
+
+    try {
+        // Create query planner
+        pond::query::Planner planner(catalog_);
+
+        // Parse and plan the query
+        auto plan_result = planner.Plan(request->sql_query());
+        if (!plan_result.ok()) {
+            LOG_ERROR("Failed to plan query: %s", plan_result.error().message().c_str());
+            pond::proto::ExecuteQueryResponse response;
+            response.set_success(false);
+            response.set_error("Failed to plan query: " + plan_result.error().message());
+            writer->Write(response);
+            return grpc::Status::OK;
+        }
+
+        // Execute the plan
+        auto iterator_result = query_executor_->Execute(plan_result.value());
+        if (!iterator_result.ok()) {
+            LOG_ERROR("Failed to execute query: %s", iterator_result.error().message().c_str());
+            pond::proto::ExecuteQueryResponse response;
+            response.set_success(false);
+            response.set_error("Failed to execute query: " + iterator_result.error().message());
+            writer->Write(response);
+            return grpc::Status::OK;
+        }
+
+        auto iterator = std::move(iterator_result).value();
+        int64_t total_rows = 0;
+        bool first_batch = true;
+
+        LOG_STATUS("Executing query: %s", request->sql_query().c_str());
+
+        // Process results in batches
+        while (iterator->HasNext()) {
+            auto batch_result = iterator->Next();
+            if (!batch_result.ok()) {
+                LOG_ERROR("Error reading results: %s", batch_result.error().message().c_str());
+                pond::proto::ExecuteQueryResponse response;
+                response.set_success(false);
+                response.set_error("Error reading results: " + batch_result.error().message());
+                writer->Write(response);
+                return grpc::Status::OK;
+            }
+
+            auto batch = batch_result.value();
+            if (!batch) {
+                break;  // End of data
+            }
+
+            pond::proto::ExecuteQueryResponse response;
+            response.set_success(true);
+
+            // On first batch, add schema information
+            if (first_batch) {
+                auto schema = batch->schema();
+                for (int i = 0; i < schema->num_fields(); i++) {
+                    auto field = schema->field(i);
+                    auto* col = response.add_columns();
+                    col->set_name(field->name());
+                    col->set_type(field->type()->ToString());
+                }
+                first_batch = false;
+            }
+
+            // Add data for each column
+            for (int i = 0; i < batch->num_columns(); i++) {
+                auto column = batch->column(i);
+                auto* col_data = response.mutable_columns(i);
+
+                // // Convert column data to strings
+                for (int64_t row = 0; row < batch->num_rows(); row++) {
+                    if (column->IsNull(row)) {
+                        col_data->add_values("");
+                        col_data->add_nulls(true);
+                    } else {
+                        std::string str_val;
+                        switch (column->type()->id()) {
+                            case arrow::Type::INT32:
+                                str_val = std::to_string(std::static_pointer_cast<arrow::Int32Array>(column)->Value(row));
+                                break;
+                            case arrow::Type::INT64:
+                                str_val = std::to_string(std::static_pointer_cast<arrow::Int64Array>(column)->Value(row));
+                                break;
+                            case arrow::Type::UINT32:
+                                str_val = std::to_string(std::static_pointer_cast<arrow::UInt32Array>(column)->Value(row));
+                                break;
+                            case arrow::Type::UINT64:
+                                str_val = std::to_string(std::static_pointer_cast<arrow::UInt64Array>(column)->Value(row));
+                                break;
+                            case arrow::Type::FLOAT:
+                                str_val = std::to_string(std::static_pointer_cast<arrow::FloatArray>(column)->Value(row));
+                                break;
+                            case arrow::Type::DOUBLE:
+                                str_val = std::to_string(std::static_pointer_cast<arrow::DoubleArray>(column)->Value(row));
+                                break;
+                            case arrow::Type::STRING:
+                                str_val = std::static_pointer_cast<arrow::StringArray>(column)->GetString(row);
+                                break;
+                            case arrow::Type::BOOL:
+                                str_val = std::static_pointer_cast<arrow::BooleanArray>(column)->Value(row) ? "true" : "false";
+                                break;
+                            default:
+                                str_val = "Unsupported type";
+                        }
+                        col_data->add_values(str_val);
+                        col_data->add_nulls(false);
+                    }
+                }
+            }
+
+            total_rows += batch->num_rows();
+            response.set_total_rows(total_rows);
+            response.set_has_more(iterator->HasNext());
+
+            if (!writer->Write(response)) {
+                return grpc::Status(grpc::StatusCode::CANCELLED, "Client disconnected");
+            }
+        }
+
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        LOG_ERROR("Error executing query: %s", e.what());
+        pond::proto::ExecuteQueryResponse response;
+        response.set_success(false);
+        response.set_error(std::string("Error executing query: ") + e.what());
+        writer->Write(response);
+        return grpc::Status::OK;
+    }
 }
 
 }  // namespace pond::server

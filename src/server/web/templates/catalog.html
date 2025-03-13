@@ -5,120 +5,116 @@
 {% block page_title %}Catalog{% endblock %}
 
 {% block content %}
-<div class="row mb-4">
-    <div class="col-md-12">
-        <div class="card">
-            <div class="card-header">
-                <ul class="nav nav-tabs card-header-tabs" role="tablist">
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link active" id="sql-tab" data-bs-toggle="tab" data-bs-target="#sql-pane" type="button" role="tab" aria-controls="sql-pane" aria-selected="true">SQL Query</button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="create-table-tab" data-bs-toggle="tab" data-bs-target="#create-table-pane" type="button" role="tab" aria-controls="create-table-pane" aria-selected="false">Create Table</button>
-                    </li>
-                </ul>
+<div class="container mt-4">
+    <h2>Catalog</h2>
+
+    <!-- Tabs -->
+    <ul class="nav nav-tabs mb-4" id="catalogTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="query-tab" data-bs-toggle="tab" data-bs-target="#query" type="button" role="tab" aria-controls="query" aria-selected="true">SQL Query</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="create-table-tab" data-bs-toggle="tab" data-bs-target="#create-table" type="button" role="tab" aria-controls="create-table" aria-selected="false">Create Table</button>
+        </li>
+    </ul>
+
+    <!-- Tab Content -->
+    <div class="tab-content" id="catalogTabsContent">
+        <!-- SQL Query Tab -->
+        <div class="tab-pane fade show active" id="query" role="tabpanel" aria-labelledby="query-tab">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Execute SQL Query</h5>
+                </div>
+                <div class="card-body">
+                    <form action="/catalog/execute-query" method="post">
+                        <div class="mb-3">
+                            <label for="sql_query" class="form-label">SQL Query</label>
+                            <textarea class="form-control" id="sql_query" name="sql_query" rows="4" placeholder="Enter your SQL query here..." required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Execute Query</button>
+                    </form>
+                </div>
             </div>
-            <div class="card-body">
-                <div class="tab-content">
-                    <!-- SQL Query Tab -->
-                    <div class="tab-pane fade show active" id="sql-pane" role="tabpanel" aria-labelledby="sql-tab">
-                        <h5 class="mb-3">Execute SQL Query</h5>
-                        <form action="/catalog/execute-sql" method="post" class="mb-3">
-                            <div class="mb-3">
-                                <label for="sql_query" class="form-label">SQL Query</label>
-                                <textarea class="form-control" id="sql_query" name="sql_query" rows="5" 
-                                    placeholder="SELECT * FROM example WHERE id > 0" required></textarea>
-                                <div class="form-text text-muted">
-                                    Example: SELECT * FROM users WHERE name LIKE 'John%';
-                                </div>
+        </div>
+
+        <!-- Create Table Tab -->
+        <div class="tab-pane fade" id="create-table" role="tabpanel" aria-labelledby="create-table-tab">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Create Table</h5>
+                </div>
+                <div class="card-body">
+                    <form action="/catalog/create-table" method="post" id="createTableForm">
+                        <!-- Table Name and Location -->
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="table_name" class="form-label">Table Name</label>
+                                <input type="text" class="form-control" id="table_name" name="table_name" required
+                                       pattern="[a-zA-Z][a-zA-Z0-9_]*"
+                                       title="Table name must start with a letter and contain only letters, numbers, and underscores">
                             </div>
-                            <button type="submit" class="btn btn-primary">Execute Query</button>
-                        </form>
-                    </div>
-
-                    <!-- Create Table Tab -->
-                    <div class="tab-pane fade" id="create-table-pane" role="tabpanel" aria-labelledby="create-table-tab">
-                        <div class="mb-4">
-                            <ul class="nav nav-pills" role="tablist">
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link active" id="ui-create-tab" data-bs-toggle="tab" data-bs-target="#ui-create-pane" type="button" role="tab" aria-controls="ui-create-pane" aria-selected="true">UI Form</button>
-                                </li>
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link" id="sql-create-tab" data-bs-toggle="tab" data-bs-target="#sql-create-pane" type="button" role="tab" aria-controls="sql-create-pane" aria-selected="false">SQL</button>
-                                </li>
-                            </ul>
-                            <div class="tab-content mt-3">
-                                <!-- UI Create Table -->
-                                <div class="tab-pane fade show active" id="ui-create-pane" role="tabpanel" aria-labelledby="ui-create-tab">
-                                    <form action="/catalog/create-table" method="post" id="ui-create-table-form">
-                                        <!-- Table Name and Location -->
-                                        <div class="row mb-3">
-                                            <div class="col-md-6">
-                                                <label for="table_name" class="form-label">Table Name</label>
-                                                <input type="text" class="form-control" id="table_name" name="table_name" required
-                                                       pattern="[a-zA-Z][a-zA-Z0-9_]*"
-                                                       title="Table name must start with a letter and contain only letters, numbers, and underscores">
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label for="location" class="form-label">Location (Optional)</label>
-                                                <input type="text" class="form-control" id="location" name="location">
-                                            </div>
-                                        </div>
-
-                                        <!-- Columns -->
-                                        <div class="mb-3">
-                                            <label class="form-label">Columns</label>
-                                            <div id="columns-container">
-                                                <!-- Column template will be cloned here -->
-                                            </div>
-                                            <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="add-column-btn">
-                                                <i class="bi bi-plus"></i> Add Column
-                                            </button>
-                                        </div>
-
-                                        <!-- Partitioning -->
-                                        <div class="mb-3">
-                                            <label class="form-label">Partitioning</label>
-                                            <div id="partition-fields-container">
-                                                <!-- Partition fields will be added here -->
-                                            </div>
-                                            <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="add-partition-btn">
-                                                <i class="bi bi-plus"></i> Add Partition Field
-                                            </button>
-                                        </div>
-
-                                        <button type="submit" class="btn btn-primary">Create Table</button>
-                                    </form>
-                                </div>
-
-                                <!-- SQL Create Table -->
-                                <div class="tab-pane fade" id="sql-create-pane" role="tabpanel" aria-labelledby="sql-create-tab">
-                                    <form action="/catalog/execute-sql" method="post" class="mb-3">
-                                        <div class="mb-3">
-                                            <label for="sql_create_query" class="form-label">SQL Query (CREATE TABLE only)</label>
-                                            <textarea class="form-control" id="sql_create_query" name="sql_query" rows="5" 
-                                                placeholder="CREATE TABLE example (id INT, name VARCHAR(100))" required></textarea>
-                                            <div class="form-text text-muted">
-                                                Example: CREATE TABLE users (id INT, name VARCHAR(100) NOT NULL, email VARCHAR(1000));
-                                            </div>
-                                        </div>
-                                        <button type="submit" class="btn btn-primary">Create Table</button>
-                                    </form>
-                                </div>
+                            <div class="col-md-6">
+                                <label for="location" class="form-label">Location (Optional)</label>
+                                <input type="text" class="form-control" id="location" name="location">
                             </div>
                         </div>
-                    </div>
+
+                        <!-- Columns -->
+                        <div class="mb-3">
+                            <label class="form-label">Columns</label>
+                            <div id="columns-container">
+                                <!-- Column template will be cloned here -->
+                            </div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="add-column-btn">
+                                <i class="bi bi-plus"></i> Add Column
+                            </button>
+                        </div>
+
+                        <!-- Partitioning -->
+                        <div class="mb-3">
+                            <label class="form-label">Partitioning</label>
+                            <div id="partition-fields-container">
+                                <!-- Partition fields will be added here -->
+                            </div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="add-partition-btn">
+                                <i class="bi bi-plus"></i> Add Partition Field
+                            </button>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary">Create Table</button>
+                    </form>
                 </div>
             </div>
         </div>
     </div>
-</div>
 
-{% if result %}
-<div class="result mb-4">
-    <p class="mb-0">{{ result }}</p>
+    <!-- Existing tables list -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h5 class="mb-0">Tables</h5>
+        </div>
+        <div class="card-body">
+            {% if tables %}
+            <div class="list-group">
+                {% for table in tables %}
+                <a href="/catalog/table/{{ table }}" class="list-group-item list-group-item-action">
+                    {{ table }}
+                </a>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">No tables found.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if result %}
+    <div class="alert {% if 'Error' in result %}alert-danger{% else %}alert-success{% endif %} mt-4">
+        {{ result }}
+    </div>
+    {% endif %}
 </div>
-{% endif %}
 
 <!-- Column Template (hidden) -->
 <template id="column-template">
@@ -181,45 +177,6 @@
     </div>
 </template>
 
-<div class="row">
-    <div class="col-md-12">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Tables</h5>
-            </div>
-            <div class="card-body">
-                {% if tables %}
-                <div class="table-responsive">
-                    <table class="table table-hover">
-                        <thead>
-                            <tr>
-                                <th>Table Name</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for table_name in tables %}
-                            <tr>
-                                <td>{{ table_name }}</td>
-                                <td>
-                                    <a href="/catalog/table/{{ table_name }}" class="btn btn-sm btn-info">
-                                        <i class="bi bi-info-circle"></i> Details
-                                    </a>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <div class="alert alert-info">
-                    No tables found. Use the form above to create a table.
-                </div>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
@@ -309,7 +266,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Form submission handler
-    document.getElementById('ui-create-table-form').addEventListener('submit', function(e) {
+    document.getElementById('createTableForm').addEventListener('submit', function(e) {
         e.preventDefault();
         
         // Validate that partition columns are unique

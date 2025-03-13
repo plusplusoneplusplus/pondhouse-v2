@@ -45,6 +45,9 @@ service PondService {
 
   // Update partition specification for a table
   rpc UpdatePartitionSpec(UpdatePartitionSpecRequest) returns (UpdatePartitionSpecResponse) {}
+
+  // Execute a SQL query and stream results back
+  rpc ExecuteQuery(ExecuteQueryRequest) returns (stream ExecuteQueryResponse) {}
 }
 
 // Request message for Get operation
@@ -296,4 +299,24 @@ message UpdatePartitionSpecRequest {
 message UpdatePartitionSpecResponse {
   bool success = 1;
   string error = 2;
+}
+
+message ExecuteQueryRequest {
+    string sql_query = 1;  // The SQL query to execute
+    int32 batch_size = 2;  // Number of rows to return per batch (optional)
+}
+
+message QueryResultColumn {
+    string name = 1;       // Column name
+    string type = 2;       // Column type
+    repeated string values = 3;  // Column values as strings
+    repeated bool nulls = 4;     // Whether each value is null
+}
+
+message ExecuteQueryResponse {
+    bool success = 1;
+    string error = 2;
+    repeated QueryResultColumn columns = 3;  // Column data
+    bool has_more = 4;  // Whether there are more results to fetch
+    int64 total_rows = 5;  // Total number of rows in the result
 } 

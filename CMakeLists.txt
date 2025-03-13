@@ -171,6 +171,7 @@ add_library(pondhouse_common
     src/query/planner/physical_plan_node.cpp
     src/query/planner/physical_plan_printer.cpp
     src/query/planner/physical_planner.cpp
+    src/query/planner/planner.cpp
     src/query/executor/executor.cpp
     src/query/executor/materialized_executor.cpp
     src/query/executor/operator_iterators.cpp
