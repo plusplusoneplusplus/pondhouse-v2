@@ -55,60 +55,41 @@ public:
      * @param row_idx The row index
      * @return A result containing the void or an error
      */
-    template <typename ArrayType, typename BuilderType>
-    static common::Result<void> AppendGroupValue(const std::shared_ptr<arrow::Array>& input_array,
-                                                 std::shared_ptr<arrow::ArrayBuilder> builder,
-                                                 int row_idx) {
-        auto typed_array = std::static_pointer_cast<ArrayType>(input_array);
-        auto typed_builder = static_cast<BuilderType*>(builder.get());
-        if (typed_array->IsNull(row_idx)) {
-            auto status = typed_builder->AppendNull();
-            if (!status.ok()) {
-                return common::Error(common::ErrorCode::Failure, "Failed to append null: " + status.ToString());
-            }
-        } else {
-            if constexpr (std::is_same_v<ArrayType, arrow::StringArray>) {
-                auto status = typed_builder->Append(typed_array->GetString(row_idx));
-                if (!status.ok()) {
-                    return common::Error(common::ErrorCode::Failure, "Failed to append string: " + status.ToString());
-                }
-            } else {
-                auto status = typed_builder->Append(typed_array->Value(row_idx));
-                if (!status.ok()) {
-                    return common::Error(common::ErrorCode::Failure, "Failed to append value: " + status.ToString());
-                }
-            }
-        }
-        return common::Result<void>::success();
-    }
-
     static common::Result<void> AppendGroupValue(const std::shared_ptr<arrow::Array>& input_array,
                                                  std::shared_ptr<arrow::ArrayBuilder> builder,
                                                  int row_idx) {
         switch (input_array->type_id()) {
             case arrow::Type::INT32:
-                ArrowUtil::AppendGroupValue<arrow::Int32Array, arrow::Int32Builder>(input_array, builder, row_idx);
+                ArrowUtil::AppendGroupValueInternal<arrow::Int32Array, arrow::Int32Builder>(
+                    input_array, builder, row_idx);
                 break;
             case arrow::Type::INT64:
-                ArrowUtil::AppendGroupValue<arrow::Int64Array, arrow::Int64Builder>(input_array, builder, row_idx);
+                ArrowUtil::AppendGroupValueInternal<arrow::Int64Array, arrow::Int64Builder>(
+                    input_array, builder, row_idx);
                 break;
             case arrow::Type::UINT32:
-                ArrowUtil::AppendGroupValue<arrow::UInt32Array, arrow::UInt32Builder>(input_array, builder, row_idx);
+                ArrowUtil::AppendGroupValueInternal<arrow::UInt32Array, arrow::UInt32Builder>(
+                    input_array, builder, row_idx);
                 break;
             case arrow::Type::UINT64:
-                ArrowUtil::AppendGroupValue<arrow::UInt64Array, arrow::UInt64Builder>(input_array, builder, row_idx);
+                ArrowUtil::AppendGroupValueInternal<arrow::UInt64Array, arrow::UInt64Builder>(
+                    input_array, builder, row_idx);
                 break;
             case arrow::Type::FLOAT:
-                ArrowUtil::AppendGroupValue<arrow::FloatArray, arrow::FloatBuilder>(input_array, builder, row_idx);
+                ArrowUtil::AppendGroupValueInternal<arrow::FloatArray, arrow::FloatBuilder>(
+                    input_array, builder, row_idx);
                 break;
             case arrow::Type::DOUBLE:
-                ArrowUtil::AppendGroupValue<arrow::DoubleArray, arrow::DoubleBuilder>(input_array, builder, row_idx);
+                ArrowUtil::AppendGroupValueInternal<arrow::DoubleArray, arrow::DoubleBuilder>(
+                    input_array, builder, row_idx);
                 break;
             case arrow::Type::STRING:
-                ArrowUtil::AppendGroupValue<arrow::StringArray, arrow::StringBuilder>(input_array, builder, row_idx);
+                ArrowUtil::AppendGroupValueInternal<arrow::StringArray, arrow::StringBuilder>(
+                    input_array, builder, row_idx);
                 break;
             case arrow::Type::BOOL:
-                ArrowUtil::AppendGroupValue<arrow::BooleanArray, arrow::BooleanBuilder>(input_array, builder, row_idx);
+                ArrowUtil::AppendGroupValueInternal<arrow::BooleanArray, arrow::BooleanBuilder>(
+                    input_array, builder, row_idx);
                 break;
             default: {
                 return common::Error(common::ErrorCode::NotImplemented, "Unsupported type in GROUP BY");
@@ -137,7 +118,13 @@ public:
         return common::Result<void>::success();
     }
 
-    // Handle different numeric types
+    /**
+     * @brief Compute the sum of a column
+     * @param input_array The input array
+     * @param row_indices The row indices from the input array
+     * @param builder The array builder
+     * @return A result containing the void or an error
+     */
     template <typename ArrayType, typename BuilderType, typename SumType>
     static common::Result<void> ComputeSum(const std::shared_ptr<arrow::Array>& input_array,
                                            const std::vector<int>& row_indices,
@@ -156,6 +143,13 @@ public:
         return AppendValue<BuilderType>(builder, sum, all_null);
     }
 
+    /**
+     * @brief Compute the average of a column
+     * @param input_array The input array
+     * @param row_indices The row indices from the input array
+     * @param builder The array builder
+     * @return A result containing the void or an error
+     */
     template <typename ArrayType>
     static common::Result<void> ComputeAverage(const std::shared_ptr<arrow::Array>& input_array,
                                                const std::vector<int>& row_indices,
@@ -194,22 +188,6 @@ public:
      * @param row_idx The row index
      * @param group_key The group key
      */
-    template <typename ArrayType>
-    static void AppendGroupKeyValue(const std::shared_ptr<arrow::Array>& array, int row_idx, std::string& group_key) {
-        auto typed_array = std::static_pointer_cast<ArrayType>(array);
-        if (typed_array->IsNull(row_idx)) {
-            group_key += "NULL";
-        } else {
-            if constexpr (std::is_same_v<ArrayType, arrow::StringArray>) {
-                group_key += typed_array->GetString(row_idx);
-            } else if constexpr (std::is_same_v<ArrayType, arrow::BooleanArray>) {
-                group_key += typed_array->Value(row_idx) ? "1" : "0";
-            } else {
-                group_key += std::to_string(typed_array->Value(row_idx));
-            }
-        }
-    }
-
     static common::Result<void> AppendGroupKeyValue(const std::shared_ptr<arrow::Array>& array,
                                                     int row_idx,
                                                     std::string& group_key) {
@@ -288,6 +266,64 @@ public:
      */
     static common::Result<ArrowDataBatchSharedPtr> JsonToRecordBatch(const rapidjson::Document& json_doc,
                                                                      const common::Schema& schema);
+
+private:
+    /**
+     * @brief Append a value to an array builder
+     * @param input_array The input array
+     * @param builder The array builder
+     * @param row_idx The row index
+     * @return A result containing the void or an
+     * error
+     */
+    template <typename ArrayType, typename BuilderType>
+    static common::Result<void> AppendGroupValueInternal(const std::shared_ptr<arrow::Array>& input_array,
+                                                         std::shared_ptr<arrow::ArrayBuilder> builder,
+                                                         int row_idx) {
+        auto typed_array = std::static_pointer_cast<ArrayType>(input_array);
+        auto typed_builder = static_cast<BuilderType*>(builder.get());
+        if (typed_array->IsNull(row_idx)) {
+            auto status = typed_builder->AppendNull();
+            if (!status.ok()) {
+                return common::Error(common::ErrorCode::Failure, "Failed to append null: " + status.ToString());
+            }
+        } else {
+            if constexpr (std::is_same_v<ArrayType, arrow::StringArray>) {
+                auto status = typed_builder->Append(typed_array->GetString(row_idx));
+                if (!status.ok()) {
+                    return common::Error(common::ErrorCode::Failure, "Failed to append string: " + status.ToString());
+                }
+            } else {
+                auto status = typed_builder->Append(typed_array->Value(row_idx));
+                if (!status.ok()) {
+                    return common::Error(common::ErrorCode::Failure, "Failed to append value: " + status.ToString());
+                }
+            }
+        }
+        return common::Result<void>::success();
+    }
+
+    /**
+     * @brief Append a key value to a group key
+     * @param array The input array
+     * @param row_idx The row index
+     * @param group_key The group key
+     */
+    template <typename ArrayType>
+    static void AppendGroupKeyValue(const std::shared_ptr<arrow::Array>& array, int row_idx, std::string& group_key) {
+        auto typed_array = std::static_pointer_cast<ArrayType>(array);
+        if (typed_array->IsNull(row_idx)) {
+            group_key += "NULL";
+        } else {
+            if constexpr (std::is_same_v<ArrayType, arrow::StringArray>) {
+                group_key += typed_array->GetString(row_idx);
+            } else if constexpr (std::is_same_v<ArrayType, arrow::BooleanArray>) {
+                group_key += typed_array->Value(row_idx) ? "1" : "0";
+            } else {
+                group_key += std::to_string(typed_array->Value(row_idx));
+            }
+        }
+    }
 };
 
 }  // namespace pond::query

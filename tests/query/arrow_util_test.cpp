@@ -1,6 +1,7 @@
 #include "query/data/arrow_util.h"
 
 #include <arrow/api.h>
+#include <arrow/builder.h>
 #include <arrow/testing/gtest_util.h>
 #include <gtest/gtest.h>
 
@@ -597,6 +598,252 @@ TEST_F(ArrowUtilTest, JsonToRecordBatchTypeMismatch) {
     EXPECT_FALSE(result.ok());
     EXPECT_EQ(result.error().code(), common::ErrorCode::InvalidArgument);
     EXPECT_TRUE(result.error().message().find("not an integer") != std::string::npos);
+}
+
+//
+// Test Setup:
+//      Test AppendGroupValue with different Arrow array types
+// Test Result:
+//      Values are correctly appended to builders for each type
+//
+TEST_F(ArrowUtilTest, AppendGroupValue) {
+    // Test Int32
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({1, 2, 3}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int32Builder>();
+        auto result = ArrowUtil::AppendGroupValue(array, output_builder, 1);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int32Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 2);
+    }
+
+    // Test Int64
+    {
+        auto builder = std::make_shared<arrow::Int64Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({100L, 200L, 300L}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int64Builder>();
+        auto result = ArrowUtil::AppendGroupValue(array, output_builder, 1);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int64Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 200L);
+    }
+
+    // Test Double
+    {
+        auto builder = std::make_shared<arrow::DoubleBuilder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({1.1, 2.2, 3.3}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::DoubleBuilder>();
+        auto result = ArrowUtil::AppendGroupValue(array, output_builder, 1);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(output_array);
+        ASSERT_DOUBLE_EQ(typed_array->Value(0), 2.2);
+    }
+
+    // Test String
+    {
+        auto builder = std::make_shared<arrow::StringBuilder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({"a", "b", "c"}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::StringBuilder>();
+        auto result = ArrowUtil::AppendGroupValue(array, output_builder, 1);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::StringArray>(output_array);
+        ASSERT_EQ(typed_array->GetString(0), "b");
+    }
+
+    // Test with nulls
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(2));
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int32Builder>();
+        auto result = ArrowUtil::AppendGroupValue(array, output_builder, 1);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int32Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 2);
+    }
+}
+
+//
+// Test Setup:
+//      Test ComputeSum with different numeric types and edge cases
+// Test Result:
+//      Sums are correctly computed for each type
+//
+TEST_F(ArrowUtilTest, ComputeSum) {
+    // Test Int32
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({1, 2, 3, 4, 5}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int64Builder>();
+        std::vector<int> indices = {0, 2, 4};  // Sum 1 + 3 + 5 = 9
+        auto result =
+            ArrowUtil::ComputeSum<arrow::Int32Array, arrow::Int64Builder, int64_t>(array, indices, output_builder);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int64Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 9);
+    }
+
+    // Test Double with nulls
+    {
+        auto builder = std::make_shared<arrow::DoubleBuilder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(2.5));
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(7.5));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::DoubleBuilder>();
+        std::vector<int> indices = {0, 1, 2, 3};  // Sum null + 2.5 + null + 7.5 = 10.0
+        auto result =
+            ArrowUtil::ComputeSum<arrow::DoubleArray, arrow::DoubleBuilder, double>(array, indices, output_builder);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(output_array);
+        ASSERT_DOUBLE_EQ(typed_array->Value(0), 10.0);
+    }
+
+    // Test empty indices
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({1, 2, 3}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int64Builder>();
+        std::vector<int> indices;
+        auto result =
+            ArrowUtil::ComputeSum<arrow::Int32Array, arrow::Int64Builder, int64_t>(array, indices, output_builder);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        ASSERT_EQ(output_array->length(), 1);
+        ASSERT_TRUE(output_array->IsNull(0));
+    }
+}
+
+//
+// Test Setup:
+//      Test ComputeAverage with different numeric types and edge cases
+// Test Result:
+//      Averages are correctly computed for each type
+//
+TEST_F(ArrowUtilTest, ComputeAverage) {
+    // Test Int32
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({1, 2, 3, 4, 5}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::DoubleBuilder>();
+        std::vector<int> indices = {0, 2, 4};  // Avg of 1, 3, 5 = 3.0
+        auto result = ArrowUtil::ComputeAverage<arrow::Int32Array>(array, indices, output_builder);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(output_array);
+        ASSERT_DOUBLE_EQ(typed_array->Value(0), 3.0);
+    }
+
+    // Test Double with nulls
+    {
+        auto builder = std::make_shared<arrow::DoubleBuilder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(2.0));
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(4.0));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::DoubleBuilder>();
+        std::vector<int> indices = {0, 1, 2, 3};  // Avg of null, 2.0, null, 4.0 = 3.0
+        auto result = ArrowUtil::ComputeAverage<arrow::DoubleArray>(array, indices, output_builder);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(output_array);
+        ASSERT_DOUBLE_EQ(typed_array->Value(0), 3.0);
+    }
+
+    // Test all nulls
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendNulls(3));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::DoubleBuilder>();
+        std::vector<int> indices = {0, 1, 2};
+        auto result = ArrowUtil::ComputeAverage<arrow::Int32Array>(array, indices, output_builder);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        ASSERT_EQ(output_array->length(), 1);
+        ASSERT_TRUE(output_array->IsNull(0));
+    }
+
+    // Test empty indices
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({1, 2, 3}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::DoubleBuilder>();
+        std::vector<int> indices;
+        auto result = ArrowUtil::ComputeAverage<arrow::Int32Array>(array, indices, output_builder);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        ASSERT_EQ(output_array->length(), 1);
+        ASSERT_TRUE(output_array->IsNull(0));
+    }
 }
 
 }  // namespace pond::query
