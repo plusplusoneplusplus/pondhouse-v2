@@ -4,6 +4,19 @@ project(pondhouse-v2)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 
+# compile in release with debug info mode by default
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Choose the type of build, options are: Debug Release RelWithDebInfo MinSizeRel." FORCE)
+endif()
+
+# Add explicit debug symbols configuration
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -g -ggdb3")
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO} -g -ggdb3")
+
+# Verify compiler flags
+message(STATUS "C++ flags for RelWithDebInfo: ${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+message(STATUS "C flags for RelWithDebInfo: ${CMAKE_C_FLAGS_RELWITHDEBINFO}")
+
 # Set policy to handle duplicate targets
 cmake_policy(SET CMP0074 NEW)
 
@@ -329,4 +342,11 @@ add_custom_target(clean_all
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${PROTO_OUTPUT_DIR}
     COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target clean
     COMMENT "Removing all generated files and build artifacts"
+)
+
+# Add debug symbol verification target
+add_custom_target(verify_debug_symbols
+    COMMAND sh -c "objdump --syms ${CMAKE_BINARY_DIR}/pond_server | grep debug_info || (echo 'No debug symbols found!' && exit 1)"
+    COMMENT "Verifying debug symbols in executables"
+    DEPENDS pond_server
 )

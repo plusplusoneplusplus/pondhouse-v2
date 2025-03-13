@@ -13,8 +13,18 @@ import json
 # Import generated gRPC modules
 import pond_service_pb2 as pb2
 import pond_service_pb2_grpc as pb2_grpc
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+# Add CORS middleware for development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -789,7 +799,7 @@ async def execute_sql(request: Request):
         await pond_client.execute_sql(sql_query)
         return RedirectResponse(url="/catalog", status_code=303)
     except Exception as e:
-        tables = await pond_client.list_tables()
+        tables = pond_client.list_tables()
         return templates.TemplateResponse(
             "catalog.html",
             {"request": request, "tables": tables, "result": f"Error: {str(e)}"}
@@ -870,7 +880,7 @@ async def create_table(request: Request):
         
         return RedirectResponse(url="/catalog", status_code=303)
     except Exception as e:
-        tables = await pond_client.list_tables()
+        tables = pond_client.list_tables()
         return templates.TemplateResponse(
             "catalog.html",
             {"request": request, "tables": tables, "result": f"Error: {str(e)}"}
@@ -1168,7 +1178,7 @@ async def execute_query(request: Request):
                     "request": request,
                     "active_page": "catalog",
                     "result": f"Error executing query: {error}",
-                    "tables": await pond_client.list_tables()[0]
+                    "tables": pond_client.list_tables()[0]
                 }
             )
         
@@ -1195,7 +1205,7 @@ async def execute_query(request: Request):
                 "request": request,
                 "active_page": "catalog",
                 "result": f"Error: {str(e)}",
-                "tables": await pond_client.list_tables()[0]
+                "tables": pond_client.list_tables()[0]
             }
         )
 
@@ -1213,5 +1223,13 @@ if __name__ == "__main__":
     # Environment variables can override command line arguments
     port = int(os.environ.get("WEB_PORT", args.port))
     
-    print(f"Starting web server on {args.host}:{port}")
-    uvicorn.run(app, host=args.host, port=port) 
+    print(f"Starting web server on {args.host}:{port} (debug mode)")
+    uvicorn.run(
+        "main:app",
+        host=args.host,
+        port=port,
+        reload=True,               # Auto-reload on code changes
+        log_level="debug",         # Show detailed logs
+        proxy_headers=True,        # For better error reporting
+        server_header=False        # Disable default server header
+    ) 

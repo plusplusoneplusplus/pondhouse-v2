@@ -813,6 +813,7 @@ grpc::Status PondServiceImpl::ExecuteQuery(grpc::ServerContext* context,
 
         // Process results in batches
         while (iterator->HasNext()) {
+            LOG_VERBOSE("Reading next batch");
             auto batch_result = iterator->Next();
             if (!batch_result.ok()) {
                 LOG_ERROR("Error reading results: %s", batch_result.error().message().c_str());

@@ -142,6 +142,21 @@ if [ ! -f "$GRPC_SERVER" ]; then
 fi
 
 cd "$RUN_DIR"
+
+# Configure core dumps BEFORE starting server
+print_info "Configuring core dump settings..."
+ulimit -c unlimited
+mkdir -p "${RUN_DIR}/cores"
+# Add fallback pattern if sudo fails
+(sudo sysctl -w "kernel.core_pattern=${RUN_DIR}/cores/core.%e.%p.%t" >/dev/null 2>&1 || \
+ sudo sysctl -w "kernel.core_pattern=core.%e.%p.%t" >/dev/null 2>&1 || true)
+
+# Verify core dump configuration
+echo -e "\nCurrent core dump settings:"
+ulimit -a | grep 'core file size'
+echo "Core pattern: $(cat /proc/sys/kernel/core_pattern 2>/dev/null)"
+echo "Core dump directory: ${RUN_DIR}/cores"
+
 print_info "Starting gRPC server on $GRPC_HOST:$GRPC_PORT..."
 "$GRPC_SERVER" --address "$GRPC_HOST:$GRPC_PORT" --db_name "$DB_NAME" --db_path "$DB_PATH" > "$LOG_FILE" 2>&1 &
 GRPC_PID=$!
@@ -154,7 +169,7 @@ if ! ps -p $GRPC_PID > /dev/null; then
     exit 1
 fi
 
-
+# Enable core dumps
 print_info "Starting web server on port $WEB_PORT..."
 cd "$WEB_SERVER_DIR"
 print_info "Activate python venv"

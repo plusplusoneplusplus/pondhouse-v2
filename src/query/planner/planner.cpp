@@ -8,6 +8,9 @@ Result<std::shared_ptr<LogicalPlanNode>> Planner::PlanLogical(const std::string&
     LogicalPlanner planner(*catalog_);
     hsql::SQLParserResult parse_result;
     hsql::SQLParser::parse(query, &parse_result);
+    if (!parse_result.isValid()) {
+        return common::Result<std::shared_ptr<LogicalPlanNode>>::failure(common::ErrorCode::InvalidArgument, std::string("Invalid SQL query: ") + parse_result.errorMsg());
+    }
     auto logical_plan = planner.Plan(parse_result.getStatement(0));
     if (optimize) {
         return Optimize(logical_plan.value());
