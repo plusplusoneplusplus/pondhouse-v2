@@ -105,6 +105,7 @@ public:
         return ss.str();
     }
 };
+
 class Schema : public ISerializable {
 public:
     explicit Schema(std::vector<ColumnSchema> columns) : columns_(std::move(columns)) {

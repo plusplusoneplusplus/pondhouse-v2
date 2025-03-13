@@ -293,7 +293,16 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
     }
 
     // Create a mapping from group keys to row indices
+    // e.g. group_map["key1"] = [0, 1, 2]
     std::unordered_map<std::string, std::vector<int>> group_map;
+
+    auto input_batch_schema_result = format::SchemaConverter::FromArrowSchema(input_batch->schema());
+    if (!input_batch_schema_result.ok()) {
+        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(input_batch_schema_result.error());
+        return;
+    }
+
+    auto input_batch_pond_schema = input_batch_schema_result.value();
 
     // First pass: Group the rows by the group by columns
     for (int row_idx = 0; row_idx < input_batch->num_rows(); ++row_idx) {
@@ -312,14 +321,7 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
             const std::string& col_name = col_expr->ColumnName();
 
             // Find column index in the input batch
-            int col_idx = -1;
-            auto input_schema = input_batch->schema();
-            for (int i = 0; i < input_schema->num_fields(); ++i) {
-                if (input_schema->field(i)->name() == col_name) {
-                    col_idx = i;
-                    break;
-                }
-            }
+            int col_idx = input_batch_pond_schema->GetColumnIndex(col_name);
 
             if (col_idx == -1) {
                 current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
@@ -335,66 +337,10 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
                 group_key += "|";  // Separator between values
             }
 
-            switch (array->type_id()) {
-                case arrow::Type::INT32: {
-                    auto typed_array = std::static_pointer_cast<arrow::Int32Array>(array);
-                    if (typed_array->IsNull(row_idx)) {
-                        group_key += "NULL";
-                    } else {
-                        group_key += std::to_string(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::INT64: {
-                    auto typed_array = std::static_pointer_cast<arrow::Int64Array>(array);
-                    if (typed_array->IsNull(row_idx)) {
-                        group_key += "NULL";
-                    } else {
-                        group_key += std::to_string(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::FLOAT: {
-                    auto typed_array = std::static_pointer_cast<arrow::FloatArray>(array);
-                    if (typed_array->IsNull(row_idx)) {
-                        group_key += "NULL";
-                    } else {
-                        group_key += std::to_string(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::DOUBLE: {
-                    auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(array);
-                    if (typed_array->IsNull(row_idx)) {
-                        group_key += "NULL";
-                    } else {
-                        group_key += std::to_string(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::STRING: {
-                    auto typed_array = std::static_pointer_cast<arrow::StringArray>(array);
-                    if (typed_array->IsNull(row_idx)) {
-                        group_key += "NULL";
-                    } else {
-                        group_key += typed_array->GetString(row_idx);
-                    }
-                    break;
-                }
-                case arrow::Type::BOOL: {
-                    auto typed_array = std::static_pointer_cast<arrow::BooleanArray>(array);
-                    if (typed_array->IsNull(row_idx)) {
-                        group_key += "NULL";
-                    } else {
-                        group_key += typed_array->Value(row_idx) ? "1" : "0";
-                    }
-                    break;
-                }
-                default: {
-                    current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
-                        common::Error(common::ErrorCode::NotImplemented, "Unsupported type in GROUP BY"));
-                    return;
-                }
+            auto append_result = ArrowUtil::AppendGroupKeyValue(array, row_idx, group_key);
+            if (!append_result.ok()) {
+                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(append_result.error());
+                return;
             }
         }
 
@@ -405,40 +351,25 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
     // Prepare the output arrays
     auto output_schema = node.OutputSchema();
     const int num_groups = group_map.size();
+    std::unordered_map<std::string, int> group_key_to_index;
 
     // Create builders for each output column
-    std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
+    std::vector<std::shared_ptr<arrow::ArrayBuilder>> builders;
     for (int i = 0; i < output_schema.NumColumns(); ++i) {
+        auto col_name = output_schema.Columns()[i].name;
         auto type = output_schema.Columns()[i].type;
-        switch (type) {
-            case common::ColumnType::INT32:
-                builders.push_back(std::make_unique<arrow::Int32Builder>());
-                break;
-            case common::ColumnType::INT64:
-                builders.push_back(std::make_unique<arrow::Int64Builder>());
-                break;
-            case common::ColumnType::UINT64:
-                builders.push_back(std::make_unique<arrow::UInt64Builder>());
-                break;
-            case common::ColumnType::UINT32:
-                builders.push_back(std::make_unique<arrow::UInt32Builder>());
-                break;
-            case common::ColumnType::FLOAT:
-                builders.push_back(std::make_unique<arrow::FloatBuilder>());
-                break;
-            case common::ColumnType::DOUBLE:
-                builders.push_back(std::make_unique<arrow::DoubleBuilder>());
-                break;
-            case common::ColumnType::STRING:
-                builders.push_back(std::make_unique<arrow::StringBuilder>());
-                break;
-            case common::ColumnType::BOOLEAN:
-                builders.push_back(std::make_unique<arrow::BooleanBuilder>());
-                break;
-            default:
-                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
-                    common::Error(common::ErrorCode::NotImplemented, "Unsupported type in output schema"));
-                return;
+        auto builder_result = ArrowUtil::CreateArrayBuilder(type);
+        if (!builder_result.ok()) {
+            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(builder_result.error());
+            return;
+        }
+        builders.push_back(std::move(builder_result).value());
+
+        for (const auto& group_expr : group_by) {
+            if (group_expr->Type() == common::ExprType::Column
+                && std::static_pointer_cast<common::ColumnExpression>(group_expr)->ColumnName() == col_name) {
+                group_key_to_index[col_name] = i;
+            }
         }
     }
 
@@ -451,14 +382,7 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
         const std::string& col_name = col_expr->ColumnName();
 
         // Find column index in the input batch
-        int input_col_idx = -1;
-        auto input_schema = input_batch->schema();
-        for (int i = 0; i < input_schema->num_fields(); ++i) {
-            if (input_schema->field(i)->name() == col_name) {
-                input_col_idx = i;
-                break;
-            }
-        }
+        int input_col_idx = input_batch_pond_schema->GetColumnIndex(col_name);
 
         if (input_col_idx == -1) {
             current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
@@ -473,93 +397,10 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
         for (const auto& [group_key, row_indices] : group_map) {
             // Take the first row in the group for the group by columns
             int row_idx = row_indices[0];
-
-            switch (input_array->type_id()) {
-                case arrow::Type::INT32: {
-                    auto typed_array = std::static_pointer_cast<arrow::Int32Array>(input_array);
-                    auto typed_builder = static_cast<arrow::Int32Builder*>(builders[output_col_idx].get());
-                    if (typed_array->IsNull(row_idx)) {
-                        typed_builder->AppendNull();
-                    } else {
-                        typed_builder->Append(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::INT64: {
-                    auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
-                    auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
-                    if (typed_array->IsNull(row_idx)) {
-                        typed_builder->AppendNull();
-                    } else {
-                        typed_builder->Append(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::UINT32: {
-                    auto typed_array = std::static_pointer_cast<arrow::UInt32Array>(input_array);
-                    auto typed_builder = static_cast<arrow::UInt32Builder*>(builders[output_col_idx].get());
-                    if (typed_array->IsNull(row_idx)) {
-                        typed_builder->AppendNull();
-                    } else {
-                        typed_builder->Append(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::UINT64: {
-                    auto typed_array = std::static_pointer_cast<arrow::UInt64Array>(input_array);
-                    auto typed_builder = static_cast<arrow::UInt64Builder*>(builders[output_col_idx].get());
-                    if (typed_array->IsNull(row_idx)) {
-                        typed_builder->AppendNull();
-                    } else {
-                        typed_builder->Append(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::FLOAT: {
-                    auto typed_array = std::static_pointer_cast<arrow::FloatArray>(input_array);
-                    auto typed_builder = static_cast<arrow::FloatBuilder*>(builders[output_col_idx].get());
-                    if (typed_array->IsNull(row_idx)) {
-                        typed_builder->AppendNull();
-                    } else {
-                        typed_builder->Append(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::DOUBLE: {
-                    auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(input_array);
-                    auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
-                    if (typed_array->IsNull(row_idx)) {
-                        typed_builder->AppendNull();
-                    } else {
-                        typed_builder->Append(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::STRING: {
-                    auto typed_array = std::static_pointer_cast<arrow::StringArray>(input_array);
-                    auto typed_builder = static_cast<arrow::StringBuilder*>(builders[output_col_idx].get());
-                    if (typed_array->IsNull(row_idx)) {
-                        typed_builder->AppendNull();
-                    } else {
-                        typed_builder->Append(typed_array->GetString(row_idx));
-                    }
-                    break;
-                }
-                case arrow::Type::BOOL: {
-                    auto typed_array = std::static_pointer_cast<arrow::BooleanArray>(input_array);
-                    auto typed_builder = static_cast<arrow::BooleanBuilder*>(builders[output_col_idx].get());
-                    if (typed_array->IsNull(row_idx)) {
-                        typed_builder->AppendNull();
-                    } else {
-                        typed_builder->Append(typed_array->Value(row_idx));
-                    }
-                    break;
-                }
-                default: {
-                    current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
-                        common::Error(common::ErrorCode::NotImplemented, "Unsupported type in GROUP BY"));
-                    return;
-                }
+            auto append_result = ArrowUtil::AppendGroupValue(input_array, builders[output_col_idx], row_idx);
+            if (!append_result.ok()) {
+                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(append_result.error());
+                return;
             }
         }
 
@@ -623,11 +464,22 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
 
         // Apply the aggregate function to each group
         for (const auto& [group_key, row_indices] : group_map) {
+            if (group_by.size() > 0) {
+                auto group_key_idx = group_key_to_index[group_key];
+                auto column_builder = builders[group_key_idx];
+                auto result = ArrowUtil::AppendValue<arrow::StringBuilder>(column_builder, group_key);
+                if (!result.ok()) {
+                    current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+                        common::ErrorCode::Failure, "Failed to append group key: " + result.error().message()));
+                    return;
+                }
+            }
+
+            auto builder = builders[output_col_idx];
+
             // Compute the aggregate value based on the type
             switch (agg_type) {
                 case common::AggregateType::Count: {
-                    auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
-
                     // Count non-null values
                     int64_t count = 0;
                     for (int row_idx : row_indices) {
@@ -636,94 +488,44 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
                         }
                     }
 
-                    typed_builder->Append(count);
+                    auto result = ArrowUtil::AppendValue<arrow::Int64Builder>(builder, count);
+                    if (!result.ok()) {
+                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+                            common::ErrorCode::Failure, "Failed to append count: " + result.error().message()));
+                        return;
+                    }
                     break;
                 }
                 case common::AggregateType::Sum: {
-                    // Handle different numeric types
                     switch (input_array->type_id()) {
                         case arrow::Type::INT32: {
-                            auto typed_array = std::static_pointer_cast<arrow::Int32Array>(input_array);
-                            auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
-
-                            int64_t sum = 0;
-                            bool all_null = true;
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    sum += typed_array->Value(row_idx);
-                                    all_null = false;
-                                }
-                            }
-
-                            if (all_null) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(sum);
-                            }
+                            auto result = ArrowUtil::ComputeSum<arrow::Int32Array, arrow::Int64Builder, int64_t>(
+                                input_array, row_indices, builder);
                             break;
                         }
                         case arrow::Type::INT64: {
-                            auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
-                            auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
-
-                            int64_t sum = 0;
-                            bool all_null = true;
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    sum += typed_array->Value(row_idx);
-                                    all_null = false;
-                                }
-                            }
-
-                            if (all_null) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(sum);
-                            }
+                            auto result = ArrowUtil::ComputeSum<arrow::Int64Array, arrow::Int64Builder, int64_t>(
+                                input_array, row_indices, builder);
+                            break;
+                        }
+                        case arrow::Type::UINT32: {
+                            auto result = ArrowUtil::ComputeSum<arrow::UInt32Array, arrow::Int64Builder, int64_t>(
+                                input_array, row_indices, builder);
+                            break;
+                        }
+                        case arrow::Type::UINT64: {
+                            auto result = ArrowUtil::ComputeSum<arrow::UInt64Array, arrow::Int64Builder, int64_t>(
+                                input_array, row_indices, builder);
                             break;
                         }
                         case arrow::Type::FLOAT: {
-                            auto typed_array = std::static_pointer_cast<arrow::FloatArray>(input_array);
-                            auto typed_builder = static_cast<arrow::FloatBuilder*>(builders[output_col_idx].get());
-
-                            float sum = 0.0f;
-                            bool all_null = true;
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    sum += typed_array->Value(row_idx);
-                                    all_null = false;
-                                }
-                            }
-
-                            if (all_null) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(sum);
-                            }
+                            auto result = ArrowUtil::ComputeSum<arrow::FloatArray, arrow::FloatBuilder, float>(
+                                input_array, row_indices, builder);
                             break;
                         }
                         case arrow::Type::DOUBLE: {
-                            auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(input_array);
-                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
-
-                            double sum = 0.0;
-                            bool all_null = true;
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    sum += typed_array->Value(row_idx);
-                                    all_null = false;
-                                }
-                            }
-
-                            if (all_null) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(sum);
-                            }
+                            auto result = ArrowUtil::ComputeSum<arrow::DoubleArray, arrow::DoubleBuilder, double>(
+                                input_array, row_indices, builder);
                             break;
                         }
                         default: {
@@ -732,92 +534,50 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
                             return;
                         }
                     }
+
+                    if (!result.ok()) {
+                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+                            common::ErrorCode::Failure, "Failed to append sum: " + result.error().message()));
+                        return;
+                    }
                     break;
                 }
                 case common::AggregateType::Avg: {
                     // Handle different numeric types
                     switch (input_array->type_id()) {
                         case arrow::Type::INT32: {
-                            auto typed_array = std::static_pointer_cast<arrow::Int32Array>(input_array);
-                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
-
-                            double sum = 0.0;
-                            int count = 0;
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    sum += typed_array->Value(row_idx);
-                                    count++;
-                                }
-                            }
-
-                            if (count == 0) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(sum / count);
+                            auto result = ArrowUtil::ComputeAverage<arrow::Int32Array>(
+                                input_array, row_indices, builders[output_col_idx]);
+                            if (!result.ok()) {
+                                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(result.error());
+                                return;
                             }
                             break;
                         }
                         case arrow::Type::INT64: {
-                            auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
-                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
-
-                            double sum = 0.0;
-                            int count = 0;
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    sum += typed_array->Value(row_idx);
-                                    count++;
-                                }
-                            }
-
-                            if (count == 0) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(sum / count);
+                            auto result = ArrowUtil::ComputeAverage<arrow::Int64Array>(
+                                input_array, row_indices, builders[output_col_idx]);
+                            if (!result.ok()) {
+                                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(result.error());
+                                return;
                             }
                             break;
                         }
                         case arrow::Type::FLOAT: {
-                            auto typed_array = std::static_pointer_cast<arrow::FloatArray>(input_array);
-                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
-
-                            double sum = 0.0;
-                            int count = 0;
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    sum += typed_array->Value(row_idx);
-                                    count++;
-                                }
-                            }
-
-                            if (count == 0) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(sum / count);
+                            auto result = ArrowUtil::ComputeAverage<arrow::FloatArray>(
+                                input_array, row_indices, builders[output_col_idx]);
+                            if (!result.ok()) {
+                                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(result.error());
+                                return;
                             }
                             break;
                         }
                         case arrow::Type::DOUBLE: {
-                            auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(input_array);
-                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
-
-                            double sum = 0.0;
-                            int count = 0;
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    sum += typed_array->Value(row_idx);
-                                    count++;
-                                }
-                            }
-
-                            if (count == 0) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(sum / count);
+                            auto result = ArrowUtil::ComputeAverage<arrow::DoubleArray>(
+                                input_array, row_indices, builders[output_col_idx]);
+                            if (!result.ok()) {
+                                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(result.error());
+                                return;
                             }
                             break;
                         }
@@ -829,6 +589,7 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
                     }
                     break;
                 }
+
                 case common::AggregateType::Min: {
                     // Handle different types
                     switch (input_array->type_id()) {

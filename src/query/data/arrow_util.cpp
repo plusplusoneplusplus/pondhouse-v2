@@ -30,6 +30,16 @@ struct BuilderTypeMap<common::ColumnType::INT64> {
 };
 
 template <>
+struct BuilderTypeMap<common::ColumnType::UINT32> {
+    using type = arrow::UInt32Builder;
+};
+
+template <>
+struct BuilderTypeMap<common::ColumnType::UINT64> {
+    using type = arrow::UInt64Builder;
+};
+
+template <>
 struct BuilderTypeMap<common::ColumnType::FLOAT> {
     using type = arrow::FloatBuilder;
 };
@@ -73,19 +83,46 @@ arrow::Result<std::shared_ptr<arrow::Array>> CreateEmptyArrayImpl() {
     }
 }
 
+// Helper function to create array builder for a specific type
+template <common::ColumnType T>
+arrow::Result<std::shared_ptr<arrow::ArrayBuilder>> CreateArrayBuilderImpl() {
+    if constexpr (T == common::ColumnType::TIMESTAMP) {
+        return std::make_shared<arrow::TimestampBuilder>(arrow::timestamp(arrow::TimeUnit::MILLI),
+                                                         arrow::default_memory_pool());
+    } else {
+        return std::make_shared<typename BuilderTypeMap<T>::type>();
+    }
+}
+
 // Function pointer type for array creation
 using CreateArrayFunc = arrow::Result<std::shared_ptr<arrow::Array>> (*)();
+using CreateArrayBuilderFunc = arrow::Result<std::shared_ptr<arrow::ArrayBuilder>> (*)();
 
 // Map of ColumnType to creation functions
 const std::unordered_map<common::ColumnType, CreateArrayFunc> kCreateArrayFuncs = {
     {common::ColumnType::INT32, &CreateEmptyArrayImpl<common::ColumnType::INT32>},
     {common::ColumnType::INT64, &CreateEmptyArrayImpl<common::ColumnType::INT64>},
+    {common::ColumnType::UINT32, &CreateEmptyArrayImpl<common::ColumnType::UINT32>},
+    {common::ColumnType::UINT64, &CreateEmptyArrayImpl<common::ColumnType::UINT64>},
     {common::ColumnType::FLOAT, &CreateEmptyArrayImpl<common::ColumnType::FLOAT>},
     {common::ColumnType::DOUBLE, &CreateEmptyArrayImpl<common::ColumnType::DOUBLE>},
     {common::ColumnType::BOOLEAN, &CreateEmptyArrayImpl<common::ColumnType::BOOLEAN>},
     {common::ColumnType::STRING, &CreateEmptyArrayImpl<common::ColumnType::STRING>},
     {common::ColumnType::TIMESTAMP, &CreateEmptyArrayImpl<common::ColumnType::TIMESTAMP>},
     {common::ColumnType::BINARY, &CreateEmptyArrayImpl<common::ColumnType::BINARY>},
+};
+
+const std::unordered_map<common::ColumnType, CreateArrayBuilderFunc> kCreateArrayBuilderFuncs = {
+    {common::ColumnType::INT32, &CreateArrayBuilderImpl<common::ColumnType::INT32>},
+    {common::ColumnType::INT64, &CreateArrayBuilderImpl<common::ColumnType::INT64>},
+    {common::ColumnType::UINT32, &CreateArrayBuilderImpl<common::ColumnType::UINT32>},
+    {common::ColumnType::UINT64, &CreateArrayBuilderImpl<common::ColumnType::UINT64>},
+    {common::ColumnType::FLOAT, &CreateArrayBuilderImpl<common::ColumnType::FLOAT>},
+    {common::ColumnType::DOUBLE, &CreateArrayBuilderImpl<common::ColumnType::DOUBLE>},
+    {common::ColumnType::BOOLEAN, &CreateArrayBuilderImpl<common::ColumnType::BOOLEAN>},
+    {common::ColumnType::STRING, &CreateArrayBuilderImpl<common::ColumnType::STRING>},
+    {common::ColumnType::TIMESTAMP, &CreateArrayBuilderImpl<common::ColumnType::TIMESTAMP>},
+    {common::ColumnType::BINARY, &CreateArrayBuilderImpl<common::ColumnType::BINARY>},
 };
 
 }  // namespace detail
@@ -96,6 +133,19 @@ arrow::Result<std::shared_ptr<arrow::Array>> ArrowUtil::CreateEmptyArray(common:
         return arrow::Status::Invalid("Unsupported column type");
     }
     return it->second();
+}
+
+common::Result<std::shared_ptr<arrow::ArrayBuilder>> ArrowUtil::CreateArrayBuilder(common::ColumnType type) {
+    auto it = detail::kCreateArrayBuilderFuncs.find(type);
+    if (it == detail::kCreateArrayBuilderFuncs.end()) {
+        return common::Error(common::ErrorCode::NotImplemented, "Unsupported column type");
+    }
+    auto builder = it->second();
+    if (!builder.ok()) {
+        return common::Error(common::ErrorCode::Failure,
+                             "Failed to create array builder: " + builder.status().ToString());
+    }
+    return builder.ValueOrDie();
 }
 
 common::Result<ArrowDataBatchSharedPtr> ArrowUtil::CreateEmptyBatch(const common::Schema& schema) {

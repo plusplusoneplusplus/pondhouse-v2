@@ -35,6 +35,8 @@ TEST_F(ArrowUtilTest, CreateEmptyArrayForAllTypes) {
     std::vector<common::ColumnType> types = {
         common::ColumnType::INT32,
         common::ColumnType::INT64,
+        common::ColumnType::UINT32,
+        common::ColumnType::UINT64,
         common::ColumnType::FLOAT,
         common::ColumnType::DOUBLE,
         common::ColumnType::BOOLEAN,
@@ -50,6 +52,35 @@ TEST_F(ArrowUtilTest, CreateEmptyArrayForAllTypes) {
         EXPECT_EQ(array->length(), 0);
         EXPECT_EQ(array->null_count(), 0);
     }
+}
+
+TEST_F(ArrowUtilTest, CreateArrayBuilderForAllTypes) {
+    // Test creating array builders for each supported type
+    std::vector<common::ColumnType> types = {
+        common::ColumnType::INT32,
+        common::ColumnType::INT64,
+        common::ColumnType::UINT32,
+        common::ColumnType::UINT64,
+        common::ColumnType::FLOAT,
+        common::ColumnType::DOUBLE,
+        common::ColumnType::BOOLEAN,
+        common::ColumnType::STRING,
+        common::ColumnType::TIMESTAMP,
+        common::ColumnType::BINARY,
+    };
+
+    for (const auto& type : types) {
+        auto result = ArrowUtil::CreateArrayBuilder(type);
+        ASSERT_TRUE(result.ok()) << "Failed to create array builder for type: " << static_cast<int>(type);
+        auto builder = result.value();
+        EXPECT_NE(builder, nullptr);
+    }
+}
+
+TEST_F(ArrowUtilTest, CreateArrayBuilderInvalidType) {
+    auto result = ArrowUtil::CreateArrayBuilder(common::ColumnType::INVALID);
+    EXPECT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code(), common::ErrorCode::NotImplemented);
 }
 
 TEST_F(ArrowUtilTest, CreateEmptyArrayInvalidType) {
