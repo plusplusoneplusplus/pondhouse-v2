@@ -7,6 +7,7 @@
 
 #include "common/result.h"
 #include "common/schema.h"
+#include "test_helper.h"
 
 namespace pond::query {
 
@@ -711,8 +712,7 @@ TEST_F(ArrowUtilTest, ComputeSum) {
 
         auto output_builder = std::make_shared<arrow::Int64Builder>();
         std::vector<int> indices = {0, 2, 4};  // Sum 1 + 3 + 5 = 9
-        auto result =
-            ArrowUtil::ComputeSum<arrow::Int32Array, arrow::Int64Builder, int64_t>(array, indices, output_builder);
+        auto result = ArrowUtil::ComputeSum(array, indices, output_builder);
         ASSERT_TRUE(result.ok());
 
         std::shared_ptr<arrow::Array> output_array;
@@ -733,8 +733,7 @@ TEST_F(ArrowUtilTest, ComputeSum) {
 
         auto output_builder = std::make_shared<arrow::DoubleBuilder>();
         std::vector<int> indices = {0, 1, 2, 3};  // Sum null + 2.5 + null + 7.5 = 10.0
-        auto result =
-            ArrowUtil::ComputeSum<arrow::DoubleArray, arrow::DoubleBuilder, double>(array, indices, output_builder);
+        auto result = ArrowUtil::ComputeSum(array, indices, output_builder);
         ASSERT_TRUE(result.ok());
 
         std::shared_ptr<arrow::Array> output_array;
@@ -752,8 +751,7 @@ TEST_F(ArrowUtilTest, ComputeSum) {
 
         auto output_builder = std::make_shared<arrow::Int64Builder>();
         std::vector<int> indices;
-        auto result =
-            ArrowUtil::ComputeSum<arrow::Int32Array, arrow::Int64Builder, int64_t>(array, indices, output_builder);
+        auto result = ArrowUtil::ComputeSum(array, indices, output_builder);
         ASSERT_TRUE(result.ok());
 
         std::shared_ptr<arrow::Array> output_array;
@@ -779,7 +777,7 @@ TEST_F(ArrowUtilTest, ComputeAverage) {
 
         auto output_builder = std::make_shared<arrow::DoubleBuilder>();
         std::vector<int> indices = {0, 2, 4};  // Avg of 1, 3, 5 = 3.0
-        auto result = ArrowUtil::ComputeAverage<arrow::Int32Array>(array, indices, output_builder);
+        auto result = ArrowUtil::ComputeAverage(array, indices, output_builder);
         ASSERT_TRUE(result.ok());
 
         std::shared_ptr<arrow::Array> output_array;
@@ -800,7 +798,7 @@ TEST_F(ArrowUtilTest, ComputeAverage) {
 
         auto output_builder = std::make_shared<arrow::DoubleBuilder>();
         std::vector<int> indices = {0, 1, 2, 3};  // Avg of null, 2.0, null, 4.0 = 3.0
-        auto result = ArrowUtil::ComputeAverage<arrow::DoubleArray>(array, indices, output_builder);
+        auto result = ArrowUtil::ComputeAverage(array, indices, output_builder);
         ASSERT_TRUE(result.ok());
 
         std::shared_ptr<arrow::Array> output_array;
@@ -818,7 +816,7 @@ TEST_F(ArrowUtilTest, ComputeAverage) {
 
         auto output_builder = std::make_shared<arrow::DoubleBuilder>();
         std::vector<int> indices = {0, 1, 2};
-        auto result = ArrowUtil::ComputeAverage<arrow::Int32Array>(array, indices, output_builder);
+        auto result = ArrowUtil::ComputeAverage(array, indices, output_builder);
         ASSERT_TRUE(result.ok());
 
         std::shared_ptr<arrow::Array> output_array;
@@ -836,13 +834,339 @@ TEST_F(ArrowUtilTest, ComputeAverage) {
 
         auto output_builder = std::make_shared<arrow::DoubleBuilder>();
         std::vector<int> indices;
-        auto result = ArrowUtil::ComputeAverage<arrow::Int32Array>(array, indices, output_builder);
+        auto result = ArrowUtil::ComputeAverage(array, indices, output_builder);
         ASSERT_TRUE(result.ok());
 
         std::shared_ptr<arrow::Array> output_array;
         ASSERT_OK(output_builder->Finish(&output_array));
         ASSERT_EQ(output_array->length(), 1);
         ASSERT_TRUE(output_array->IsNull(0));
+    }
+}
+
+//
+// Test Setup:
+//      Test ComputeMin with different types and edge cases
+// Test Result:
+//      Minimum values are correctly computed for each type
+//
+TEST_F(ArrowUtilTest, ComputeMin) {
+    // Test Int32
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({5, 2, 8, 1, 9}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int32Builder>();
+        std::vector<int> indices = {0, 2, 4};  // Min of 5, 8, 9 = 5
+        auto result = ArrowUtil::ComputeMin(array, indices, output_builder);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int32Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 5);
+    }
+
+    // Test Double with nulls
+    {
+        auto builder = std::make_shared<arrow::DoubleBuilder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(2.5));
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(1.5));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::DoubleBuilder>();
+        std::vector<int> indices = {0, 1, 2, 3};  // Min of null, 2.5, null, 1.5 = 1.5
+        auto result = ArrowUtil::ComputeMin(array, indices, output_builder);
+        ASSERT_TRUE(result.ok());
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(output_array);
+        ASSERT_DOUBLE_EQ(typed_array->Value(0), 1.5);
+    }
+
+    // Test String
+    {
+        auto builder = std::make_shared<arrow::StringBuilder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({"zebra", "apple", "banana"}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::StringBuilder>();
+        std::vector<int> indices = {0, 1, 2};  // Min of "zebra", "apple", "banana" = "apple"
+        auto result = ArrowUtil::ComputeMin(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::StringArray>(output_array);
+        ASSERT_EQ(typed_array->GetString(0), "apple");
+    }
+
+    // Test all nulls
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendNulls(3));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int32Builder>();
+        std::vector<int> indices = {0, 1, 2};
+        auto result = ArrowUtil::ComputeMin(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        ASSERT_EQ(output_array->length(), 1);
+        ASSERT_TRUE(output_array->IsNull(0));
+    }
+
+    // Test empty indices
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({1, 2, 3}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int32Builder>();
+        std::vector<int> indices;
+        auto result = ArrowUtil::ComputeMin(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        ASSERT_EQ(output_array->length(), 1);
+        ASSERT_TRUE(output_array->IsNull(0));
+    }
+}
+
+//
+// Test Setup:
+//      Test ComputeMax with different types and edge cases
+// Test Result:
+//      Maximum values are correctly computed for each type
+//
+TEST_F(ArrowUtilTest, ComputeMax) {
+    // Test Int32
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({5, 2, 8, 1, 9}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int32Builder>();
+        std::vector<int> indices = {0, 2, 4};  // Max of 5, 8, 9 = 9
+        auto result = ArrowUtil::ComputeMax(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int32Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 9);
+    }
+
+    // Test Double with nulls
+    {
+        auto builder = std::make_shared<arrow::DoubleBuilder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(2.5));
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(3.5));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::DoubleBuilder>();
+        std::vector<int> indices = {0, 1, 2, 3};  // Max of null, 2.5, null, 3.5 = 3.5
+        auto result = ArrowUtil::ComputeMax(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(output_array);
+        ASSERT_DOUBLE_EQ(typed_array->Value(0), 3.5);
+    }
+
+    // Test String
+    {
+        auto builder = std::make_shared<arrow::StringBuilder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({"zebra", "apple", "banana"}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::StringBuilder>();
+        std::vector<int> indices = {0, 1, 2};  // Max of "zebra", "apple", "banana" = "zebra"
+        auto result = ArrowUtil::ComputeMax(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::StringArray>(output_array);
+        ASSERT_EQ(typed_array->GetString(0), "zebra");
+    }
+
+    // Test all nulls
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendNulls(3));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int32Builder>();
+        std::vector<int> indices = {0, 1, 2};
+        auto result = ArrowUtil::ComputeMax(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        ASSERT_EQ(output_array->length(), 1);
+        ASSERT_TRUE(output_array->IsNull(0));
+    }
+
+    // Test empty indices
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({1, 2, 3}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int32Builder>();
+        std::vector<int> indices;
+        auto result = ArrowUtil::ComputeMax(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        ASSERT_EQ(output_array->length(), 1);
+        ASSERT_TRUE(output_array->IsNull(0));
+    }
+}
+
+//
+// Test Setup:
+//      Test ComputeCount with different scenarios
+// Test Result:
+//      Counts are correctly computed for various cases
+//
+TEST_F(ArrowUtilTest, ComputeCount) {
+    // Test regular count
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({1, 2, 3, 4, 5}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int64Builder>();
+        std::vector<int> indices = {0, 2, 4};  // Count of 3 elements
+        auto result = ArrowUtil::ComputeCount(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int64Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 3);
+    }
+
+    // Test count with nulls
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(2));
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(4));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int64Builder>();
+        std::vector<int> indices = {0, 1, 2, 3};  // Count should be 4 (including nulls)
+        auto result = ArrowUtil::ComputeCount(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int64Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 4);
+    }
+
+    // Test count with all nulls
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendNulls(3));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int64Builder>();
+        std::vector<int> indices = {0, 1, 2};  // Count should be 3
+        auto result = ArrowUtil::ComputeCount(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int64Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 3);
+    }
+
+    // Test count with empty indices
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->AppendValues({1, 2, 3}));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int64Builder>();
+        std::vector<int> indices;  // Count should be 0
+        auto result = ArrowUtil::ComputeCount(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int64Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 0);
+    }
+
+    // Test count with different data types
+    {
+        // String array
+        auto string_builder = std::make_shared<arrow::StringBuilder>();
+        std::shared_ptr<arrow::Array> string_array;
+        ASSERT_OK(string_builder->AppendValues({"a", "b", "c"}));
+        ASSERT_OK(string_builder->Finish(&string_array));
+
+        auto output_builder = std::make_shared<arrow::Int64Builder>();
+        std::vector<int> indices = {0, 1, 2};
+        auto result = ArrowUtil::ComputeCount(string_array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int64Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 3);
+    }
+
+    // Test count with mixed null and non-null values
+    {
+        auto builder = std::make_shared<arrow::Int32Builder>();
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_OK(builder->Append(1));
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(3));
+        ASSERT_OK(builder->AppendNull());
+        ASSERT_OK(builder->Append(5));
+        ASSERT_OK(builder->Finish(&array));
+
+        auto output_builder = std::make_shared<arrow::Int64Builder>();
+        std::vector<int> indices = {0, 1, 2, 3, 4};  // Count should be 5
+        auto result = ArrowUtil::ComputeCount(array, indices, output_builder);
+        VERIFY_RESULT(result);
+
+        std::shared_ptr<arrow::Array> output_array;
+        ASSERT_OK(output_builder->Finish(&output_array));
+        auto typed_array = std::static_pointer_cast<arrow::Int64Array>(output_array);
+        ASSERT_EQ(typed_array->Value(0), 5);
     }
 }
 

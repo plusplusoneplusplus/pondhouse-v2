@@ -480,15 +480,8 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
             // Compute the aggregate value based on the type
             switch (agg_type) {
                 case common::AggregateType::Count: {
-                    // Count non-null values
-                    int64_t count = 0;
-                    for (int row_idx : row_indices) {
-                        if (!input_array->IsNull(row_idx)) {
-                            count++;
-                        }
-                    }
-
-                    auto result = ArrowUtil::AppendValue<arrow::Int64Builder>(builder, count);
+                    auto typed_builder = std::static_pointer_cast<arrow::Int64Builder>(builder);
+                    auto result = ArrowUtil::ComputeCount(input_array, row_indices, typed_builder);
                     if (!result.ok()) {
                         current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
                             common::ErrorCode::Failure, "Failed to append count: " + result.error().message()));
@@ -496,45 +489,9 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
                     }
                     break;
                 }
-                case common::AggregateType::Sum: {
-                    switch (input_array->type_id()) {
-                        case arrow::Type::INT32: {
-                            auto result = ArrowUtil::ComputeSum<arrow::Int32Array, arrow::Int64Builder, int64_t>(
-                                input_array, row_indices, builder);
-                            break;
-                        }
-                        case arrow::Type::INT64: {
-                            auto result = ArrowUtil::ComputeSum<arrow::Int64Array, arrow::Int64Builder, int64_t>(
-                                input_array, row_indices, builder);
-                            break;
-                        }
-                        case arrow::Type::UINT32: {
-                            auto result = ArrowUtil::ComputeSum<arrow::UInt32Array, arrow::Int64Builder, int64_t>(
-                                input_array, row_indices, builder);
-                            break;
-                        }
-                        case arrow::Type::UINT64: {
-                            auto result = ArrowUtil::ComputeSum<arrow::UInt64Array, arrow::Int64Builder, int64_t>(
-                                input_array, row_indices, builder);
-                            break;
-                        }
-                        case arrow::Type::FLOAT: {
-                            auto result = ArrowUtil::ComputeSum<arrow::FloatArray, arrow::FloatBuilder, float>(
-                                input_array, row_indices, builder);
-                            break;
-                        }
-                        case arrow::Type::DOUBLE: {
-                            auto result = ArrowUtil::ComputeSum<arrow::DoubleArray, arrow::DoubleBuilder, double>(
-                                input_array, row_indices, builder);
-                            break;
-                        }
-                        default: {
-                            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
-                                common::Error(common::ErrorCode::NotImplemented, "SUM only supports numeric types"));
-                            return;
-                        }
-                    }
 
+                case common::AggregateType::Sum: {
+                    auto result = ArrowUtil::ComputeSum(input_array, row_indices, builder);
                     if (!result.ok()) {
                         current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
                             common::ErrorCode::Failure, "Failed to append sum: " + result.error().message()));
@@ -542,289 +499,32 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
                     }
                     break;
                 }
+
                 case common::AggregateType::Avg: {
-                    // Handle different numeric types
-                    switch (input_array->type_id()) {
-                        case arrow::Type::INT32: {
-                            auto result = ArrowUtil::ComputeAverage<arrow::Int32Array>(
-                                input_array, row_indices, builders[output_col_idx]);
-                            if (!result.ok()) {
-                                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(result.error());
-                                return;
-                            }
-                            break;
-                        }
-                        case arrow::Type::INT64: {
-                            auto result = ArrowUtil::ComputeAverage<arrow::Int64Array>(
-                                input_array, row_indices, builders[output_col_idx]);
-                            if (!result.ok()) {
-                                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(result.error());
-                                return;
-                            }
-                            break;
-                        }
-                        case arrow::Type::FLOAT: {
-                            auto result = ArrowUtil::ComputeAverage<arrow::FloatArray>(
-                                input_array, row_indices, builders[output_col_idx]);
-                            if (!result.ok()) {
-                                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(result.error());
-                                return;
-                            }
-                            break;
-                        }
-                        case arrow::Type::DOUBLE: {
-                            auto result = ArrowUtil::ComputeAverage<arrow::DoubleArray>(
-                                input_array, row_indices, builders[output_col_idx]);
-                            if (!result.ok()) {
-                                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(result.error());
-                                return;
-                            }
-                            break;
-                        }
-                        default: {
-                            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
-                                common::Error(common::ErrorCode::NotImplemented, "AVG only supports numeric types"));
-                            return;
-                        }
+                    auto result = ArrowUtil::ComputeAverage(input_array, row_indices, builder);
+                    if (!result.ok()) {
+                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+                            common::ErrorCode::Failure, "Failed to append average: " + result.error().message()));
+                        return;
                     }
                     break;
                 }
 
                 case common::AggregateType::Min: {
-                    // Handle different types
-                    switch (input_array->type_id()) {
-                        case arrow::Type::INT32: {
-                            auto typed_array = std::static_pointer_cast<arrow::Int32Array>(input_array);
-                            auto typed_builder = static_cast<arrow::Int32Builder*>(builders[output_col_idx].get());
-
-                            bool found_value = false;
-                            int32_t min_val = std::numeric_limits<int32_t>::max();
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    min_val = std::min(min_val, typed_array->Value(row_idx));
-                                    found_value = true;
-                                }
-                            }
-
-                            if (!found_value) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(min_val);
-                            }
-                            break;
-                        }
-                        case arrow::Type::INT64: {
-                            auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
-                            auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
-
-                            bool found_value = false;
-                            int64_t min_val = std::numeric_limits<int64_t>::max();
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    min_val = std::min(min_val, typed_array->Value(row_idx));
-                                    found_value = true;
-                                }
-                            }
-
-                            if (!found_value) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(min_val);
-                            }
-                            break;
-                        }
-                        case arrow::Type::FLOAT: {
-                            auto typed_array = std::static_pointer_cast<arrow::FloatArray>(input_array);
-                            auto typed_builder = static_cast<arrow::FloatBuilder*>(builders[output_col_idx].get());
-
-                            bool found_value = false;
-                            float min_val = std::numeric_limits<float>::max();
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    min_val = std::min(min_val, typed_array->Value(row_idx));
-                                    found_value = true;
-                                }
-                            }
-
-                            if (!found_value) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(min_val);
-                            }
-                            break;
-                        }
-                        case arrow::Type::DOUBLE: {
-                            auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(input_array);
-                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
-
-                            bool found_value = false;
-                            double min_val = std::numeric_limits<double>::max();
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    min_val = std::min(min_val, typed_array->Value(row_idx));
-                                    found_value = true;
-                                }
-                            }
-
-                            if (!found_value) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(min_val);
-                            }
-                            break;
-                        }
-                        case arrow::Type::STRING: {
-                            auto typed_array = std::static_pointer_cast<arrow::StringArray>(input_array);
-                            auto typed_builder = static_cast<arrow::StringBuilder*>(builders[output_col_idx].get());
-
-                            bool found_value = false;
-                            std::string min_val;
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    std::string current = typed_array->GetString(row_idx);
-                                    if (!found_value || current < min_val) {
-                                        min_val = current;
-                                        found_value = true;
-                                    }
-                                }
-                            }
-
-                            if (!found_value) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(min_val);
-                            }
-                            break;
-                        }
-                        default: {
-                            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
-                                common::Error(common::ErrorCode::NotImplemented, "Unsupported type for MIN"));
-                            return;
-                        }
+                    auto result = ArrowUtil::ComputeMin(input_array, row_indices, builder);
+                    if (!result.ok()) {
+                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+                            common::ErrorCode::Failure, "Failed to append min: " + result.error().message()));
+                        return;
                     }
                     break;
                 }
                 case common::AggregateType::Max: {
-                    // Handle different types
-                    switch (input_array->type_id()) {
-                        case arrow::Type::INT32: {
-                            auto typed_array = std::static_pointer_cast<arrow::Int32Array>(input_array);
-                            auto typed_builder = static_cast<arrow::Int32Builder*>(builders[output_col_idx].get());
-
-                            bool found_value = false;
-                            int32_t max_val = std::numeric_limits<int32_t>::min();
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    max_val = std::max(max_val, typed_array->Value(row_idx));
-                                    found_value = true;
-                                }
-                            }
-
-                            if (!found_value) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(max_val);
-                            }
-                            break;
-                        }
-                        case arrow::Type::INT64: {
-                            auto typed_array = std::static_pointer_cast<arrow::Int64Array>(input_array);
-                            auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
-
-                            bool found_value = false;
-                            int64_t max_val = std::numeric_limits<int64_t>::min();
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    max_val = std::max(max_val, typed_array->Value(row_idx));
-                                    found_value = true;
-                                }
-                            }
-
-                            if (!found_value) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(max_val);
-                            }
-                            break;
-                        }
-                        case arrow::Type::FLOAT: {
-                            auto typed_array = std::static_pointer_cast<arrow::FloatArray>(input_array);
-                            auto typed_builder = static_cast<arrow::FloatBuilder*>(builders[output_col_idx].get());
-
-                            bool found_value = false;
-                            float max_val = std::numeric_limits<float>::lowest();
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    max_val = std::max(max_val, typed_array->Value(row_idx));
-                                    found_value = true;
-                                }
-                            }
-
-                            if (!found_value) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(max_val);
-                            }
-                            break;
-                        }
-                        case arrow::Type::DOUBLE: {
-                            auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(input_array);
-                            auto typed_builder = static_cast<arrow::DoubleBuilder*>(builders[output_col_idx].get());
-
-                            bool found_value = false;
-                            double max_val = std::numeric_limits<double>::lowest();
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    max_val = std::max(max_val, typed_array->Value(row_idx));
-                                    found_value = true;
-                                }
-                            }
-
-                            if (!found_value) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(max_val);
-                            }
-                            break;
-                        }
-                        case arrow::Type::STRING: {
-                            auto typed_array = std::static_pointer_cast<arrow::StringArray>(input_array);
-                            auto typed_builder = static_cast<arrow::StringBuilder*>(builders[output_col_idx].get());
-
-                            bool found_value = false;
-                            std::string max_val;
-
-                            for (int row_idx : row_indices) {
-                                if (!typed_array->IsNull(row_idx)) {
-                                    std::string current = typed_array->GetString(row_idx);
-                                    if (!found_value || current > max_val) {
-                                        max_val = current;
-                                        found_value = true;
-                                    }
-                                }
-                            }
-
-                            if (!found_value) {
-                                typed_builder->AppendNull();
-                            } else {
-                                typed_builder->Append(max_val);
-                            }
-                            break;
-                        }
-                        default: {
-                            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
-                                common::Error(common::ErrorCode::NotImplemented, "Unsupported type for MAX"));
-                            return;
-                        }
+                    auto result = ArrowUtil::ComputeMax(input_array, row_indices, builder);
+                    if (!result.ok()) {
+                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+                            common::ErrorCode::Failure, "Failed to append max: " + result.error().message()));
+                        return;
                     }
                     break;
                 }
