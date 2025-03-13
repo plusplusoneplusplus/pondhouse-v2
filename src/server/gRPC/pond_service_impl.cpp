@@ -609,81 +609,79 @@ grpc::Status PondServiceImpl::ReadParquetFile(grpc::ServerContext* context,
             column_names.assign(request->columns().begin(), request->columns().end());
         }
 
-        // Read each row group
-        for (int row_group = 0; row_group < num_row_groups; row_group++) {
-            // Check if the client has cancelled the request
-            if (context->IsCancelled()) {
-                return grpc::Status::CANCELLED;
-            }
+        // Read the entire table to get total row count and handle pagination
+        auto table_result = column_names.empty() ? reader->Read() : reader->Read(column_names);
+        if (!table_result.ok()) {
+            pond::proto::ReadParquetFileResponse error_response;
+            error_response.set_success(false);
+            error_response.set_error(table_result.error().message());
+            writer->Write(error_response);
+            return grpc::Status::OK;
+        }
+        auto table = table_result.value();
 
-            // Read the row group
-            auto table_result = column_names.empty() ? 
-                reader->ReadRowGroup(row_group) :
-                reader->ReadRowGroup(row_group, column_names);
+        // Get total number of rows
+        int64_t total_rows = table->num_rows();
 
-            if (!table_result.ok()) {
-                pond::proto::ReadParquetFileResponse error_response;
-                error_response.set_success(false);
-                error_response.set_error(table_result.error().message());
-                writer->Write(error_response);
-                return grpc::Status::OK;
-            }
-            auto table = table_result.value();
+        // Calculate start and end rows for pagination
+        int64_t start_row = request->start_row();
+        int64_t num_rows = request->num_rows() > 0 ? request->num_rows() : total_rows;
+        int64_t end_row = std::min(start_row + num_rows, total_rows);
 
-            // Prepare response
-            pond::proto::ReadParquetFileResponse response;
-            response.set_success(true);
-            response.set_has_more(row_group < num_row_groups - 1);
+        // Prepare response
+        pond::proto::ReadParquetFileResponse response;
+        response.set_success(true);
+        response.set_total_rows(total_rows);
+        response.set_has_more(end_row < total_rows);
 
-            // Convert columns to response format
-            for (int i = 0; i < table->num_columns(); i++) {
-                auto column = table->column(i);
-                auto field = table->schema()->field(i);
-                
-                auto* col_data = response.add_columns();
-                col_data->set_name(field->name());
-                col_data->set_type(field->type()->ToString());
+        // Convert columns to response format for the requested page
+        for (int i = 0; i < table->num_columns(); i++) {
+            auto column = table->column(i);
+            auto field = table->schema()->field(i);
+            
+            auto* col_data = response.add_columns();
+            col_data->set_name(field->name());
+            col_data->set_type(field->type()->ToString());
 
-                // Convert values to strings
-                auto chunk = column->chunk(0);
-                for (int64_t row = 0; row < chunk->length(); row++) {
-                    if (chunk->IsNull(row)) {
-                        col_data->add_values("");
-                        col_data->add_nulls(true);
-                    } else {
-                        std::string str_val;
-                        switch (field->type()->id()) {
-                            case arrow::Type::INT32:
-                                str_val = std::to_string(std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(row));
-                                break;
-                            case arrow::Type::INT64:
-                                str_val = std::to_string(std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(row));
-                                break;
-                            case arrow::Type::FLOAT:
-                                str_val = std::to_string(std::static_pointer_cast<arrow::FloatArray>(chunk)->Value(row));
-                                break;
-                            case arrow::Type::DOUBLE:
-                                str_val = std::to_string(std::static_pointer_cast<arrow::DoubleArray>(chunk)->Value(row));
-                                break;
-                            case arrow::Type::STRING:
-                                str_val = std::static_pointer_cast<arrow::StringArray>(chunk)->GetString(row);
-                                break;
-                            case arrow::Type::BOOL:
-                                str_val = std::static_pointer_cast<arrow::BooleanArray>(chunk)->Value(row) ? "true" : "false";
-                                break;
-                            default:
-                                str_val = "Unsupported type";
-                        }
-                        col_data->add_values(str_val);
-                        col_data->add_nulls(false);
+            // Add only the rows for the current page
+            auto chunk = column->chunk(0);
+            for (int64_t row = start_row; row < end_row; row++) {
+                if (chunk->IsNull(row)) {
+                    col_data->add_values("");
+                    col_data->add_nulls(true);
+                } else {
+                    std::string str_val;
+                    switch (field->type()->id()) {
+                        case arrow::Type::INT32:
+                            str_val = std::to_string(std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(row));
+                            break;
+                        case arrow::Type::INT64:
+                            str_val = std::to_string(std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(row));
+                            break;
+                        case arrow::Type::FLOAT:
+                            str_val = std::to_string(std::static_pointer_cast<arrow::FloatArray>(chunk)->Value(row));
+                            break;
+                        case arrow::Type::DOUBLE:
+                            str_val = std::to_string(std::static_pointer_cast<arrow::DoubleArray>(chunk)->Value(row));
+                            break;
+                        case arrow::Type::STRING:
+                            str_val = std::static_pointer_cast<arrow::StringArray>(chunk)->GetString(row);
+                            break;
+                        case arrow::Type::BOOL:
+                            str_val = std::static_pointer_cast<arrow::BooleanArray>(chunk)->Value(row) ? "true" : "false";
+                            break;
+                        default:
+                            str_val = "Unsupported type";
                     }
+                    col_data->add_values(str_val);
+                    col_data->add_nulls(false);
                 }
             }
+        }
 
-            // Send the batch
-            if (!writer->Write(response)) {
-                return grpc::Status(grpc::StatusCode::CANCELLED, "Failed to write response");
-            }
+        // Send the batch
+        if (!writer->Write(response)) {
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Failed to write response");
         }
 
         return grpc::Status::OK;

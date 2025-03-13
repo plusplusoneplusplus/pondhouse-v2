@@ -392,8 +392,8 @@ class PondClient:
             file_path: Path to the parquet file
             batch_size: Number of rows to read in each batch
             columns: Optional list of column names to read
-            start_row: Optional starting row number
-            num_rows: Optional maximum number of rows to read
+            start_row: Starting row number for pagination
+            num_rows: Maximum number of rows to read (0 means read all)
             
         Returns:
             Tuple of (rows, total_rows, error)
@@ -984,7 +984,7 @@ async def view_parquet_file(
     # Calculate pagination
     start_row = (page - 1) * rows_per_page
     
-    # Read the parquet file content
+    # Read the parquet file content with pagination
     rows, total_rows, error = pond_client.read_parquet_file(
         file_path=file_path,
         batch_size=rows_per_page,
@@ -1004,7 +1004,7 @@ async def view_parquet_file(
         )
     
     # Calculate pagination info
-    total_pages = (total_rows + rows_per_page - 1) // rows_per_page
+    total_pages = (total_rows + rows_per_page - 1) // rows_per_page if total_rows > 0 else 1
     
     # Get column names from the first row
     columns = []
