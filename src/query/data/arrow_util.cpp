@@ -1,5 +1,7 @@
 #include "query/data/arrow_util.h"
 
+#include <set>
+
 #include <arrow/api.h>
 #include <arrow/builder.h>
 #include <arrow/compute/api.h>
@@ -491,6 +493,25 @@ common::Result<ArrowDataBatchSharedPtr> ArrowUtil::JsonToRecordBatch(const rapid
                     status = static_cast<arrow::Int64Builder*>(builders[col_idx].get())->Append(json_value.GetInt64());
                     break;
                 }
+                case common::ColumnType::UINT32: {
+                    if (!json_value.IsUint()) {
+                        return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                                   "Row " + std::to_string(row_idx) + ": Value for column '" + col_name
+                                                       + "' is not an unsigned integer");
+                    }
+                    status = static_cast<arrow::UInt32Builder*>(builders[col_idx].get())->Append(json_value.GetUint());
+                    break;
+                }
+                case common::ColumnType::UINT64: {
+                    if (!json_value.IsUint64()) {
+                        return ResultType::failure(common::ErrorCode::InvalidArgument,
+                                                   "Row " + std::to_string(row_idx) + ": Value for column '" + col_name
+                                                       + "' is not an unsigned integer");
+                    }
+                    status =
+                        static_cast<arrow::UInt64Builder*>(builders[col_idx].get())->Append(json_value.GetUint64());
+                    break;
+                }
                 case common::ColumnType::FLOAT: {
                     if (!json_value.IsNumber()) {
                         return ResultType::failure(
@@ -589,6 +610,12 @@ common::Result<ArrowDataBatchSharedPtr> ArrowUtil::JsonToRecordBatch(const rapid
                 break;
             case common::ColumnType::INT64:
                 arrow_type = arrow::int64();
+                break;
+            case common::ColumnType::UINT32:
+                arrow_type = arrow::uint32();
+                break;
+            case common::ColumnType::UINT64:
+                arrow_type = arrow::uint64();
                 break;
             case common::ColumnType::FLOAT:
                 arrow_type = arrow::float32();
@@ -710,6 +737,172 @@ common::Result<void> ArrowUtil::AppendGroupKeyValue(const std::shared_ptr<arrow:
     }
 
     return common::Result<void>::success();
+}
+
+template <typename T>
+void GroupKey::AddValue(const T& value, bool is_null) {
+    if (is_null) {
+        values_.push_back(T{});  // Default value
+        null_flags_.push_back(true);
+    } else {
+        values_.push_back(value);
+        null_flags_.push_back(false);
+    }
+}
+
+bool GroupKey::operator<(const GroupKey& other) const {
+    if (values_.size() != other.values_.size()) {
+        return values_.size() < other.values_.size();
+    }
+
+    for (size_t i = 0; i < values_.size(); i++) {
+        if (null_flags_[i] != other.null_flags_[i]) {
+            return null_flags_[i];  // Nulls sort first
+        }
+        if (null_flags_[i]) {
+            continue;  // Both null, check next value
+        }
+        if (values_[i] != other.values_[i]) {
+            return values_[i] < other.values_[i];
+        }
+    }
+    return false;
+}
+
+bool GroupKey::operator==(const GroupKey& other) const {
+    if (values_.size() != other.values_.size()) {
+        return false;
+    }
+
+    for (size_t i = 0; i < values_.size(); i++) {
+        if (null_flags_[i] != other.null_flags_[i]) {
+            return false;
+        }
+        if (!null_flags_[i] && values_[i] != other.values_[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string GroupKey::ToString() const {
+    std::stringstream ss;
+    for (size_t i = 0; i < values_.size(); i++) {
+        if (null_flags_[i]) {
+            ss << "null";
+        } else {
+            // Use std::visit to handle the variant
+            std::visit(
+                [&ss](const auto& value) {
+                    if constexpr (std::is_same_v<std::decay_t<decltype(value)>, std::string>) {
+                        ss << '"' << value << '"';  // Quote string values
+                    } else {
+                        ss << value;
+                    }
+                },
+                values_[i]);
+        }
+        if (i < values_.size() - 1) {
+            ss << ",";
+        }
+    }
+    return ss.str();
+}
+
+common::Result<std::vector<GroupKey>> ArrowUtil::ExtractGroupKeys(const ArrowDataBatchSharedPtr& batch,
+                                                                  const std::vector<std::string>& group_by_columns) {
+    using ResultType = common::Result<std::vector<GroupKey>>;
+
+    // Validate inputs
+    if (!batch) {
+        return ResultType::failure(common::ErrorCode::InvalidArgument, "Input batch is null");
+    }
+
+    if (group_by_columns.empty()) {
+        return ResultType::failure(common::ErrorCode::InvalidArgument, "Group by columns list is empty");
+    }
+
+    // Get column indices and validate column names
+    std::vector<int> column_indices;
+    column_indices.reserve(group_by_columns.size());
+
+    for (const auto& col_name : group_by_columns) {
+        int col_idx = -1;
+        for (int i = 0; i < batch->schema()->num_fields(); i++) {
+            if (batch->schema()->field(i)->name() == col_name) {
+                col_idx = i;
+                break;
+            }
+        }
+
+        if (col_idx == -1) {
+            return ResultType::failure(common::ErrorCode::InvalidArgument, "Column not found: " + col_name);
+        }
+        column_indices.push_back(col_idx);
+    }
+
+    // Use set for unique keys
+    std::set<GroupKey> unique_keys;
+
+    // Process each row
+    for (int row_idx = 0; row_idx < batch->num_rows(); row_idx++) {
+        GroupKey key;
+
+        // Build composite key from group by columns
+        for (int col_idx : column_indices) {
+            auto array = batch->column(col_idx);
+            bool is_null = array->IsNull(row_idx);
+
+            switch (array->type_id()) {
+                case arrow::Type::INT32: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int32Array>(array);
+                    key.AddValue(is_null ? 0 : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::INT64: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int64Array>(array);
+                    key.AddValue(is_null ? 0 : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::UINT32: {
+                    auto typed_array = std::static_pointer_cast<arrow::UInt32Array>(array);
+                    key.AddValue(is_null ? 0 : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::UINT64: {
+                    auto typed_array = std::static_pointer_cast<arrow::UInt64Array>(array);
+                    key.AddValue(is_null ? 0 : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::FLOAT: {
+                    auto typed_array = std::static_pointer_cast<arrow::FloatArray>(array);
+                    key.AddValue(is_null ? 0.0f : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::DOUBLE: {
+                    auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(array);
+                    key.AddValue(is_null ? 0.0 : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::STRING: {
+                    auto typed_array = std::static_pointer_cast<arrow::StringArray>(array);
+                    key.AddValue(is_null ? "" : typed_array->GetString(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::BOOL: {
+                    auto typed_array = std::static_pointer_cast<arrow::BooleanArray>(array);
+                    key.AddValue(is_null ? false : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                default:
+                    return ResultType::failure(common::ErrorCode::NotImplemented, "Unsupported type in GROUP BY");
+            }
+        }
+
+        unique_keys.insert(key);
+    }
+
+    return ResultType::success(std::vector<GroupKey>(unique_keys.begin(), unique_keys.end()));
 }
 
 }  // namespace pond::query

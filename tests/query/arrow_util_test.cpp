@@ -1170,4 +1170,266 @@ TEST_F(ArrowUtilTest, ComputeCount) {
     }
 }
 
+//
+// Test Setup:
+//      Create a record batch with 3 columns (int, string, double)
+//      Insert 4 rows with some duplicate values
+// Test Result:
+//      Single column grouping should return 3 unique keys
+//      Multiple column grouping should return 3 unique combinations
+//
+TEST_F(ArrowUtilTest, ExtractGroupKeysBasic) {
+    common::Schema schema({{"int_col", common::ColumnType::INT32, common::Nullability::NULLABLE},
+                           {"str_col", common::ColumnType::STRING, common::Nullability::NULLABLE},
+                           {"double_col", common::ColumnType::DOUBLE, common::Nullability::NULLABLE}});
+
+    // Create test data
+    std::string json = R"([
+        {"int_col": 1, "str_col": "a", "double_col": 1.1},
+        {"int_col": 1, "str_col": "a", "double_col": 1.1},
+        {"int_col": 2, "str_col": "b", "double_col": 2.2},
+        {"int_col": null, "str_col": "c", "double_col": 3.3}
+    ])";
+
+    auto batch_result = ArrowUtil::JsonToRecordBatch(json, schema);
+    ASSERT_TRUE(batch_result.ok());
+    auto batch = batch_result.value();
+
+    // Test single column grouping
+    {
+        auto result = ArrowUtil::ExtractGroupKeys(batch, {"int_col"});
+        ASSERT_TRUE(result.ok());
+        auto keys = result.value();
+        ASSERT_EQ(keys.size(), 3);  // 1, 2, null are unique values
+    }
+
+    // Test multiple column grouping
+    {
+        auto result = ArrowUtil::ExtractGroupKeys(batch, {"int_col", "str_col"});
+        ASSERT_TRUE(result.ok());
+        auto keys = result.value();
+        ASSERT_EQ(keys.size(), 3);  // (1,a), (2,b), (null,c) are unique combinations
+    }
+}
+
+//
+// Test Setup:
+//      Create a record batch with all supported data types
+//      Insert 2 rows with different values for each column
+// Test Result:
+//      Grouping by all columns should return 2 unique combinations
+//      Verify handling of all supported data types
+//
+TEST_F(ArrowUtilTest, ExtractGroupKeysAllTypes) {
+    common::Schema schema({{"int32_col", common::ColumnType::INT32, common::Nullability::NULLABLE},
+                           {"int64_col", common::ColumnType::INT64, common::Nullability::NULLABLE},
+                           {"uint32_col", common::ColumnType::UINT32, common::Nullability::NULLABLE},
+                           {"uint64_col", common::ColumnType::UINT64, common::Nullability::NULLABLE},
+                           {"float_col", common::ColumnType::FLOAT, common::Nullability::NULLABLE},
+                           {"double_col", common::ColumnType::DOUBLE, common::Nullability::NULLABLE},
+                           {"bool_col", common::ColumnType::BOOLEAN, common::Nullability::NULLABLE},
+                           {"string_col", common::ColumnType::STRING, common::Nullability::NULLABLE}});
+
+    // Create test data with all types
+    std::string json = R"([
+        {
+            "int32_col": 1,
+            "int64_col": 1000000000000,
+            "uint32_col": 1,
+            "uint64_col": 1000000000000,
+            "float_col": 1.1,
+            "double_col": 1.1,
+            "bool_col": true,
+            "string_col": "a"
+        },
+        {
+            "int32_col": 2,
+            "int64_col": 2000000000000,
+            "uint32_col": 2,
+            "uint64_col": 2000000000000,
+            "float_col": 2.2,
+            "double_col": 2.2,
+            "bool_col": false,
+            "string_col": "b"
+        }
+    ])";
+
+    auto batch_result = ArrowUtil::JsonToRecordBatch(json, schema);
+    VERIFY_RESULT(batch_result);
+    auto batch = batch_result.value();
+
+    // Test grouping by all columns
+    auto result = ArrowUtil::ExtractGroupKeys(
+        batch,
+        {"int32_col", "int64_col", "uint32_col", "uint64_col", "float_col", "double_col", "bool_col", "string_col"});
+
+    ASSERT_TRUE(result.ok());
+    auto keys = result.value();
+    ASSERT_EQ(keys.size(), 2);  // Two unique combinations
+}
+
+//
+// Test Setup:
+//      Create a record batch with 2 nullable columns
+//      Insert rows with various null combinations
+// Test Result:
+//      Should identify 4 unique combinations
+//      Verify correct handling of null values in grouping
+//
+TEST_F(ArrowUtilTest, ExtractGroupKeysNullHandling) {
+    common::Schema schema({{"int_col", common::ColumnType::INT32, common::Nullability::NULLABLE},
+                           {"str_col", common::ColumnType::STRING, common::Nullability::NULLABLE}});
+
+    // Create test data with various null combinations
+    std::string json = R"([
+        {"int_col": 1, "str_col": "a"},
+        {"int_col": null, "str_col": "a"},
+        {"int_col": 1, "str_col": null},
+        {"int_col": null, "str_col": null},
+        {"int_col": null, "str_col": null}
+    ])";
+
+    auto batch_result = ArrowUtil::JsonToRecordBatch(json, schema);
+    ASSERT_TRUE(batch_result.ok());
+    auto batch = batch_result.value();
+
+    auto result = ArrowUtil::ExtractGroupKeys(batch, {"int_col", "str_col"});
+    ASSERT_TRUE(result.ok());
+    auto keys = result.value();
+    ASSERT_EQ(keys.size(), 4);  // (1,a), (null,a), (1,null), (null,null)
+}
+
+//
+// Test Setup:
+//      Create an empty record batch with a single column
+// Test Result:
+//      Should return an empty vector of group keys
+//      Operation should complete successfully
+//
+TEST_F(ArrowUtilTest, ExtractGroupKeysEmptyBatch) {
+    common::Schema schema({{"int_col", common::ColumnType::INT32, common::Nullability::NULLABLE}});
+
+    auto empty_batch_result = ArrowUtil::CreateEmptyBatch(schema);
+    ASSERT_TRUE(empty_batch_result.ok());
+    auto empty_batch = empty_batch_result.value();
+
+    auto result = ArrowUtil::ExtractGroupKeys(empty_batch, {"int_col"});
+    ASSERT_TRUE(result.ok());
+    ASSERT_TRUE(result.value().empty());
+}
+
+//
+// Test Setup:
+//      Create various invalid inputs: null batch, empty column list, non-existent column
+// Test Result:
+//      Should return appropriate error codes for each invalid input
+//      Verify error handling for all edge cases
+//
+TEST_F(ArrowUtilTest, ExtractGroupKeysErrorCases) {
+    common::Schema schema({{"int_col", common::ColumnType::INT32, common::Nullability::NULLABLE}});
+
+    auto batch_result = ArrowUtil::JsonToRecordBatch(R"([{"int_col": 1}])", schema);
+    ASSERT_TRUE(batch_result.ok());
+    auto batch = batch_result.value();
+
+    // Test null batch
+    {
+        auto result = ArrowUtil::ExtractGroupKeys(nullptr, {"int_col"});
+        ASSERT_FALSE(result.ok());
+        ASSERT_EQ(result.error().code(), common::ErrorCode::InvalidArgument);
+    }
+
+    // Test empty column list
+    {
+        auto result = ArrowUtil::ExtractGroupKeys(batch, {});
+        ASSERT_FALSE(result.ok());
+        ASSERT_EQ(result.error().code(), common::ErrorCode::InvalidArgument);
+    }
+
+    // Test non-existent column
+    {
+        auto result = ArrowUtil::ExtractGroupKeys(batch, {"non_existent"});
+        ASSERT_FALSE(result.ok());
+        ASSERT_EQ(result.error().code(), common::ErrorCode::InvalidArgument);
+    }
+}
+
+//
+// Test Setup:
+//      Create group keys with different values and null combinations
+//      Test sorting and comparison operations
+// Test Result:
+//      Null values should sort first
+//      Keys should maintain consistent ordering
+//      Equality comparison should work correctly
+//
+TEST_F(ArrowUtilTest, GroupKeyComparison) {
+    common::Schema schema({{"int_col", common::ColumnType::INT32, common::Nullability::NULLABLE},
+                           {"str_col", common::ColumnType::STRING, common::Nullability::NULLABLE}});
+
+    std::string json = R"([
+        {"int_col": 1, "str_col": "a"},
+        {"int_col": 2, "str_col": "b"},
+        {"int_col": null, "str_col": "c"},
+        {"int_col": 1, "str_col": null}
+    ])";
+
+    auto batch_result = ArrowUtil::JsonToRecordBatch(json, schema);
+    ASSERT_TRUE(batch_result.ok());
+    auto batch = batch_result.value();
+
+    auto result = ArrowUtil::ExtractGroupKeys(batch, {"int_col", "str_col"});
+    ASSERT_TRUE(result.ok());
+    auto keys = result.value();
+
+    // Test ordering
+    std::vector<GroupKey> sorted_keys = keys;
+    std::sort(sorted_keys.begin(), sorted_keys.end());
+
+    // Verify null ordering (nulls should come first)
+    ASSERT_TRUE(sorted_keys[0].ToString().find("null") != std::string::npos);
+
+    // Test equality
+    for (size_t i = 0; i < keys.size(); i++) {
+        ASSERT_EQ(keys[i], keys[i]);
+        for (size_t j = i + 1; j < keys.size(); j++) {
+            ASSERT_NE(keys[i], keys[j]);
+        }
+    }
+}
+
+//
+// Test Setup:
+//      Create group keys with both regular and null values
+//      Test string representation generation
+// Test Result:
+//      Regular values should be properly formatted with separators
+//      Null values should be represented as "NULL"
+//
+TEST_F(ArrowUtilTest, GroupKeyToString) {
+    common::Schema schema({{"int_col", common::ColumnType::INT32, common::Nullability::NULLABLE},
+                           {"str_col", common::ColumnType::STRING, common::Nullability::NULLABLE}});
+
+    std::string json = R"([
+        {"int_col": 1, "str_col": "a"},
+        {"int_col": null, "str_col": null}
+    ])";
+
+    auto batch_result = ArrowUtil::JsonToRecordBatch(json, schema);
+    ASSERT_TRUE(batch_result.ok());
+    auto batch = batch_result.value();
+
+    auto result = ArrowUtil::ExtractGroupKeys(batch, {"int_col", "str_col"});
+    ASSERT_TRUE(result.ok());
+    auto keys = result.value();
+
+    // Verify string representation
+    std::set<std::string> expected = {"1,\"a\"", "null,null"};
+    std::set<std::string> actual;
+    for (const auto& key : keys) {
+        actual.insert(key.ToString());
+    }
+    ASSERT_EQ(actual, expected);
+}
+
 }  // namespace pond::query

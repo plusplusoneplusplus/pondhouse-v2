@@ -810,7 +810,7 @@ TEST_F(MaterializedExecutorTest, SimpleSum) {
     ASSERT_EQ(batch->schema()->field(0)->name(), "sum_age");
 
     // Verify sum value (25 + 30 + 35 + 40 + 45 = 175)
-    auto sum_array = std::static_pointer_cast<arrow::Int64Array>(batch->column(0));
+    auto sum_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
     ASSERT_EQ(sum_array->Value(0), 175) << "Sum should be 175";
 }
 

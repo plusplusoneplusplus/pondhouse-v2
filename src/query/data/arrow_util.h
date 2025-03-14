@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <arrow/api.h>
@@ -15,6 +16,25 @@
 namespace pond::query {
 
 using ArrowDataBatchSharedPtr = std::shared_ptr<arrow::RecordBatch>;
+
+class GroupKey {
+public:
+    // Add a typed value to the key
+    template <typename T>
+    void AddValue(const T& value, bool is_null = false);
+
+    // Compare operators for sorting/uniqueness
+    bool operator<(const GroupKey& other) const;
+    bool operator==(const GroupKey& other) const;
+
+    // Convert to string representation if needed
+    std::string ToString() const;
+
+private:
+    // Store values in their native type using std::variant
+    std::vector<std::variant<int32_t, int64_t, uint32_t, uint64_t, float, double, std::string, bool>> values_;
+    std::vector<bool> null_flags_;
+};
 
 /**
  * @brief Utility functions for working with Arrow data
@@ -201,6 +221,15 @@ public:
      */
     static common::Result<ArrowDataBatchSharedPtr> JsonToRecordBatch(const rapidjson::Document& json_doc,
                                                                      const common::Schema& schema);
+
+    /**
+     * @brief Extract unique group keys from specified columns in a record batch
+     * @param batch The input record batch
+     * @param group_by_columns Names of columns to group by
+     * @return Result containing vector of unique group keys or an error
+     */
+    static common::Result<std::vector<GroupKey>> ExtractGroupKeys(const ArrowDataBatchSharedPtr& batch,
+                                                                  const std::vector<std::string>& group_by_columns);
 
 private:
     /**

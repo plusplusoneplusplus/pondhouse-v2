@@ -260,26 +260,19 @@ void MaterializedExecutor::Visit(PhysicalNestedLoopJoinNode& node) {
         common::Error(common::ErrorCode::NotImplemented, "Nested loop join not implemented in simple executor");
 }
 
-void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
+common::Result<ArrowDataBatchSharedPtr> MaterializedExecutor::VisitHashAggregate(PhysicalHashAggregateNode& node) {
+    using ReturnType = common::Result<ArrowDataBatchSharedPtr>;
+
     // Execute the child node first to get the input data
     auto result = ExecuteChildren(node);
-    if (!result.ok()) {
-        current_result_ = result;
-        return;
-    }
+    RETURN_IF_ERROR_T(ReturnType, result);
 
     // Get input batch from child
     auto input_batch = current_batch_;
     if (!input_batch || input_batch->num_rows() == 0) {
         // Create empty batch with the output schema
         auto empty_batch_result = ArrowUtil::CreateEmptyBatch(node.OutputSchema());
-        if (!empty_batch_result.ok()) {
-            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(empty_batch_result.error());
-            return;
-        }
-        current_batch_ = empty_batch_result.value();
-        current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
-        return;
+        RETURN_IF_ERROR_T(ReturnType, empty_batch_result);
     }
 
     // Get the group by columns and aggregate expressions
@@ -288,8 +281,7 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
 
     // If there are no group by columns and no aggregates, just return the input
     if (group_by.empty() && aggregates.empty()) {
-        current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(input_batch);
-        return;
+        return common::Result<ArrowDataBatchSharedPtr>::success(input_batch);
     }
 
     // Create a mapping from group keys to row indices
@@ -297,10 +289,7 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
     std::unordered_map<std::string, std::vector<int>> group_map;
 
     auto input_batch_schema_result = format::SchemaConverter::FromArrowSchema(input_batch->schema());
-    if (!input_batch_schema_result.ok()) {
-        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(input_batch_schema_result.error());
-        return;
-    }
+    RETURN_IF_ERROR_T(ReturnType, input_batch_schema_result);
 
     auto input_batch_pond_schema = input_batch_schema_result.value();
 
@@ -312,9 +301,8 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
         for (const auto& group_expr : group_by) {
             // For now, only support column references in group by
             if (group_expr->Type() != common::ExprType::Column) {
-                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+                return common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
                     common::ErrorCode::NotImplemented, "Only column references are supported in GROUP BY"));
-                return;
             }
 
             auto col_expr = std::static_pointer_cast<common::ColumnExpression>(group_expr);
@@ -324,9 +312,8 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
             int col_idx = input_batch_pond_schema->GetColumnIndex(col_name);
 
             if (col_idx == -1) {
-                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                return common::Result<ArrowDataBatchSharedPtr>::failure(
                     common::Error(common::ErrorCode::InvalidArgument, "Column not found in input: " + col_name));
-                return;
             }
 
             // Get the column array and value at this row
@@ -339,8 +326,7 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
 
             auto append_result = ArrowUtil::AppendGroupKeyValue(array, row_idx, group_key);
             if (!append_result.ok()) {
-                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(append_result.error());
-                return;
+                return common::Result<ArrowDataBatchSharedPtr>::failure(append_result.error());
             }
         }
 
@@ -359,10 +345,9 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
         auto col_name = output_schema.Columns()[i].name;
         auto type = output_schema.Columns()[i].type;
         auto builder_result = ArrowUtil::CreateArrayBuilder(type);
-        if (!builder_result.ok()) {
-            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(builder_result.error());
-            return;
-        }
+
+        RETURN_IF_ERROR_T(ReturnType, builder_result);
+
         builders.push_back(std::move(builder_result).value());
 
         for (const auto& group_expr : group_by) {
@@ -385,9 +370,8 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
         int input_col_idx = input_batch_pond_schema->GetColumnIndex(col_name);
 
         if (input_col_idx == -1) {
-            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+            return common::Result<ArrowDataBatchSharedPtr>::failure(
                 common::Error(common::ErrorCode::InvalidArgument, "Column not found in input: " + col_name));
-            return;
         }
 
         // Get the column array
@@ -398,10 +382,7 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
             // Take the first row in the group for the group by columns
             int row_idx = row_indices[0];
             auto append_result = ArrowUtil::AppendGroupValue(input_array, builders[output_col_idx], row_idx);
-            if (!append_result.ok()) {
-                current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(append_result.error());
-                return;
-            }
+            RETURN_IF_ERROR_T(ReturnType, append_result);
         }
 
         output_col_idx++;
@@ -410,9 +391,8 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
     // Now, compute the aggregates
     for (const auto& agg_expr : aggregates) {
         if (agg_expr->Type() != common::ExprType::Aggregate) {
-            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+            return common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
                 common::ErrorCode::NotImplemented, "Only aggregate expressions are supported in aggregates list"));
-            return;
         }
 
         auto agg = std::static_pointer_cast<common::AggregateExpression>(agg_expr);
@@ -421,9 +401,8 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
 
         // For now, only support column references in aggregate input
         if (input_expr->Type() != common::ExprType::Column && input_expr->Type() != common::ExprType::Star) {
-            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
+            return common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
                 common::ErrorCode::NotImplemented, "Only column references or * are supported in aggregate input"));
-            return;
         }
 
         // Special case for COUNT(*)
@@ -454,9 +433,8 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
         }
 
         if (input_col_idx == -1) {
-            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+            return common::Result<ArrowDataBatchSharedPtr>::failure(
                 common::Error(common::ErrorCode::InvalidArgument, "Column not found in input: " + col_name));
-            return;
         }
 
         // Get the column array
@@ -468,11 +446,7 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
                 auto group_key_idx = group_key_to_index[group_key];
                 auto column_builder = builders[group_key_idx];
                 auto result = ArrowUtil::AppendValue<arrow::StringBuilder>(column_builder, group_key);
-                if (!result.ok()) {
-                    current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                        common::ErrorCode::Failure, "Failed to append group key: " + result.error().message()));
-                    return;
-                }
+                RETURN_IF_ERROR_T(ReturnType, result);
             }
 
             auto builder = builders[output_col_idx];
@@ -482,56 +456,35 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
                 case common::AggregateType::Count: {
                     auto typed_builder = std::static_pointer_cast<arrow::Int64Builder>(builder);
                     auto result = ArrowUtil::ComputeCount(input_array, row_indices, typed_builder);
-                    if (!result.ok()) {
-                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                            common::ErrorCode::Failure, "Failed to append count: " + result.error().message()));
-                        return;
-                    }
+                    RETURN_IF_ERROR_T(ReturnType, result);
                     break;
                 }
 
                 case common::AggregateType::Sum: {
                     auto result = ArrowUtil::ComputeSum(input_array, row_indices, builder);
-                    if (!result.ok()) {
-                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                            common::ErrorCode::Failure, "Failed to append sum: " + result.error().message()));
-                        return;
-                    }
+                    RETURN_IF_ERROR_T(ReturnType, result);
                     break;
                 }
 
                 case common::AggregateType::Avg: {
                     auto result = ArrowUtil::ComputeAverage(input_array, row_indices, builder);
-                    if (!result.ok()) {
-                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                            common::ErrorCode::Failure, "Failed to append average: " + result.error().message()));
-                        return;
-                    }
+                    RETURN_IF_ERROR_T(ReturnType, result);
                     break;
                 }
 
                 case common::AggregateType::Min: {
                     auto result = ArrowUtil::ComputeMin(input_array, row_indices, builder);
-                    if (!result.ok()) {
-                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                            common::ErrorCode::Failure, "Failed to append min: " + result.error().message()));
-                        return;
-                    }
+                    RETURN_IF_ERROR_T(ReturnType, result);
                     break;
                 }
                 case common::AggregateType::Max: {
                     auto result = ArrowUtil::ComputeMax(input_array, row_indices, builder);
-                    if (!result.ok()) {
-                        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                            common::ErrorCode::Failure, "Failed to append max: " + result.error().message()));
-                        return;
-                    }
+                    RETURN_IF_ERROR_T(ReturnType, result);
                     break;
                 }
                 default: {
-                    current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+                    return common::Result<ArrowDataBatchSharedPtr>::failure(
                         common::Error(common::ErrorCode::NotImplemented, "Unsupported aggregate function"));
-                    return;
                 }
             }
         }
@@ -545,24 +498,30 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
         std::shared_ptr<arrow::Array> array;
         auto status = builder->Finish(&array);
         if (!status.ok()) {
-            current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(
+            return common::Result<ArrowDataBatchSharedPtr>::failure(
                 common::Error(common::ErrorCode::Failure, "Failed to finalize array: " + status.ToString()));
-            return;
         }
         output_arrays.push_back(array);
     }
 
     // Create arrow schema from output schema
     auto arrow_schema_result = format::SchemaConverter::ToArrowSchema(output_schema);
-    if (!arrow_schema_result.ok()) {
-        current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(arrow_schema_result.error());
-        return;
-    }
+    RETURN_IF_ERROR_T(ReturnType, arrow_schema_result);
+
     auto arrow_schema = arrow_schema_result.value();
 
     // Create the output batch
-    current_batch_ = arrow::RecordBatch::Make(arrow_schema, num_groups, output_arrays);
-    current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
+    return common::Result<ArrowDataBatchSharedPtr>::success(
+        arrow::RecordBatch::Make(arrow_schema, num_groups, output_arrays));
+}
+
+void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
+    current_result_ = VisitHashAggregate(node);
+    if (current_result_.ok()) {
+        current_batch_ = current_result_.value();
+    }
+
+    return;
 }
 
 void MaterializedExecutor::Visit(PhysicalSortNode& node) {

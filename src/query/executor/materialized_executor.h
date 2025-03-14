@@ -85,6 +85,7 @@ protected:
     // Helper methods for execution
     common::Result<ArrowDataBatchSharedPtr> ExecuteChildren(PhysicalPlanNode& node);
     common::Result<bool> ProduceResults(const common::Schema& schema);
+    common::Result<ArrowDataBatchSharedPtr> VisitHashAggregate(PhysicalHashAggregateNode& node);
 
 private:
     std::shared_ptr<catalog::Catalog> catalog_;
