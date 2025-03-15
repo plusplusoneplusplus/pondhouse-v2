@@ -1432,4 +1432,328 @@ TEST_F(ArrowUtilTest, GroupKeyToString) {
     ASSERT_EQ(actual, expected);
 }
 
+//
+// Test Setup:
+//      Create a record batch with 3 columns and insert 4 rows with some duplicates
+// Test Result:
+//      When grouping by col1, should get 3 unique groups with correct aggregates
+//
+TEST_F(ArrowUtilTest, HashAggregateBasic) {
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+
+    auto col1_builder = std::make_shared<arrow::Int32Builder>();
+    ASSERT_OK(col1_builder->AppendValues({1, 1, 2, 3}));
+    std::shared_ptr<arrow::Array> col1;
+    ASSERT_OK(col1_builder->Finish(&col1));
+
+    auto col2_builder = std::make_shared<arrow::DoubleBuilder>();
+    ASSERT_OK(col2_builder->AppendValues({10.0, 20.0, 30.0, 40.0}));
+    std::shared_ptr<arrow::Array> col2;
+    ASSERT_OK(col2_builder->Finish(&col2));
+
+    auto col3_builder = std::make_shared<arrow::StringBuilder>();
+    ASSERT_OK(col3_builder->AppendValues({"a", "b", "c", "d"}));
+    std::shared_ptr<arrow::Array> col3;
+    ASSERT_OK(col3_builder->Finish(&col3));
+
+    arrays.push_back(col1);
+    arrays.push_back(col2);
+    arrays.push_back(col3);
+
+    auto schema = arrow::schema({arrow::field("col1", arrow::int32()),
+                                 arrow::field("col2", arrow::float64()),
+                                 arrow::field("col3", arrow::utf8())});
+
+    auto batch = arrow::RecordBatch::Make(schema, 4, arrays);
+
+    // Test grouping by col1 and aggregating col2 with SUM and AVG
+    auto result = ArrowUtil::HashAggregate(
+        batch, {"col1"}, {"col2", "col2"}, {common::AggregateType::Sum, common::AggregateType::Avg});
+
+    ASSERT_TRUE(result.ok());
+    auto agg_batch = result.value();
+
+    // Verify output schema
+    auto output_schema = agg_batch->schema();
+    ASSERT_EQ(output_schema->num_fields(), 3);
+    ASSERT_EQ(output_schema->field(0)->name(), "col1");
+    ASSERT_TRUE(output_schema->field(0)->type()->Equals(arrow::int32()));
+    ASSERT_EQ(output_schema->field(1)->name(), "col2_sum");
+    ASSERT_TRUE(output_schema->field(1)->type()->Equals(arrow::float64()));
+    ASSERT_EQ(output_schema->field(2)->name(), "col2_avg");
+    ASSERT_TRUE(output_schema->field(2)->type()->Equals(arrow::float64()));
+
+    ASSERT_EQ(agg_batch->num_rows(), 3);  // Should have 3 groups (1, 2, 3)
+
+    // Verify group by column values
+    auto group_col = std::static_pointer_cast<arrow::Int32Array>(agg_batch->column(0));
+    ASSERT_EQ(group_col->Value(0), 1);
+    ASSERT_EQ(group_col->Value(1), 2);
+    ASSERT_EQ(group_col->Value(2), 3);
+
+    // Verify sum values
+    auto sum_col = std::static_pointer_cast<arrow::DoubleArray>(agg_batch->column(1));
+    ASSERT_DOUBLE_EQ(sum_col->Value(0), 30.0);  // 10.0 + 20.0
+    ASSERT_DOUBLE_EQ(sum_col->Value(1), 30.0);  // 30.0
+    ASSERT_DOUBLE_EQ(sum_col->Value(2), 40.0);  // 40.0
+
+    // Verify average values
+    auto avg_col = std::static_pointer_cast<arrow::DoubleArray>(agg_batch->column(2));
+    ASSERT_DOUBLE_EQ(avg_col->Value(0), 15.0);  // (10.0 + 20.0) / 2
+    ASSERT_DOUBLE_EQ(avg_col->Value(1), 30.0);  // 30.0 / 1
+    ASSERT_DOUBLE_EQ(avg_col->Value(2), 40.0);  // 40.0 / 1
+}
+
+//
+// Test Setup:
+//      Create a batch with multiple columns and test grouping by multiple columns
+// Test Result:
+//      Correct groups and aggregates when grouping by multiple columns
+TEST_F(ArrowUtilTest, HashAggregateMultipleGroupBy) {
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+
+    auto col1_builder = std::make_shared<arrow::Int32Builder>();
+    ASSERT_OK(col1_builder->AppendValues({1, 1, 1, 1}));
+    std::shared_ptr<arrow::Array> col1;
+    ASSERT_OK(col1_builder->Finish(&col1));
+
+    auto col2_builder = std::make_shared<arrow::StringBuilder>();
+    ASSERT_OK(col2_builder->AppendValues({"a", "a", "b", "b"}));
+    std::shared_ptr<arrow::Array> col2;
+    ASSERT_OK(col2_builder->Finish(&col2));
+
+    auto col3_builder = std::make_shared<arrow::DoubleBuilder>();
+    ASSERT_OK(col3_builder->AppendValues({10.0, 20.0, 30.0, 40.0}));
+    std::shared_ptr<arrow::Array> col3;
+    ASSERT_OK(col3_builder->Finish(&col3));
+
+    arrays.push_back(col1);
+    arrays.push_back(col2);
+    arrays.push_back(col3);
+
+    auto schema = arrow::schema({arrow::field("col1", arrow::int32()),
+                                 arrow::field("col2", arrow::utf8()),
+                                 arrow::field("col3", arrow::float64())});
+
+    auto batch = arrow::RecordBatch::Make(schema, 4, arrays);
+
+    auto result = ArrowUtil::HashAggregate(batch,
+                                           {"col1", "col2"},  // Group by both col1 and col2
+                                           {"col3"},
+                                           {common::AggregateType::Sum});
+
+    ASSERT_TRUE(result.ok());
+    auto agg_batch = result.value();
+    ASSERT_EQ(agg_batch->num_rows(), 2);  // Should have 2 groups: (1,a) and (1,b)
+
+    // Verify group values
+    auto group_col1 = std::static_pointer_cast<arrow::Int32Array>(agg_batch->column(0));
+    auto group_col2 = std::static_pointer_cast<arrow::StringArray>(agg_batch->column(1));
+    ASSERT_EQ(group_col1->Value(0), 1);
+    ASSERT_EQ(group_col1->Value(1), 1);
+    ASSERT_EQ(group_col2->GetString(0), "a");
+    ASSERT_EQ(group_col2->GetString(1), "b");
+
+    // Verify sum values
+    auto sum_col = std::static_pointer_cast<arrow::DoubleArray>(agg_batch->column(2));
+    ASSERT_DOUBLE_EQ(sum_col->Value(0), 30.0);  // 10.0 + 20.0
+    ASSERT_DOUBLE_EQ(sum_col->Value(1), 70.0);  // 30.0 + 40.0
+}
+
+//
+// Test Setup:
+//      Create a batch with null values and test how aggregates handle them
+// Test Result:
+//      Nulls should be handled correctly in both grouping and aggregation
+//
+TEST_F(ArrowUtilTest, HashAggregateNullHandling) {
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+
+    auto col1_builder = std::make_shared<arrow::Int32Builder>();
+    ASSERT_OK(col1_builder->AppendValues({1, 1, 2, 2}, {true, true, true, false}));
+    std::shared_ptr<arrow::Array> col1;
+    ASSERT_OK(col1_builder->Finish(&col1));
+
+    auto col2_builder = std::make_shared<arrow::DoubleBuilder>();
+    ASSERT_OK(col2_builder->AppendValues({10.0, 20.0, 30.0, 40.0}, {true, false, true, true}));
+    std::shared_ptr<arrow::Array> col2;
+    ASSERT_OK(col2_builder->Finish(&col2));
+
+    arrays.push_back(col1);
+    arrays.push_back(col2);
+
+    auto schema = arrow::schema({
+        arrow::field("col1", arrow::int32(), true),   // Nullable
+        arrow::field("col2", arrow::float64(), true)  // Nullable
+    });
+
+    auto batch = arrow::RecordBatch::Make(schema, 4, arrays);
+
+    auto result = ArrowUtil::HashAggregate(
+        batch,
+        {"col1"},
+        {"col2", "col2", "col2"},
+        {common::AggregateType::Sum, common::AggregateType::Avg, common::AggregateType::Count});
+
+    ASSERT_TRUE(result.ok());
+    auto agg_batch = result.value();
+    std::cout << ArrowUtil::BatchToString(agg_batch) << std::endl;
+    ASSERT_EQ(agg_batch->num_rows(), 3);  // Should have 3 groups: 1, 2, and null
+
+    // Verify group by column values
+    auto group_col = std::static_pointer_cast<arrow::Int32Array>(agg_batch->column(0));
+    ASSERT_EQ(group_col->Value(0), 0);  // null
+    ASSERT_EQ(group_col->Value(1), 1);
+    ASSERT_EQ(group_col->Value(2), 2);
+
+    // Verify sum values
+    auto sum_col = std::static_pointer_cast<arrow::DoubleArray>(agg_batch->column(1));
+    ASSERT_DOUBLE_EQ(sum_col->Value(0), 40.0);  // null
+    ASSERT_DOUBLE_EQ(sum_col->Value(1), 10.0);
+    ASSERT_DOUBLE_EQ(sum_col->Value(2), 30.0);
+
+    // Verify average values
+    auto avg_col = std::static_pointer_cast<arrow::DoubleArray>(agg_batch->column(2));
+    ASSERT_DOUBLE_EQ(avg_col->Value(0), 40.0);  // null
+    ASSERT_DOUBLE_EQ(avg_col->Value(1), 10.0);
+    ASSERT_DOUBLE_EQ(avg_col->Value(2), 30.0);
+
+    // Verify count values
+    auto count_col = std::static_pointer_cast<arrow::Int64Array>(agg_batch->column(3));
+    ASSERT_EQ(count_col->Value(0), 1);  // null
+    ASSERT_EQ(count_col->Value(1), 2);
+    ASSERT_EQ(count_col->Value(2), 1);
+}
+
+//
+// Test Setup:
+//      Create a batch with all supported types and test aggregation
+// Test Result:
+//      All supported types should work correctly for grouping and aggregation
+//
+TEST_F(ArrowUtilTest, HashAggregateAllTypes) {
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+
+    // Add arrays for all supported types...
+    auto int32_builder = std::make_shared<arrow::Int32Builder>();
+    ASSERT_OK(int32_builder->AppendValues({1, 2, 1, 2}));
+    std::shared_ptr<arrow::Array> int32_array;
+    ASSERT_OK(int32_builder->Finish(&int32_array));
+    arrays.push_back(int32_array);
+
+    auto int64_builder = std::make_shared<arrow::Int64Builder>();
+    ASSERT_OK(int64_builder->AppendValues({100, 200, 300, 400}));
+    std::shared_ptr<arrow::Array> int64_array;
+    ASSERT_OK(int64_builder->Finish(&int64_array));
+    arrays.push_back(int64_array);
+
+    auto double_builder = std::make_shared<arrow::DoubleBuilder>();
+    ASSERT_OK(double_builder->AppendValues({1.1, 2.2, 3.3, 4.4}));
+    std::shared_ptr<arrow::Array> double_array;
+    ASSERT_OK(double_builder->Finish(&double_array));
+    arrays.push_back(double_array);
+
+    auto schema = arrow::schema({arrow::field("int32_col", arrow::int32()),
+                                 arrow::field("int64_col", arrow::int64()),
+                                 arrow::field("double_col", arrow::float64())});
+
+    auto batch = arrow::RecordBatch::Make(schema, 4, arrays);
+
+    // Test grouping by int32 and aggregating other columns
+    auto result = ArrowUtil::HashAggregate(
+        batch, {"int32_col"}, {"int64_col", "double_col"}, {common::AggregateType::Sum, common::AggregateType::Avg});
+
+    ASSERT_TRUE(result.ok());
+    auto agg_batch = result.value();
+    ASSERT_EQ(agg_batch->num_rows(), 2);  // Should have 2 groups
+
+    // Verify int64 sum
+    auto sum_col = std::static_pointer_cast<arrow::Int64Array>(agg_batch->column(1));
+    ASSERT_EQ(sum_col->Value(0), 400);  // 100 + 300
+    ASSERT_EQ(sum_col->Value(1), 600);  // 200 + 400
+
+    // Verify double average
+    auto avg_col = std::static_pointer_cast<arrow::DoubleArray>(agg_batch->column(2));
+    ASSERT_DOUBLE_EQ(avg_col->Value(0), 2.2);  // (1.1 + 3.3) / 2
+    ASSERT_DOUBLE_EQ(avg_col->Value(1), 3.3);  // (2.2 + 4.4) / 2
+}
+
+//
+// Test Setup:
+//      Create an empty batch and test aggregation
+// Test Result:
+//      Should return an empty batch with correct schema
+//
+TEST_F(ArrowUtilTest, HashAggregateEmptyBatch) {
+    auto schema = arrow::schema({arrow::field("col1", arrow::int32()), arrow::field("col2", arrow::float64())});
+
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    auto col1_builder = std::make_shared<arrow::Int32Builder>();
+    std::shared_ptr<arrow::Array> col1;
+    ASSERT_OK(col1_builder->Finish(&col1));
+    arrays.push_back(col1);
+
+    auto col2_builder = std::make_shared<arrow::DoubleBuilder>();
+    std::shared_ptr<arrow::Array> col2;
+    ASSERT_OK(col2_builder->Finish(&col2));
+    arrays.push_back(col2);
+
+    auto batch = arrow::RecordBatch::Make(schema, 0, arrays);
+
+    auto result = ArrowUtil::HashAggregate(batch, {"col1"}, {"col2"}, {common::AggregateType::Sum});
+
+    ASSERT_TRUE(result.ok());
+    auto agg_batch = result.value();
+    ASSERT_EQ(agg_batch->num_rows(), 0);
+    ASSERT_EQ(agg_batch->num_columns(), 2);
+}
+
+//
+// Test Setup:
+//      Test various error cases
+// Test Result:
+//      Should return appropriate errors for invalid inputs
+//
+TEST_F(ArrowUtilTest, HashAggregateErrorCases) {
+    auto schema = arrow::schema({arrow::field("col1", arrow::int32()), arrow::field("col2", arrow::float64())});
+
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    auto col1_builder = std::make_shared<arrow::Int32Builder>();
+    ASSERT_OK(col1_builder->AppendValues({1, 2, 3}));
+    std::shared_ptr<arrow::Array> col1;
+    ASSERT_OK(col1_builder->Finish(&col1));
+    arrays.push_back(col1);
+
+    auto col2_builder = std::make_shared<arrow::DoubleBuilder>();
+    ASSERT_OK(col2_builder->AppendValues({1.0, 2.0, 3.0}));
+    std::shared_ptr<arrow::Array> col2;
+    ASSERT_OK(col2_builder->Finish(&col2));
+    arrays.push_back(col2);
+
+    auto batch = arrow::RecordBatch::Make(schema, 3, arrays);
+
+    // Test: Null batch
+    auto result1 = ArrowUtil::HashAggregate(nullptr, {"col1"}, {"col2"}, {common::AggregateType::Sum});
+    ASSERT_FALSE(result1.ok());
+    ASSERT_EQ(result1.error().code(), common::ErrorCode::InvalidArgument);
+
+    // Test: Empty group by columns
+    auto result2 = ArrowUtil::HashAggregate(batch, {}, {"col2"}, {common::AggregateType::Sum});
+    ASSERT_FALSE(result2.ok());
+    ASSERT_EQ(result2.error().code(), common::ErrorCode::InvalidArgument);
+
+    // Test: Mismatched agg columns and types
+    auto result3 =
+        ArrowUtil::HashAggregate(batch, {"col1"}, {"col2"}, {common::AggregateType::Sum, common::AggregateType::Avg}
+                                 // More agg types than columns
+        );
+    ASSERT_FALSE(result3.ok());
+    ASSERT_EQ(result3.error().code(), common::ErrorCode::InvalidArgument);
+
+    // Test: Non-existent column
+    auto result4 = ArrowUtil::HashAggregate(batch, {"non_existent_col"}, {"col2"}, {common::AggregateType::Sum});
+    ASSERT_FALSE(result4.ok());
+    ASSERT_EQ(result4.error().code(), common::ErrorCode::InvalidArgument);
+}
+
 }  // namespace pond::query

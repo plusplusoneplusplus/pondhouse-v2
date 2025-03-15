@@ -1,5 +1,6 @@
 #include "query/data/arrow_util.h"
 
+#include <iomanip>  // Add this include for stream manipulators
 #include <set>
 
 #include <arrow/api.h>
@@ -903,6 +904,408 @@ common::Result<std::vector<GroupKey>> ArrowUtil::ExtractGroupKeys(const ArrowDat
     }
 
     return ResultType::success(std::vector<GroupKey>(unique_keys.begin(), unique_keys.end()));
+}
+
+common::Result<ArrowDataBatchSharedPtr> ArrowUtil::HashAggregate(const ArrowDataBatchSharedPtr& batch,
+                                                                 const std::vector<std::string>& group_by_columns,
+                                                                 const std::vector<std::string>& agg_columns,
+                                                                 const std::vector<common::AggregateType>& agg_types) {
+    using ReturnType = common::Result<ArrowDataBatchSharedPtr>;
+
+    // Validate inputs
+    if (!batch) {
+        return ReturnType::failure(common::ErrorCode::InvalidArgument, "Input batch is null");
+    }
+    if (group_by_columns.empty()) {
+        return ReturnType::failure(common::ErrorCode::InvalidArgument, "Group by columns cannot be empty");
+    }
+    if (agg_columns.size() != agg_types.size()) {
+        return ReturnType::failure(common::ErrorCode::InvalidArgument,
+                                   "Number of aggregate columns does not match number of aggregate types");
+    }
+
+    // Get mapping from column names to column indices in the input batch
+    std::unordered_map<std::string, int> column_indices;
+    for (int i = 0; i < batch->schema()->num_fields(); i++) {
+        column_indices[batch->schema()->field(i)->name()] = i;
+    }
+
+    // Verify all columns exist
+    for (const auto& col_name : group_by_columns) {
+        if (column_indices.find(col_name) == column_indices.end()) {
+            return ReturnType::failure(common::ErrorCode::InvalidArgument, "Group by column not found: " + col_name);
+        }
+    }
+    for (const auto& col_name : agg_columns) {
+        if (column_indices.find(col_name) == column_indices.end()) {
+            return ReturnType::failure(common::ErrorCode::InvalidArgument, "Aggregate column not found: " + col_name);
+        }
+    }
+
+    // Extract group keys and create mapping from group key to row indices
+    auto group_keys_result = ExtractGroupKeys(batch, group_by_columns);
+    RETURN_IF_ERROR_T(ReturnType, group_keys_result);
+    const auto& unique_keys = group_keys_result.value();
+
+    // If batch is empty or no groups found, return an empty batch with the appropriate schema
+    if (batch->num_rows() == 0 || unique_keys.empty()) {
+        // Create a schema for the result
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+
+        // Add group by fields
+        for (const auto& col_name : group_by_columns) {
+            int col_idx = column_indices[col_name];
+            fields.push_back(batch->schema()->field(col_idx));
+        }
+
+        // Add aggregate fields
+        for (size_t i = 0; i < agg_columns.size(); i++) {
+            const auto& col_name = agg_columns[i];
+            int col_idx = column_indices[col_name];
+            auto field = batch->schema()->field(col_idx);
+
+            // Adjust field type for certain aggregates
+            if (agg_types[i] == common::AggregateType::Avg) {
+                fields.push_back(arrow::field(field->name(), arrow::float64(), true));
+            } else if (agg_types[i] == common::AggregateType::Count) {
+                fields.push_back(arrow::field(field->name(), arrow::int64(), false));
+            } else {
+                fields.push_back(field->WithNullable(true));
+            }
+        }
+
+        auto schema = arrow::schema(fields);
+        std::vector<std::shared_ptr<arrow::Array>> empty_arrays(fields.size());
+
+        for (size_t i = 0; i < fields.size(); i++) {
+            auto field_type_result = format::SchemaConverter::FromArrowDataType(fields[i]->type());
+            RETURN_IF_ERROR_T(ReturnType, field_type_result);
+            auto field_type = field_type_result.value();
+            auto builder_result = CreateArrayBuilder(field_type);
+            RETURN_IF_ERROR_T(ReturnType, builder_result);
+
+            std::shared_ptr<arrow::Array> array;
+            auto arrow_result = builder_result.value()->Finish(&array);
+            if (!arrow_result.ok()) {
+                return ReturnType::failure(common::ErrorCode::Failure, arrow_result.ToString());
+            }
+            empty_arrays[i] = array;
+        }
+
+        return ReturnType::success(arrow::RecordBatch::Make(schema, 0, empty_arrays));
+    }
+
+    // Create mapping from group key to row indices
+    std::unordered_map<std::string, std::vector<int>> group_map;
+
+    // Populate the group map based on the group keys
+    for (int row_idx = 0; row_idx < batch->num_rows(); row_idx++) {
+        GroupKey row_key;
+
+        // Create the key for this row
+        for (const auto& col_name : group_by_columns) {
+            int col_idx = column_indices[col_name];
+            auto array = batch->column(col_idx);
+            bool is_null = array->IsNull(row_idx);
+
+            // Add the value to the key based on its type
+            switch (array->type_id()) {
+                case arrow::Type::INT32: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int32Array>(array);
+                    row_key.AddValue(is_null ? 0 : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::INT64: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int64Array>(array);
+                    row_key.AddValue(is_null ? 0 : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::UINT32: {
+                    auto typed_array = std::static_pointer_cast<arrow::UInt32Array>(array);
+                    row_key.AddValue(is_null ? 0 : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::UINT64: {
+                    auto typed_array = std::static_pointer_cast<arrow::UInt64Array>(array);
+                    row_key.AddValue(is_null ? 0 : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::FLOAT: {
+                    auto typed_array = std::static_pointer_cast<arrow::FloatArray>(array);
+                    row_key.AddValue(is_null ? 0.0f : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::DOUBLE: {
+                    auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(array);
+                    row_key.AddValue(is_null ? 0.0 : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::STRING: {
+                    auto typed_array = std::static_pointer_cast<arrow::StringArray>(array);
+                    row_key.AddValue(is_null ? "" : typed_array->GetString(row_idx), is_null);
+                    break;
+                }
+                case arrow::Type::BOOL: {
+                    auto typed_array = std::static_pointer_cast<arrow::BooleanArray>(array);
+                    row_key.AddValue(is_null ? false : typed_array->Value(row_idx), is_null);
+                    break;
+                }
+                default:
+                    return ReturnType::failure(common::ErrorCode::NotImplemented,
+                                               "Unsupported column type for grouping: " + array->type()->ToString());
+            }
+        }
+
+        // Add this row to the appropriate group using string representation as map key
+        group_map[row_key.ToString()].push_back(row_idx);
+    }
+
+    // Create builders for the output columns
+    std::vector<std::shared_ptr<arrow::ArrayBuilder>> builders;
+    std::vector<std::shared_ptr<arrow::Field>> output_fields;
+
+    // Add group by column builders
+    for (const auto& col_name : group_by_columns) {
+        int col_idx = column_indices[col_name];
+        auto field = batch->schema()->field(col_idx);
+        output_fields.push_back(field);
+
+        auto column_type_result = format::SchemaConverter::FromArrowDataType(field->type());
+        RETURN_IF_ERROR_T(ReturnType, column_type_result);
+        auto column_type = column_type_result.value();
+        auto builder_result = CreateArrayBuilder(column_type);
+        RETURN_IF_ERROR_T(ReturnType, builder_result);
+        builders.push_back(builder_result.value());
+    }
+
+    // Add aggregate column builders
+    for (size_t i = 0; i < agg_columns.size(); i++) {
+        const auto& col_name = agg_columns[i];
+        int col_idx = column_indices[col_name];
+        auto field = batch->schema()->field(col_idx);
+        auto agg_type = agg_types[i];
+
+        // Determine output field type based on aggregate type
+        std::shared_ptr<arrow::Field> output_field;
+        if (agg_type == common::AggregateType::Avg) {
+            // Average always produces a double
+            output_field = arrow::field(field->name(), arrow::float64(), true);
+        } else if (agg_type == common::AggregateType::Count) {
+            // Count always produces an int64
+            output_field = arrow::field(field->name(), arrow::int64(), false);
+        } else {
+            // Other aggregates preserve the input type but are nullable
+            output_field = field->WithNullable(true);
+        }
+
+        output_fields.push_back(output_field);
+
+        // Create appropriate builder based on aggregate type
+        std::shared_ptr<arrow::ArrayBuilder> builder;
+        if (agg_type == common::AggregateType::Avg) {
+            builder = std::make_shared<arrow::DoubleBuilder>();
+        } else if (agg_type == common::AggregateType::Count) {
+            builder = std::make_shared<arrow::Int64Builder>();
+        } else {
+            auto column_type_result = format::SchemaConverter::FromArrowDataType(field->type());
+            RETURN_IF_ERROR_T(ReturnType, column_type_result);
+            auto column_type = column_type_result.value();
+            auto builder_result = CreateArrayBuilder(column_type);
+            RETURN_IF_ERROR_T(ReturnType, builder_result);
+            builder = builder_result.value();
+        }
+
+        builders.push_back(builder);
+    }
+
+    // Process each unique group
+    for (const auto& key : unique_keys) {
+        const auto& row_indices = group_map[key.ToString()];
+        if (row_indices.empty()) {
+            continue;  // Skip empty groups
+        }
+
+        // Add group by column values (take values from the first row in the group)
+        for (size_t i = 0; i < group_by_columns.size(); i++) {
+            const auto& col_name = group_by_columns[i];
+            int col_idx = column_indices[col_name];
+            auto array = batch->column(col_idx);
+
+            int first_row = row_indices[0];
+            auto append_result = AppendGroupValue(array, builders[i], first_row);
+            RETURN_IF_ERROR_T(ReturnType, append_result);
+        }
+
+        // Compute aggregates for each aggregate column
+        for (size_t i = 0; i < agg_columns.size(); i++) {
+            const auto& col_name = agg_columns[i];
+            int col_idx = column_indices[col_name];
+            auto array = batch->column(col_idx);
+            auto builder_idx = group_by_columns.size() + i;
+
+            switch (agg_types[i]) {
+                case common::AggregateType::Sum: {
+                    auto result = ComputeSum(array, row_indices, builders[builder_idx]);
+                    RETURN_IF_ERROR_T(ReturnType, result);
+                    break;
+                }
+                case common::AggregateType::Avg: {
+                    auto result = ComputeAverage(array, row_indices, builders[builder_idx]);
+                    RETURN_IF_ERROR_T(ReturnType, result);
+                    break;
+                }
+                case common::AggregateType::Min: {
+                    auto result = ComputeMin(array, row_indices, builders[builder_idx]);
+                    RETURN_IF_ERROR_T(ReturnType, result);
+                    break;
+                }
+                case common::AggregateType::Max: {
+                    auto result = ComputeMax(array, row_indices, builders[builder_idx]);
+                    RETURN_IF_ERROR_T(ReturnType, result);
+                    break;
+                }
+                case common::AggregateType::Count: {
+                    auto typed_builder = std::static_pointer_cast<arrow::Int64Builder>(builders[builder_idx]);
+                    auto result = ComputeCount(array, row_indices, typed_builder);
+                    RETURN_IF_ERROR_T(ReturnType, result);
+                    break;
+                }
+                default: {
+                    return ReturnType::failure(
+                        common::ErrorCode::NotImplemented,
+                        "Unsupported aggregate function: " + std::to_string(static_cast<int>(agg_types[i])));
+                }
+            }
+        }
+    }
+
+    // Finalize all arrays
+    std::vector<std::shared_ptr<arrow::Array>> output_arrays;
+    for (auto& builder : builders) {
+        std::shared_ptr<arrow::Array> array;
+        auto arrow_result = builder->Finish(&array);
+        if (!arrow_result.ok()) {
+            return ReturnType::failure(common::ErrorCode::Failure, arrow_result.ToString());
+        }
+        output_arrays.push_back(array);
+    }
+
+    // Create and return the output batch
+    auto output_schema = arrow::schema(output_fields);
+    return ReturnType::success(arrow::RecordBatch::Make(output_schema, unique_keys.size(), output_arrays));
+}
+
+std::string ArrowUtil::BatchToString(const ArrowDataBatchSharedPtr& batch, size_t max_rows) {
+    if (!batch) {
+        return "null batch";
+    }
+
+    std::stringstream ss;
+    size_t num_rows = max_rows == 0 ? batch->num_rows() : std::min(max_rows, static_cast<size_t>(batch->num_rows()));
+
+    // Print header with batch info
+    ss << "RecordBatch with " << batch->num_columns() << " columns, " << batch->num_rows() << " rows";
+    if (max_rows > 0 && max_rows < batch->num_rows()) {
+        ss << " (showing first " << max_rows << ")";
+    }
+    ss << ":\n";
+
+    if (batch->num_columns() == 0) {
+        ss << "<empty schema>";
+        return ss.str();
+    }
+
+    // Calculate column widths and prepare headers
+    std::vector<size_t> widths;
+    std::vector<std::string> headers;
+    for (int i = 0; i < batch->num_columns(); i++) {
+        auto field = batch->schema()->field(i);
+        std::string header = field->name() + " (" + field->type()->ToString() + ")";
+        headers.push_back(header);
+        widths.push_back(GetColumnWidth(batch->column(i), header, num_rows));
+    }
+
+    // Print column headers
+    for (int i = 0; i < batch->num_columns(); i++) {
+        ss << std::left << std::setw(widths[i]) << headers[i];
+        if (i < batch->num_columns() - 1) {
+            ss << " | ";
+        }
+    }
+    ss << "\n";
+
+    // Print separator line
+    for (int i = 0; i < batch->num_columns(); i++) {
+        ss << std::string(widths[i], '-');
+        if (i < batch->num_columns() - 1) {
+            ss << "-|-";
+        }
+    }
+    ss << "\n";
+
+    // Print rows
+    for (size_t row = 0; row < num_rows; row++) {
+        for (int col = 0; col < batch->num_columns(); col++) {
+            std::string value = FormatCellValue(batch->column(col), row);
+            ss << std::left << std::setw(widths[col]) << value;
+            if (col < batch->num_columns() - 1) {
+                ss << " | ";
+            }
+        }
+        ss << "\n";
+    }
+
+    return ss.str();
+}
+
+std::string ArrowUtil::FormatCellValue(const std::shared_ptr<arrow::Array>& array, int row_idx) {
+    if (array->IsNull(row_idx)) {
+        return "null";
+    }
+
+    switch (array->type_id()) {
+        case arrow::Type::INT32:
+            return std::to_string(std::static_pointer_cast<arrow::Int32Array>(array)->Value(row_idx));
+        case arrow::Type::INT64:
+            return std::to_string(std::static_pointer_cast<arrow::Int64Array>(array)->Value(row_idx));
+        case arrow::Type::UINT32:
+            return std::to_string(std::static_pointer_cast<arrow::UInt32Array>(array)->Value(row_idx));
+        case arrow::Type::UINT64:
+            return std::to_string(std::static_pointer_cast<arrow::UInt64Array>(array)->Value(row_idx));
+        case arrow::Type::FLOAT:
+            return std::to_string(std::static_pointer_cast<arrow::FloatArray>(array)->Value(row_idx));
+        case arrow::Type::DOUBLE: {
+            std::stringstream ss;
+            ss << std::fixed << std::setprecision(6)
+               << std::static_pointer_cast<arrow::DoubleArray>(array)->Value(row_idx);
+            return ss.str();
+        }
+        case arrow::Type::STRING:
+            return "\"" + std::static_pointer_cast<arrow::StringArray>(array)->GetString(row_idx) + "\"";
+        case arrow::Type::BOOL:
+            return std::static_pointer_cast<arrow::BooleanArray>(array)->Value(row_idx) ? "true" : "false";
+        case arrow::Type::TIMESTAMP: {
+            auto ts = std::static_pointer_cast<arrow::TimestampArray>(array)->Value(row_idx);
+            return std::to_string(ts);  // Basic timestamp formatting - could be enhanced
+        }
+        default:
+            return "<unsupported type>";
+    }
+}
+
+size_t ArrowUtil::GetColumnWidth(const std::shared_ptr<arrow::Array>& array,
+                                 const std::string& header,
+                                 size_t max_rows) {
+    size_t width = header.length();
+    size_t num_rows = max_rows == 0 ? array->length() : std::min(max_rows, static_cast<size_t>(array->length()));
+
+    // Check width needed for each value
+    for (size_t i = 0; i < num_rows; i++) {
+        std::string value = FormatCellValue(array, i);
+        width = std::max(width, value.length());
+    }
+
+    return width;
 }
 
 }  // namespace pond::query

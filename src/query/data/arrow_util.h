@@ -231,6 +231,42 @@ public:
     static common::Result<std::vector<GroupKey>> ExtractGroupKeys(const ArrowDataBatchSharedPtr& batch,
                                                                   const std::vector<std::string>& group_by_columns);
 
+    /**
+     * @brief Perform hash-based aggregation on a record batch
+     * @param batch The input record batch
+     * @param group_by_columns Names of columns to group by
+     * @param agg_columns Names of columns to aggregate
+     * @param agg_types Types of aggregation to perform for each column
+     * @return Result containing the aggregated record batch or an error
+     *
+     * The output batch will contain:
+     * 1. All group by columns in their original order
+     * 2. All aggregated columns in their original order
+     *
+     * Note:
+     * 1. Null values will be included as a separate group and will be aggregated as well.
+     * 2. The count function still counts NULL values unless explicitly filtered out.
+     */
+    static common::Result<ArrowDataBatchSharedPtr> HashAggregate(const ArrowDataBatchSharedPtr& batch,
+                                                                 const std::vector<std::string>& group_by_columns,
+                                                                 const std::vector<std::string>& agg_columns,
+                                                                 const std::vector<common::AggregateType>& agg_types);
+
+    /**
+     * @brief Convert a record batch to a human-readable string format
+     * @param batch The record batch to format
+     * @param max_rows Maximum number of rows to include (0 for all rows)
+     * @return A formatted string representation of the record batch
+     *
+     * Example output:
+     * RecordBatch with 3 columns, 2 rows:
+     * col1 (int32)    | col2 (string)  | col3 (double)
+     * ----------------------------------------------
+     * 1              | "hello"        | 3.14
+     * 2              | null          | 2.718
+     */
+    static std::string BatchToString(const ArrowDataBatchSharedPtr& batch, size_t max_rows = 0);
+
 private:
     /**
      * @brief Append a value to an array builder
@@ -628,6 +664,34 @@ private:
                                                    std::shared_ptr<arrow::ArrayBuilder> builder) {
         return ComputeMinMaxInternal<ArrayType, BuilderType, ValueType>(input_array, row_indices, builder, false);
     }
+
+    /**
+     * @brief Helper function to create array builder for aggregation results
+     * @param type Column type
+     * @param agg_type Aggregation type
+     * @return Result containing the array builder or an error
+     */
+    static common::Result<std::shared_ptr<arrow::ArrayBuilder>> CreateAggregateBuilder(common::ColumnType type,
+                                                                                       common::AggregateType agg_type);
+
+    /**
+     * @brief Helper function to format a single cell value
+     * @param array The array containing the value
+     * @param row_idx The row index
+     * @return Formatted string representation of the cell value
+     */
+    static std::string FormatCellValue(const std::shared_ptr<arrow::Array>& array, int row_idx);
+
+    /**
+     * @brief Helper function to get the width needed for a column
+     * @param array The array containing the values
+     * @param header The column header string
+     * @param max_rows Maximum number of rows to consider
+     * @return Required width for the column
+     */
+    static size_t GetColumnWidth(const std::shared_ptr<arrow::Array>& array,
+                                 const std::string& header,
+                                 size_t max_rows);
 };
 
 }  // namespace pond::query
