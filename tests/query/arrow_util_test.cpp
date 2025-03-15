@@ -1473,14 +1473,16 @@ TEST_F(ArrowUtilTest, HashAggregateBasic) {
     ASSERT_TRUE(result.ok());
     auto agg_batch = result.value();
 
+    std::cout << ArrowUtil::BatchToString(agg_batch) << std::endl;
+
     // Verify output schema
     auto output_schema = agg_batch->schema();
     ASSERT_EQ(output_schema->num_fields(), 3);
     ASSERT_EQ(output_schema->field(0)->name(), "col1");
     ASSERT_TRUE(output_schema->field(0)->type()->Equals(arrow::int32()));
-    ASSERT_EQ(output_schema->field(1)->name(), "col2_sum");
+    ASSERT_EQ(output_schema->field(1)->name(), "col2");
     ASSERT_TRUE(output_schema->field(1)->type()->Equals(arrow::float64()));
-    ASSERT_EQ(output_schema->field(2)->name(), "col2_avg");
+    ASSERT_EQ(output_schema->field(2)->name(), "col2");
     ASSERT_TRUE(output_schema->field(2)->type()->Equals(arrow::float64()));
 
     ASSERT_EQ(agg_batch->num_rows(), 3);  // Should have 3 groups (1, 2, 3)
@@ -1754,6 +1756,62 @@ TEST_F(ArrowUtilTest, HashAggregateErrorCases) {
     auto result4 = ArrowUtil::HashAggregate(batch, {"non_existent_col"}, {"col2"}, {common::AggregateType::Sum});
     ASSERT_FALSE(result4.ok());
     ASSERT_EQ(result4.error().code(), common::ErrorCode::InvalidArgument);
+}
+
+TEST_F(ArrowUtilTest, HashAggregateWithOutputNames) {
+    // Create test data
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+
+    // Create group by column
+    arrow::Int32Builder group_builder;
+    ASSERT_OK(group_builder.AppendValues({1, 1, 2, 2, 3}));
+    std::shared_ptr<arrow::Array> group_array;
+    ASSERT_OK(group_builder.Finish(&group_array));
+    arrays.push_back(group_array);
+
+    // Create value column
+    arrow::DoubleBuilder value_builder;
+    ASSERT_OK(value_builder.AppendValues({10.0, 20.0, 30.0, 40.0, 50.0}));
+    std::shared_ptr<arrow::Array> value_array;
+    ASSERT_OK(value_builder.Finish(&value_array));
+    arrays.push_back(value_array);
+
+    // Create schema
+    auto schema =
+        arrow::schema({arrow::field("group_col", arrow::int32()), arrow::field("value_col", arrow::float64())});
+
+    // Create record batch
+    auto batch = arrow::RecordBatch::Make(schema, 5, arrays);
+
+    // Define aggregation parameters
+    std::vector<std::string> group_by_columns = {"group_col"};
+    std::vector<std::string> agg_columns = {"value_col"};
+    std::vector<common::AggregateType> agg_types = {common::AggregateType::Sum};
+    std::vector<std::string> output_columns_override = {"sum_value"};  // Custom output name
+
+    // Perform aggregation
+    auto result = ArrowUtil::HashAggregate(batch, group_by_columns, agg_columns, agg_types, output_columns_override);
+    ASSERT_TRUE(result.ok()) << result.error().message();
+
+    auto agg_batch = result.value();
+    ASSERT_EQ(agg_batch->num_columns(), 2);
+    ASSERT_EQ(agg_batch->num_rows(), 3);
+
+    // Verify schema names
+    ASSERT_EQ(agg_batch->schema()->field(0)->name(), "group_col");
+    ASSERT_EQ(agg_batch->schema()->field(1)->name(), "sum_value");  // Check custom output name
+
+    // Verify values
+    auto group_result = std::static_pointer_cast<arrow::Int32Array>(agg_batch->column(0));
+    auto sum_result = std::static_pointer_cast<arrow::DoubleArray>(agg_batch->column(1));
+
+    ASSERT_EQ(group_result->Value(0), 1);
+    ASSERT_EQ(group_result->Value(1), 2);
+    ASSERT_EQ(group_result->Value(2), 3);
+
+    ASSERT_DOUBLE_EQ(sum_result->Value(0), 30.0);  // 10 + 20
+    ASSERT_DOUBLE_EQ(sum_result->Value(1), 70.0);  // 30 + 40
+    ASSERT_DOUBLE_EQ(sum_result->Value(2), 50.0);  // 50
 }
 
 }  // namespace pond::query

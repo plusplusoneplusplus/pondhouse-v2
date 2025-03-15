@@ -906,10 +906,12 @@ common::Result<std::vector<GroupKey>> ArrowUtil::ExtractGroupKeys(const ArrowDat
     return ResultType::success(std::vector<GroupKey>(unique_keys.begin(), unique_keys.end()));
 }
 
-common::Result<ArrowDataBatchSharedPtr> ArrowUtil::HashAggregate(const ArrowDataBatchSharedPtr& batch,
-                                                                 const std::vector<std::string>& group_by_columns,
-                                                                 const std::vector<std::string>& agg_columns,
-                                                                 const std::vector<common::AggregateType>& agg_types) {
+common::Result<ArrowDataBatchSharedPtr> ArrowUtil::HashAggregate(
+    const ArrowDataBatchSharedPtr& batch,
+    const std::vector<std::string>& group_by_columns,
+    const std::vector<std::string>& agg_columns,
+    const std::vector<common::AggregateType>& agg_types,
+    const std::vector<std::string>& output_columns_override /* = {}*/) {
     using ReturnType = common::Result<ArrowDataBatchSharedPtr>;
 
     // Validate inputs
@@ -923,6 +925,11 @@ common::Result<ArrowDataBatchSharedPtr> ArrowUtil::HashAggregate(const ArrowData
         return ReturnType::failure(common::ErrorCode::InvalidArgument,
                                    "Number of aggregate columns does not match number of aggregate types");
     }
+    if (!output_columns_override.empty() && output_columns_override.size() != agg_columns.size()) {
+        return ReturnType::failure(common::ErrorCode::InvalidArgument,
+                                   "Number of output columns does not match number of aggregate columns");
+    }
+    auto output_columns = output_columns_override.empty() ? agg_columns : output_columns_override;
 
     // Get mapping from column names to column indices in the input batch
     std::unordered_map<std::string, int> column_indices;
@@ -1083,19 +1090,20 @@ common::Result<ArrowDataBatchSharedPtr> ArrowUtil::HashAggregate(const ArrowData
         const auto& col_name = agg_columns[i];
         int col_idx = column_indices[col_name];
         auto field = batch->schema()->field(col_idx);
+        auto output_col_name = output_columns[i];
         auto agg_type = agg_types[i];
 
         // Determine output field type based on aggregate type
         std::shared_ptr<arrow::Field> output_field;
         if (agg_type == common::AggregateType::Avg) {
             // Average always produces a double
-            output_field = arrow::field(field->name(), arrow::float64(), true);
+            output_field = arrow::field(output_col_name, arrow::float64(), true);
         } else if (agg_type == common::AggregateType::Count) {
             // Count always produces an int64
-            output_field = arrow::field(field->name(), arrow::int64(), false);
+            output_field = arrow::field(output_col_name, arrow::int64(), false);
         } else {
             // Other aggregates preserve the input type but are nullable
-            output_field = field->WithNullable(true);
+            output_field = arrow::field(output_col_name, field->type(), true);
         }
 
         output_fields.push_back(output_field);

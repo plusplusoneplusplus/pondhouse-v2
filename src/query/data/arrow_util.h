@@ -236,7 +236,9 @@ public:
      * @param batch The input record batch
      * @param group_by_columns Names of columns to group by
      * @param agg_columns Names of columns to aggregate
-     * @param agg_types Types of aggregation to perform for each column
+     * @param agg_types Types of aggregation to perform for each column, must be the same size as agg_columns
+     * @param output_columns_override Names of aggregate columns to include in the output, must be the same size as
+     * agg_types or empty. if empty, the output columns will be the same as the input columns.
      * @return Result containing the aggregated record batch or an error
      *
      * The output batch will contain:
@@ -247,10 +249,12 @@ public:
      * 1. Null values will be included as a separate group and will be aggregated as well.
      * 2. The count function still counts NULL values unless explicitly filtered out.
      */
-    static common::Result<ArrowDataBatchSharedPtr> HashAggregate(const ArrowDataBatchSharedPtr& batch,
-                                                                 const std::vector<std::string>& group_by_columns,
-                                                                 const std::vector<std::string>& agg_columns,
-                                                                 const std::vector<common::AggregateType>& agg_types);
+    static common::Result<ArrowDataBatchSharedPtr> HashAggregate(
+        const ArrowDataBatchSharedPtr& batch,
+        const std::vector<std::string>& group_by_columns,
+        const std::vector<std::string>& agg_columns,
+        const std::vector<common::AggregateType>& agg_types,
+        const std::vector<std::string>& output_columns_override = {});
 
     /**
      * @brief Convert a record batch to a human-readable string format
