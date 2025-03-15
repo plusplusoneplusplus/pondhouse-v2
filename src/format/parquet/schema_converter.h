@@ -21,6 +21,10 @@ public:
     // Convert entire Pond schema to Arrow schema
     [[nodiscard]] static common::Result<std::shared_ptr<arrow::Schema>> ToArrowSchema(const common::Schema& schema);
 
+    [[nodiscard]] static common::Result<std::shared_ptr<arrow::Schema>> ToArrowSchema(
+        const std::shared_ptr<common::Schema>& schema);
+
+    // Convert Arrow schema to Pond schema
     // Convert Arrow data type to Pond column type
     [[nodiscard]] static common::Result<common::ColumnType> FromArrowDataType(
         const std::shared_ptr<arrow::DataType>& type);

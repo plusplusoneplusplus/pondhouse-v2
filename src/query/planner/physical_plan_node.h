@@ -243,7 +243,7 @@ public:
     PhysicalSortNode(std::vector<SortSpec> sort_specs, common::Schema schema)
         : PhysicalPlanNode(PhysicalNodeType::Sort), sort_specs_(std::move(sort_specs)), schema_(std::move(schema)) {}
 
-    const std::vector<SortSpec>& sortSpecs() const { return sort_specs_; }
+    const std::vector<SortSpec>& SortSpecs() const { return sort_specs_; }
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
 

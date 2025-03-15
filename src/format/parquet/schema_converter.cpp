@@ -60,6 +60,11 @@ common::Result<std::shared_ptr<arrow::Schema>> SchemaConverter::ToArrowSchema(co
     return common::Result<std::shared_ptr<arrow::Schema>>::success(arrow::schema(fields));
 }
 
+common::Result<std::shared_ptr<arrow::Schema>> SchemaConverter::ToArrowSchema(
+    const std::shared_ptr<common::Schema>& schema) {
+    return ToArrowSchema(*schema);
+}
+
 common::Result<common::ColumnType> SchemaConverter::FromArrowDataType(const std::shared_ptr<arrow::DataType>& type) {
     switch (type->id()) {
         case arrow::Type::INT32:

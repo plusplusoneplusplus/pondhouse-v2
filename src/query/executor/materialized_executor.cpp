@@ -478,7 +478,31 @@ void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {
 }
 
 void MaterializedExecutor::Visit(PhysicalSortNode& node) {
-    current_result_ = common::Error(common::ErrorCode::NotImplemented, "Sort not implemented in simple executor");
+    // Execute the child node first
+    auto result = ExecuteChildren(node);
+    if (!result.ok()) {
+        current_result_ = result;
+        return;
+    }
+
+    // Check if we have data to sort
+    if (!current_batch_) {
+        current_result_ = common::Error(common::ErrorCode::Failure, "No data to sort");
+        return;
+    }
+
+    // Get the sort specifications from the node
+    const auto& sort_specs = node.SortSpecs();
+
+    auto sort_result = ExecutorUtil::CreateSortBatch(current_batch_, sort_specs);
+    if (!sort_result.ok()) {
+        current_result_ = sort_result;
+        return;
+    }
+
+    current_result_ = sort_result;
+    current_batch_ = sort_result.value();
+    return;
 }
 
 void MaterializedExecutor::Visit(PhysicalLimitNode& node) {

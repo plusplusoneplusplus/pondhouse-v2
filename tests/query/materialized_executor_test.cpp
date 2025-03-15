@@ -10,6 +10,7 @@
 #include "catalog/kv_catalog.h"
 #include "common/memory_append_only_fs.h"
 #include "kv/db.h"
+#include "query/data/arrow_record_batch_builder.h"
 #include "query/data/arrow_util.h"
 #include "query/data/catalog_data_accessor.h"
 #include "query/query_test_context.h"
@@ -32,7 +33,6 @@ protected:
 
         // Setup the test table and ingest data
         SetupTestTable();
-        IngestTestData();
     }
 
     void SetupTestTable() {
@@ -41,44 +41,30 @@ protected:
         ASSERT_TRUE(schema_result.ok()) << "Failed to load table schema: " << schema_result.error().message();
     }
 
-    void IngestTestData() {
-        // Create test data
-        arrow::Int32Builder id_builder;
-        arrow::StringBuilder name_builder;
-        arrow::Int32Builder age_builder;
-        arrow::DoubleBuilder salary_builder;
+    void IngestDefaultTestData() {
+        // Create test data using ArrowRecordBatchBuilder
+        auto batch_result = ArrowRecordBatchBuilder()
+                                .AddInt32Column("id", {1, 2, 3, 4, 5})
+                                .AddStringColumn("name", {"Alice", "Bob", "Charlie", "David", "Eve"})
+                                .AddInt32Column("age", {25, 30, 35, 40, 45})
+                                .AddDoubleColumn("salary", {75000.0, 85000.0, 95000.0, 105000.0, 115000.0})
+                                .Build();
 
-        ASSERT_OK(id_builder.AppendValues({1, 2, 3, 4, 5}));
-        ASSERT_OK(name_builder.AppendValues({"Alice", "Bob", "Charlie", "David", "Eve"}));
-        ASSERT_OK(age_builder.AppendValues({25, 30, 35, 40, 45}));
-        ASSERT_OK(salary_builder.AppendValues({75000.0, 85000.0, 95000.0, 105000.0, 115000.0}));
-
-        std::shared_ptr<arrow::Array> id_array;
-        std::shared_ptr<arrow::Array> name_array;
-        std::shared_ptr<arrow::Array> age_array;
-        std::shared_ptr<arrow::Array> salary_array;
-
-        ASSERT_OK(id_builder.Finish(&id_array));
-        ASSERT_OK(name_builder.Finish(&name_array));
-        ASSERT_OK(age_builder.Finish(&age_array));
-        ASSERT_OK(salary_builder.Finish(&salary_array));
-
-        auto record_batch =
-            arrow::RecordBatch::Make(GetArrowSchema("users"), 5, {id_array, name_array, age_array, salary_array});
+        VERIFY_RESULT(batch_result);
 
         // Ingest the batch
-        IngestData("users", record_batch);
+        IngestData("users", batch_result.value());
     }
 
     // Sets up multiple test files with sequential data
     void SetupMultipleFiles(int num_files, int rows_per_file) {
         // For each file, create a data ingestor and ingest a batch with unique data
         for (int file_id = 0; file_id < num_files; file_id++) {
-            // Create record batch with data for this file
-            arrow::Int32Builder id_builder;
-            arrow::StringBuilder name_builder;
-            arrow::Int32Builder age_builder;
-            arrow::DoubleBuilder value_builder;
+            // Create vectors to hold the data for this file
+            std::vector<int32_t> ids;
+            std::vector<std::string> names;
+            std::vector<int32_t> ages;
+            std::vector<double> values;
 
             // Each file has rows_per_file rows with sequential IDs and file-specific data
             for (int i = 0; i < rows_per_file; i++) {
@@ -87,22 +73,24 @@ protected:
                 int age = 20 + ((file_id * rows_per_file + i) % 30);  // Ages between 20-49
                 double value = (file_id * rows_per_file + i) * 1.5;
 
-                ASSERT_OK(id_builder.Append(id));
-                ASSERT_OK(name_builder.Append(name));
-                ASSERT_OK(age_builder.Append(age));
-                ASSERT_OK(value_builder.Append(value));
+                ids.push_back(id);
+                names.push_back(name);
+                ages.push_back(age);
+                values.push_back(value);
             }
 
-            std::shared_ptr<arrow::Array> id_array = id_builder.Finish().ValueOrDie();
-            std::shared_ptr<arrow::Array> name_array = name_builder.Finish().ValueOrDie();
-            std::shared_ptr<arrow::Array> age_array = age_builder.Finish().ValueOrDie();
-            std::shared_ptr<arrow::Array> value_array = value_builder.Finish().ValueOrDie();
+            // Create record batch using ArrowRecordBatchBuilder
+            auto batch_result = ArrowRecordBatchBuilder()
+                                    .AddInt32Column("id", ids)
+                                    .AddStringColumn("name", names)
+                                    .AddInt32Column("age", ages)
+                                    .AddDoubleColumn("salary", values)
+                                    .Build();
 
-            auto record_batch = arrow::RecordBatch::Make(
-                GetArrowSchema("multi_users"), rows_per_file, {id_array, name_array, age_array, value_array});
+            VERIFY_RESULT(batch_result);
 
             // Ingest the batch
-            IngestData("multi_users", record_batch);
+            IngestData("multi_users", batch_result.value());
         }
     }
 
@@ -117,6 +105,39 @@ protected:
         return std::make_shared<PhysicalSequentialScanNode>("users", *GetSchema("users"));
     }
 
+    // Helper method for testing sort operations
+    void TestSortOperation(const std::vector<std::string>& columns,
+                           const std::vector<SortDirection>& directions,
+                           std::function<void(const ArrowDataBatchSharedPtr&)> validator,
+                           const std::string& table_name = "") {
+        auto schema = GetSchema(table_name.empty() ? "users" : table_name);
+
+        // Create sort expressions
+        std::vector<std::shared_ptr<common::Expression>> sort_exprs;
+        for (const auto& col : columns) {
+            sort_exprs.push_back(common::MakeColumnExpression("", col));
+        }
+
+        // Create scan plan
+        auto scan_node =
+            std::make_shared<PhysicalSequentialScanNode>(table_name.empty() ? "users" : table_name, *schema);
+
+        // Create sort specs
+        std::vector<SortSpec> sort_specs;
+        for (size_t i = 0; i < sort_exprs.size(); i++) {
+            sort_specs.push_back({sort_exprs[i], directions[i]});
+        }
+        auto sort_node = std::make_shared<PhysicalSortNode>(sort_specs, scan_node->OutputSchema());
+        sort_node->AddChild(scan_node);
+
+        // Execute
+        auto result = executor_->ExecuteToCompletion(sort_node);
+        VERIFY_RESULT(result);
+
+        // Validate
+        validator(result.value());
+    }
+
     std::shared_ptr<DataAccessor> data_accessor_;
     std::unique_ptr<MaterializedExecutor> executor_;
 };
@@ -128,6 +149,8 @@ protected:
 //      Execute returns a DataBatch with 5 rows and correct column values
 //
 TEST_F(MaterializedExecutorTest, SelectAllFromTable) {
+    IngestDefaultTestData();
+
     // Create a simple scan plan
     auto plan = CreateScanPlan();
 
@@ -165,6 +188,8 @@ TEST_F(MaterializedExecutorTest, SelectAllFromTable) {
 //      Execute returns an empty DataBatch with the correct schema
 //
 TEST_F(MaterializedExecutorTest, SelectFromEmptyTable) {
+    IngestDefaultTestData();
+
     // Create a new empty table using the context
     auto empty_schema = common::CreateSchemaBuilder()
                             .AddField("col1", common::ColumnType::INT32)
@@ -213,6 +238,8 @@ TEST_F(MaterializedExecutorTest, InvalidTable) {
 //      Query execution returns the correct data batch with all 5 rows
 //
 TEST_F(MaterializedExecutorTest, ExecuteSQLQuery) {
+    IngestDefaultTestData();
+
     // Create SQL query
     std::string sql_query = "SELECT * FROM users";
 
@@ -260,6 +287,8 @@ TEST_F(MaterializedExecutorTest, ExecuteSQLQuery) {
 //      Execution should yield filtered results (only rows with age > 30)
 //
 TEST_F(MaterializedExecutorTest, ExecuteSQLQueryWithFilter) {
+    IngestDefaultTestData();
+
     // Create SQL query with filter
     std::string sql_query = "SELECT * FROM users WHERE age > 30";
 
@@ -351,6 +380,8 @@ TEST_F(MaterializedExecutorTest, ExecuteSQLQueryWithFilter) {
 //      Execute returns a DataBatch with data from all files with correct concatenation
 //
 TEST_F(MaterializedExecutorTest, MultiFileQuery) {
+    IngestDefaultTestData();
+
     // Setup 3 files with 5 rows each
     SetupMultipleFiles(3, 5);
 
@@ -423,6 +454,8 @@ TEST_F(MaterializedExecutorTest, MultiFileQueryWithFilter) {
 //      Execute returns a DataBatch with only the selected columns
 //
 TEST_F(MaterializedExecutorTest, ProjectionTest) {
+    IngestDefaultTestData();
+
     auto schema = GetSchema("users");
 
     // Create a scan plan
@@ -475,6 +508,8 @@ TEST_F(MaterializedExecutorTest, ProjectionTest) {
 //      Execute returns a DataBatch with only the selected column
 //
 TEST_F(MaterializedExecutorTest, ProjectionSingleColumnTest) {
+    IngestDefaultTestData();
+
     auto schema = GetSchema("users");
 
     // Create a scan plan
@@ -522,6 +557,8 @@ TEST_F(MaterializedExecutorTest, ProjectionSingleColumnTest) {
 //      Execute returns a filtered DataBatch with only the selected columns
 //
 TEST_F(MaterializedExecutorTest, ProjectionAfterFilterTest) {
+    IngestDefaultTestData();
+
     auto schema = GetSchema("users");
 
     // Create a scan plan
@@ -582,6 +619,8 @@ TEST_F(MaterializedExecutorTest, ProjectionAfterFilterTest) {
 //      Execute returns a DataBatch with only the selected columns from all files
 //
 TEST_F(MaterializedExecutorTest, MultiFileQueryWithProjection) {
+    IngestDefaultTestData();
+
     // Setup 3 files with 5 rows each
     SetupMultipleFiles(3, 5);
     auto schema = GetSchema("multi_users");
@@ -640,6 +679,8 @@ TEST_F(MaterializedExecutorTest, MultiFileQueryWithProjection) {
 //      Execute returns an error
 //
 TEST_F(MaterializedExecutorTest, ProjectionInvalidColumnTest) {
+    IngestDefaultTestData();
+
     auto schema = GetSchema("users");
 
     // Create a scan plan
@@ -672,6 +713,8 @@ TEST_F(MaterializedExecutorTest, ProjectionInvalidColumnTest) {
 //      Should return only the projected columns in the result
 //
 TEST_F(MaterializedExecutorTest, SequentialScanWithProjections) {
+    IngestDefaultTestData();
+
     // Set up expected schema for the projected columns
     auto projected_schema = std::make_shared<common::Schema>(
         std::vector<common::ColumnSchema>{{"id", common::ColumnType::INT32}, {"name", common::ColumnType::STRING}});
@@ -711,6 +754,8 @@ TEST_F(MaterializedExecutorTest, SequentialScanWithProjections) {
 //      Iterator correctly provides the data batch on first call and nullptr on subsequent calls
 //
 TEST_F(MaterializedExecutorTest, BatchIteratorTest) {
+    IngestDefaultTestData();
+
     // Create a simple scan plan
     auto plan = CreateScanPlan();
 
@@ -751,6 +796,8 @@ TEST_F(MaterializedExecutorTest, BatchIteratorTest) {
 //      Returns a single row with the count of all rows
 //
 TEST_F(MaterializedExecutorTest, SimpleCount) {
+    IngestDefaultTestData();
+
     // Create SQL query with COUNT
     std::string sql_query = "SELECT COUNT(*) AS row_count FROM users";
 
@@ -786,6 +833,8 @@ TEST_F(MaterializedExecutorTest, SimpleCount) {
 //      Returns a single row with the sum of the age column
 //
 TEST_F(MaterializedExecutorTest, SimpleSum) {
+    IngestDefaultTestData();
+
     // Create SQL query with SUM
     std::string sql_query = "SELECT SUM(age) FROM users";
 
@@ -821,6 +870,8 @@ TEST_F(MaterializedExecutorTest, SimpleSum) {
 //      Returns a single row with the average of the age column
 //
 TEST_F(MaterializedExecutorTest, SimpleAvg) {
+    IngestDefaultTestData();
+
     // Create SQL query with AVG
     std::string sql_query = "SELECT AVG(age) FROM users";
 
@@ -856,6 +907,8 @@ TEST_F(MaterializedExecutorTest, SimpleAvg) {
 //      Returns a single row with the min and max of the age column
 //
 TEST_F(MaterializedExecutorTest, SimpleMinMax) {
+    IngestDefaultTestData();
+
     // Create SQL query with MIN and MAX
     std::string sql_query = "SELECT MIN(age) AS age_min, MAX(age) AS age_max FROM users";
 
@@ -895,6 +948,8 @@ TEST_F(MaterializedExecutorTest, SimpleMinMax) {
 //      Returns multiple rows grouped by gender with aggregates
 //
 TEST_F(MaterializedExecutorTest, GroupByWithAggregates) {
+    IngestDefaultTestData();
+
     // Create SQL query with GROUP BY and multiple aggregates
     std::string sql_query = "SELECT name, COUNT(*) AS count, AVG(age) AS avg_age, MIN(age) AS min_age, MAX(age) AS "
                             "max_age FROM users GROUP BY name";
@@ -964,6 +1019,160 @@ TEST_F(MaterializedExecutorTest, GroupByWithAggregates) {
             ASSERT_EQ(max_array->Value(i), 45) << "Eve max age should be 45";
         }
     }
+}
+
+//
+// Test Setup:
+//      Create test data with mixed values and nulls, execute sort with single column
+// Test Result:
+//      Verify data is sorted correctly in ascending/descending order with proper null handling
+//
+TEST_F(MaterializedExecutorTest, SortSingleColumn) {
+    IngestDefaultTestData();
+
+    // Test ascending sort with nulls first
+    TestSortOperation({"age"}, {SortDirection::Ascending}, [](const ArrowDataBatchSharedPtr& batch) {
+        std::cout << "Sorting ascending" << std::endl;
+        std::cout << "Batch Result: " << ArrowUtil::BatchToString(batch) << std::endl;
+        auto ages = std::static_pointer_cast<arrow::Int32Array>(batch->column(2));
+        ASSERT_EQ(ages->Value(0), 25);
+        ASSERT_EQ(ages->Value(1), 30);
+        ASSERT_EQ(ages->Value(2), 35);
+        ASSERT_EQ(ages->Value(3), 40);
+        ASSERT_EQ(ages->Value(4), 45);
+    });
+
+    // Test descending sort with nulls last
+    TestSortOperation({"age"}, {SortDirection::Descending}, [](const ArrowDataBatchSharedPtr& batch) {
+        std::cout << "Sorting descending" << std::endl;
+        std::cout << "Batch Result: " << ArrowUtil::BatchToString(batch) << std::endl;
+        auto ages = std::static_pointer_cast<arrow::Int32Array>(batch->column(2));
+        ASSERT_EQ(ages->Value(0), 45);
+        ASSERT_EQ(ages->Value(1), 40);
+        ASSERT_EQ(ages->Value(2), 35);
+        ASSERT_EQ(ages->Value(3), 30);
+        ASSERT_EQ(ages->Value(4), 25);
+    });
+}
+
+//
+// Test Setup:
+//      Create test data with duplicate keys, execute multi-column sort
+// Test Result:
+//      Verify data is sorted correctly with secondary sort keys
+//
+TEST_F(MaterializedExecutorTest, SortMultipleColumns) {
+    // Create test data with duplicate ages
+    auto batch_result = ArrowRecordBatchBuilder()
+                            .AddInt32Column("id", {1, 2, 3, 4, 5})
+                            .AddStringColumn("name", {"Bob", "Alice", "Charlie", "David", "Eve"})
+                            .AddInt32Column("age", {30, 30, 25, 25, 35})
+                            .AddDoubleColumn("salary", {100000, 90000, 80000, 70000, 60000})
+                            .Build();
+
+    VERIFY_RESULT(batch_result);
+
+    // Ingest the batch
+    IngestData("users", batch_result.value());
+
+    // Sort by age ascending, then name descending
+    TestSortOperation({"age", "name"},
+                      {SortDirection::Ascending, SortDirection::Descending},
+                      [](const ArrowDataBatchSharedPtr& batch) {
+                          auto names = std::static_pointer_cast<arrow::StringArray>(batch->column(1));
+                          auto ages = std::static_pointer_cast<arrow::Int32Array>(batch->column(2));
+
+                          std::cout << "Batch Result: " << ArrowUtil::BatchToString(batch) << std::endl;
+
+                          // First sort by age (25, 25, 30, 30, 35)
+                          ASSERT_EQ(ages->Value(0), 25);
+                          ASSERT_EQ(ages->Value(1), 25);
+                          ASSERT_EQ(ages->Value(2), 30);
+                          ASSERT_EQ(ages->Value(3), 30);
+                          ASSERT_EQ(ages->Value(4), 35);
+
+                          // Then sort names descending within same ages
+                          ASSERT_EQ(names->GetString(0), "David");  // 25s sorted descending
+                          ASSERT_EQ(names->GetString(1), "Charlie");
+                          ASSERT_EQ(names->GetString(2), "Bob");  // 30s sorted descending
+                          ASSERT_EQ(names->GetString(3), "Alice");
+                          ASSERT_EQ(names->GetString(4), "Eve");  // 35
+                      });
+}
+
+//
+// Test Setup:
+//      Create empty batch and execute sort
+// Test Result:
+//      Should return empty batch without errors
+//
+TEST_F(MaterializedExecutorTest, SortEmptyBatch) {
+    // Create empty table
+    auto empty_schema = common::CreateSchemaBuilder().AddField("id", common::ColumnType::INT32).Build();
+    catalog_->CreateTable("empty_table", empty_schema, partition_spec_, "test_catalog/empty_table");
+
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("empty_table", *empty_schema);
+
+    // Create sort specs
+    std::vector<SortSpec> sort_specs{{common::MakeColumnExpression("", "id"), SortDirection::Ascending}};
+
+    auto sort_node = std::make_shared<PhysicalSortNode>(sort_specs, scan_node->OutputSchema());
+    sort_node->AddChild(scan_node);
+
+    auto result = executor_->ExecuteToCompletion(sort_node);
+    VERIFY_RESULT(result);
+
+    auto batch = result.value();
+    ASSERT_EQ(batch->num_rows(), 0);
+}
+
+//
+// Test Setup:
+//      Sort by unsupported column type (bool)
+// Test Result:
+//      Should handle boolean type correctly
+//
+TEST_F(MaterializedExecutorTest, SortBooleanType) {
+    CreateNewTable("bool_test",
+                   common::CreateSchemaBuilder()
+                       .AddField("active", common::ColumnType::BOOLEAN)
+                       .AddField("id", common::ColumnType::INT32)
+                       .Build());
+
+    // Create test data with boolean values
+    auto batch_result = ArrowRecordBatchBuilder()
+                            .AddBooleanColumn("active", {true, false, true, false, true})
+                            .AddInt32Column("id", {3, 1, 4, 2, 5})
+                            .Build();
+
+    VERIFY_RESULT(batch_result);
+
+    // Ingest the batch
+    IngestData("bool_test", batch_result.value());
+
+    // Test sort by active (descending) and id (ascending)
+    TestSortOperation(
+        {"active", "id"},
+        {SortDirection::Descending, SortDirection::Ascending},
+        [](const ArrowDataBatchSharedPtr& batch) {
+            auto active_result = std::static_pointer_cast<arrow::BooleanArray>(batch->column(0));
+            auto ids_result = std::static_pointer_cast<arrow::Int32Array>(batch->column(1));
+
+            // Verify sort order
+            ASSERT_TRUE(active_result->Value(0));
+            ASSERT_TRUE(active_result->Value(1));
+            ASSERT_TRUE(active_result->Value(2));
+            ASSERT_FALSE(active_result->Value(3));
+            ASSERT_FALSE(active_result->Value(4));
+
+            // Verify IDs within active groups
+            ASSERT_EQ(ids_result->Value(0), 3);
+            ASSERT_EQ(ids_result->Value(1), 4);
+            ASSERT_EQ(ids_result->Value(2), 5);
+            ASSERT_EQ(ids_result->Value(3), 1);
+            ASSERT_EQ(ids_result->Value(4), 2);
+        },
+        "bool_test");
 }
 
 }  // namespace pond::query

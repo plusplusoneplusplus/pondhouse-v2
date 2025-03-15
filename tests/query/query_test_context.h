@@ -66,6 +66,11 @@ public:
         planner_ = std::make_shared<query::Planner>(catalog_);
     }
 
+    void CreateNewTable(const std::string& table_name, const std::shared_ptr<common::Schema>& schema) {
+        tables_[table_name] = std::make_unique<TestTableInfo>(table_name, schema, partition_spec_);
+        catalog_->CreateTable(table_name, schema, partition_spec_, "test_catalog/" + table_name);
+    }
+
     Result<std::shared_ptr<LogicalPlanNode>> PlanLogical(const std::string& query, bool optimize = false) {
         auto logical_plan = planner_->PlanLogical(query, optimize);
         if (!logical_plan.ok()) {
