@@ -430,7 +430,7 @@ TEST_F(LogicalPlannerTest, Aggregate) {
 
     auto projection = root->as<LogicalProjectionNode>();
     EXPECT_EQ("users", projection->TableName()) << "Table name should be users";
-    EXPECT_EQ(3, projection->GetExpressions().size()) << "Should have four projection expressions";
+    EXPECT_EQ(4, projection->GetExpressions().size()) << "Should have four projection expressions";
 
     // verify projection schema
     auto schema = projection->OutputSchema();
@@ -470,6 +470,73 @@ TEST_F(LogicalPlannerTest, Aggregate) {
         auto avg_expr = agg_node->GetAggregates()[2]->as<AggregateExpression>();
         EXPECT_EQ(AggregateType::Avg, avg_expr->AggType()) << "Third aggregate should be AVG";
         EXPECT_EQ("age", avg_expr->Input()->as<ColumnExpression>()->ColumnName()) << "AVG should be on age";
+    }
+
+    auto scan = agg_node->Children()[0]->as<LogicalScanNode>();
+    EXPECT_EQ(LogicalNodeType::Scan, scan->Type()) << "Leaf should be scan";
+    EXPECT_EQ("users", scan->TableName()) << "Should scan users table";
+}
+
+//
+// Test Setup:
+//      Create a SELECT query with GROUP BY and multiple aggregates
+// Test Result:
+//      Verify the logical plan structure for grouping and aggregation
+//
+TEST_F(LogicalPlannerTest, AggregatesAndProjectionColumn) {
+    const std::string query = "SELECT name, COUNT(*) AS count, AVG(age) AS avg_age, MIN(age) AS min_age, MAX(age) AS "
+                              "max_age FROM users GROUP BY name";
+    auto plan_result = PlanLogical(query, false);
+    VERIFY_RESULT(plan_result);
+
+    auto root = plan_result.value();
+    EXPECT_EQ(LogicalNodeType::Projection, root->Type()) << "Root should be projection";
+
+    auto projection = root->as<LogicalProjectionNode>();
+    EXPECT_EQ("users", projection->TableName()) << "Table name should be users";
+    EXPECT_EQ(5, projection->GetExpressions().size()) << "Should have five projection expressions";
+
+    {
+        auto name_expr = projection->GetExpressions()[0]->as<ColumnExpression>();
+        EXPECT_EQ("name", name_expr->ColumnName()) << "First projection should be name";
+
+        auto count_expr = projection->GetExpressions()[1]->as<AggregateExpression>();
+        EXPECT_EQ(AggregateType::Count, count_expr->AggType()) << "Second should be COUNT";
+        EXPECT_EQ("count", count_expr->ResultName()) << "COUNT alias should be preserved";
+
+        auto avg_expr = projection->GetExpressions()[2]->as<AggregateExpression>();
+        EXPECT_EQ(AggregateType::Avg, avg_expr->AggType()) << "Third should be AVG";
+        EXPECT_EQ("avg_age", avg_expr->ResultName()) << "AVG alias should be preserved";
+
+        auto min_expr = projection->GetExpressions()[3]->as<AggregateExpression>();
+        EXPECT_EQ(AggregateType::Min, min_expr->AggType()) << "Fourth should be MIN";
+        EXPECT_EQ("min_age", min_expr->ResultName()) << "MIN alias should be preserved";
+
+        auto max_expr = projection->GetExpressions()[4]->as<AggregateExpression>();
+        EXPECT_EQ(AggregateType::Max, max_expr->AggType()) << "Fifth should be MAX";
+        EXPECT_EQ("max_age", max_expr->ResultName()) << "MAX alias should be preserved";
+    }
+
+    auto agg_node = projection->Children()[0]->as<LogicalAggregateNode>();
+    EXPECT_EQ(LogicalNodeType::Aggregate, agg_node->Type()) << "Child should be aggregate";
+    EXPECT_EQ(1, agg_node->GetGroupBy().size()) << "Should have one group by expression";
+    EXPECT_EQ(4, agg_node->GetAggregates().size()) << "Should have four aggregate expressions";
+
+    {
+        auto group_expr = agg_node->GetGroupBy()[0]->as<ColumnExpression>();
+        EXPECT_EQ("name", group_expr->ColumnName()) << "Group by should be on name";
+
+        auto count_expr = agg_node->GetAggregates()[0]->as<AggregateExpression>();
+        EXPECT_EQ(AggregateType::Count, count_expr->AggType()) << "First aggregate should be COUNT";
+
+        auto avg_expr = agg_node->GetAggregates()[1]->as<AggregateExpression>();
+        EXPECT_EQ(AggregateType::Avg, avg_expr->AggType()) << "Second aggregate should be AVG";
+
+        auto min_expr = agg_node->GetAggregates()[2]->as<AggregateExpression>();
+        EXPECT_EQ(AggregateType::Min, min_expr->AggType()) << "Third aggregate should be MIN";
+
+        auto max_expr = agg_node->GetAggregates()[3]->as<AggregateExpression>();
+        EXPECT_EQ(AggregateType::Max, max_expr->AggType()) << "Fourth aggregate should be MAX";
     }
 
     auto scan = agg_node->Children()[0]->as<LogicalScanNode>();

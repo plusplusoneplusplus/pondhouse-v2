@@ -535,18 +535,7 @@ Result<std::shared_ptr<LogicalPlanNode>> LogicalPlanner::PlanProjection(const st
     for (const auto* expr : *exprs) {
         auto expr_result = BuildExpression(expr);
         RETURN_IF_ERROR_T(ReturnType, expr_result);
-
-        bool skip = false;
-        for (const auto& child_expr : child_exprs) {
-            if (AreSameColumn(expr_result.value(), child_expr)) {
-                LOG_VERBOSE("Skipping duplicate column: %s", child_expr->ToString().c_str());
-                skip = true;
-            }
-        }
-
-        if (!skip) {
-            expr_list.push_back(expr_result.value());
-        }
+        expr_list.push_back(expr_result.value());
     }
 
     // Create projection schema
@@ -583,10 +572,16 @@ Result<common::Schema> LogicalPlanner::CreateProjectionSchema(
     const std::vector<std::shared_ptr<Expression>>& child_exprs) {
     using ReturnType = Result<common::Schema>;
 
+    // current_exprs and child_exprs might have duplicate columns, so we need to deduplicate them
+    std::unordered_set<std::string> existing_columns;
     common::Schema projection_schema{};
 
     for (const auto& exprGroup : {child_exprs, current_exprs}) {
         for (const auto& expr : exprGroup) {
+            if (existing_columns.count(expr->ToString()) > 0) {
+                continue;
+            }
+
             if (expr->Type() == ExprType::Column) {
                 auto col_expr = std::static_pointer_cast<ColumnExpression>(expr);
                 if (!DoesColumnExist(input_schema, col_expr->ColumnName())) {
@@ -595,13 +590,16 @@ Result<common::Schema> LogicalPlanner::CreateProjectionSchema(
                 }
                 auto column = input_schema.GetColumn(col_expr->ColumnName());
                 projection_schema.AddField(column.name, column.type, column.nullability);
+                existing_columns.insert(column.name);
             } else if (expr->Type() == ExprType::Aggregate) {
                 auto agg_expr = std::static_pointer_cast<AggregateExpression>(expr);
                 projection_schema.AddField(
                     agg_expr->ResultName(), agg_expr->ResultType(), common::Nullability::NULLABLE);
+                existing_columns.insert(agg_expr->ResultName());
             } else {
                 // For now, treat all other expressions as strings
                 projection_schema.AddField(expr->ToString(), common::ColumnType::STRING, common::Nullability::NULLABLE);
+                existing_columns.insert(expr->ToString());
             }
         }
     }

@@ -273,246 +273,199 @@ common::Result<ArrowDataBatchSharedPtr> MaterializedExecutor::VisitHashAggregate
         // Create empty batch with the output schema
         auto empty_batch_result = ArrowUtil::CreateEmptyBatch(node.OutputSchema());
         RETURN_IF_ERROR_T(ReturnType, empty_batch_result);
+        return empty_batch_result;
     }
 
     // Get the group by columns and aggregate expressions
-    const auto& group_by = node.GroupBy();
-    const auto& aggregates = node.Aggregates();
+    const auto& group_by_exprs = node.GroupBy();
+    const auto& agg_exprs = node.Aggregates();
 
     // If there are no group by columns and no aggregates, just return the input
-    if (group_by.empty() && aggregates.empty()) {
+    if (group_by_exprs.empty() && agg_exprs.empty()) {
         return common::Result<ArrowDataBatchSharedPtr>::success(input_batch);
     }
 
-    // Create a mapping from group keys to row indices
-    // e.g. group_map["key1"] = [0, 1, 2]
-    std::unordered_map<std::string, std::vector<int>> group_map;
-
-    auto input_batch_schema_result = format::SchemaConverter::FromArrowSchema(input_batch->schema());
-    RETURN_IF_ERROR_T(ReturnType, input_batch_schema_result);
-
-    auto input_batch_pond_schema = input_batch_schema_result.value();
-
-    // First pass: Group the rows by the group by columns
-    for (int row_idx = 0; row_idx < input_batch->num_rows(); ++row_idx) {
-        std::string group_key;
-
-        // Concatenate the group by column values to form a key
-        for (const auto& group_expr : group_by) {
-            // For now, only support column references in group by
-            if (group_expr->Type() != common::ExprType::Column) {
-                return common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                    common::ErrorCode::NotImplemented, "Only column references are supported in GROUP BY"));
-            }
-
-            auto col_expr = std::static_pointer_cast<common::ColumnExpression>(group_expr);
-            const std::string& col_name = col_expr->ColumnName();
-
-            // Find column index in the input batch
-            int col_idx = input_batch_pond_schema->GetColumnIndex(col_name);
-
-            if (col_idx == -1) {
-                return common::Result<ArrowDataBatchSharedPtr>::failure(
-                    common::Error(common::ErrorCode::InvalidArgument, "Column not found in input: " + col_name));
-            }
-
-            // Get the column array and value at this row
-            auto array = input_batch->column(col_idx);
-
-            // Append the value to the group key based on type
-            if (group_key.length() > 0) {
-                group_key += "|";  // Separator between values
-            }
-
-            auto append_result = ArrowUtil::AppendGroupKeyValue(array, row_idx, group_key);
-            if (!append_result.ok()) {
-                return common::Result<ArrowDataBatchSharedPtr>::failure(append_result.error());
-            }
+    // Extract column names from group by expressions
+    std::vector<std::string> group_by_columns;
+    for (const auto& expr : group_by_exprs) {
+        if (expr->Type() != common::ExprType::Column) {
+            return ReturnType::failure(
+                common::Error(common::ErrorCode::NotImplemented, "Only column references are supported in GROUP BY"));
         }
-
-        // Add this row to the appropriate group
-        group_map[group_key].push_back(row_idx);
+        auto col_expr = std::static_pointer_cast<common::ColumnExpression>(expr);
+        group_by_columns.push_back(col_expr->ColumnName());
     }
 
-    // Prepare the output arrays
-    auto output_schema = node.OutputSchema();
-    const int num_groups = group_map.size();
-    std::unordered_map<std::string, int> group_key_to_index;
+    // Extract column names and aggregate types from aggregate expressions
+    std::vector<std::string> agg_columns;
+    std::vector<std::string> output_columns_override;
+    std::vector<common::AggregateType> agg_types;
 
-    // Create builders for each output column
-    std::vector<std::shared_ptr<arrow::ArrayBuilder>> builders;
-    for (int i = 0; i < output_schema.NumColumns(); ++i) {
-        auto col_name = output_schema.Columns()[i].name;
-        auto type = output_schema.Columns()[i].type;
-        auto builder_result = ArrowUtil::CreateArrayBuilder(type);
-
-        RETURN_IF_ERROR_T(ReturnType, builder_result);
-
-        builders.push_back(std::move(builder_result).value());
-
-        for (const auto& group_expr : group_by) {
-            if (group_expr->Type() == common::ExprType::Column
-                && std::static_pointer_cast<common::ColumnExpression>(group_expr)->ColumnName() == col_name) {
-                group_key_to_index[col_name] = i;
-            }
-        }
-    }
-
-    // Second pass: Compute the aggregates for each group
-    int output_col_idx = 0;
-
-    // First, add the group by columns to the output
-    for (const auto& group_expr : group_by) {
-        auto col_expr = std::static_pointer_cast<common::ColumnExpression>(group_expr);
-        const std::string& col_name = col_expr->ColumnName();
-
-        // Find column index in the input batch
-        int input_col_idx = input_batch_pond_schema->GetColumnIndex(col_name);
-
-        if (input_col_idx == -1) {
-            return common::Result<ArrowDataBatchSharedPtr>::failure(
-                common::Error(common::ErrorCode::InvalidArgument, "Column not found in input: " + col_name));
+    for (const auto& expr : agg_exprs) {
+        if (expr->Type() != common::ExprType::Aggregate) {
+            return ReturnType::failure(common::Error(common::ErrorCode::NotImplemented,
+                                                     "Only aggregate expressions are supported in aggregates list"));
         }
 
-        // Get the column array
-        auto input_array = input_batch->column(input_col_idx);
-
-        // For each group, add the group by column value to the output
-        for (const auto& [group_key, row_indices] : group_map) {
-            // Take the first row in the group for the group by columns
-            int row_idx = row_indices[0];
-            auto append_result = ArrowUtil::AppendGroupValue(input_array, builders[output_col_idx], row_idx);
-            RETURN_IF_ERROR_T(ReturnType, append_result);
-        }
-
-        output_col_idx++;
-    }
-
-    // Now, compute the aggregates
-    for (const auto& agg_expr : aggregates) {
-        if (agg_expr->Type() != common::ExprType::Aggregate) {
-            return common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                common::ErrorCode::NotImplemented, "Only aggregate expressions are supported in aggregates list"));
-        }
-
-        auto agg = std::static_pointer_cast<common::AggregateExpression>(agg_expr);
-        auto agg_type = agg->AggType();
-        auto input_expr = agg->Input();
-
-        // For now, only support column references in aggregate input
-        if (input_expr->Type() != common::ExprType::Column && input_expr->Type() != common::ExprType::Star) {
-            return common::Result<ArrowDataBatchSharedPtr>::failure(common::Error(
-                common::ErrorCode::NotImplemented, "Only column references or * are supported in aggregate input"));
-        }
+        auto agg_expr = std::static_pointer_cast<common::AggregateExpression>(expr);
+        auto input_expr = agg_expr->Input();
+        auto agg_type = agg_expr->AggType();
 
         // Special case for COUNT(*)
         if (agg_type == common::AggregateType::Count && input_expr->Type() == common::ExprType::Star) {
-            auto typed_builder = static_cast<arrow::Int64Builder*>(builders[output_col_idx].get());
-
-            // Count the number of rows in each group
-            for (const auto& [group_key, row_indices] : group_map) {
-                typed_builder->Append(row_indices.size());
+            // For COUNT(*), we can use any column since we're just counting rows
+            if (input_batch->num_columns() > 0) {
+                agg_columns.push_back(input_batch->schema()->field(0)->name());
+                output_columns_override.push_back(agg_expr->ResultName());
+                agg_types.push_back(common::AggregateType::Count);
+            } else {
+                return ReturnType::failure(
+                    common::Error(common::ErrorCode::InvalidArgument, "Cannot perform COUNT(*) on empty schema"));
             }
-
-            output_col_idx++;
             continue;
         }
 
-        // For other aggregates, we need the column
+        // For other aggregates, extract the column
+        if (input_expr->Type() != common::ExprType::Column) {
+            return ReturnType::failure(common::Error(common::ErrorCode::NotImplemented,
+                                                     "Only column references are supported in aggregate input"));
+        }
+
         auto col_expr = std::static_pointer_cast<common::ColumnExpression>(input_expr);
-        const std::string& col_name = col_expr->ColumnName();
-
-        // Find column index in the input batch
-        int input_col_idx = -1;
-        auto input_schema = input_batch->schema();
-        for (int i = 0; i < input_schema->num_fields(); ++i) {
-            if (input_schema->field(i)->name() == col_name) {
-                input_col_idx = i;
-                break;
-            }
-        }
-
-        if (input_col_idx == -1) {
-            return common::Result<ArrowDataBatchSharedPtr>::failure(
-                common::Error(common::ErrorCode::InvalidArgument, "Column not found in input: " + col_name));
-        }
-
-        // Get the column array
-        auto input_array = input_batch->column(input_col_idx);
-
-        // Apply the aggregate function to each group
-        for (const auto& [group_key, row_indices] : group_map) {
-            if (group_by.size() > 0) {
-                auto group_key_idx = group_key_to_index[group_key];
-                auto column_builder = builders[group_key_idx];
-                auto result = ArrowUtil::AppendValue<arrow::StringBuilder>(column_builder, group_key);
-                RETURN_IF_ERROR_T(ReturnType, result);
-            }
-
-            auto builder = builders[output_col_idx];
-
-            // Compute the aggregate value based on the type
-            switch (agg_type) {
-                case common::AggregateType::Count: {
-                    auto typed_builder = std::static_pointer_cast<arrow::Int64Builder>(builder);
-                    auto result = ArrowUtil::ComputeCount(input_array, row_indices, typed_builder);
-                    RETURN_IF_ERROR_T(ReturnType, result);
-                    break;
-                }
-
-                case common::AggregateType::Sum: {
-                    auto result = ArrowUtil::ComputeSum(input_array, row_indices, builder);
-                    RETURN_IF_ERROR_T(ReturnType, result);
-                    break;
-                }
-
-                case common::AggregateType::Avg: {
-                    auto result = ArrowUtil::ComputeAverage(input_array, row_indices, builder);
-                    RETURN_IF_ERROR_T(ReturnType, result);
-                    break;
-                }
-
-                case common::AggregateType::Min: {
-                    auto result = ArrowUtil::ComputeMin(input_array, row_indices, builder);
-                    RETURN_IF_ERROR_T(ReturnType, result);
-                    break;
-                }
-                case common::AggregateType::Max: {
-                    auto result = ArrowUtil::ComputeMax(input_array, row_indices, builder);
-                    RETURN_IF_ERROR_T(ReturnType, result);
-                    break;
-                }
-                default: {
-                    return common::Result<ArrowDataBatchSharedPtr>::failure(
-                        common::Error(common::ErrorCode::NotImplemented, "Unsupported aggregate function"));
-                }
-            }
-        }
-
-        output_col_idx++;
+        agg_columns.push_back(col_expr->ColumnName());
+        output_columns_override.push_back(agg_expr->ResultName());
+        agg_types.push_back(agg_type);
     }
 
-    // Finalize the arrays and create the record batch
-    std::vector<std::shared_ptr<arrow::Array>> output_arrays;
-    for (auto& builder : builders) {
-        std::shared_ptr<arrow::Array> array;
-        auto status = builder->Finish(&array);
-        if (!status.ok()) {
-            return common::Result<ArrowDataBatchSharedPtr>::failure(
-                common::Error(common::ErrorCode::Failure, "Failed to finalize array: " + status.ToString()));
+    // Special case for aggregates without GROUP BY - create a single group for the entire dataset
+    // why we need to do this?
+    // Given a query like:
+    // SELECT COUNT(*) FROM table;
+    // or
+    // SELECT SUM(value) FROM table;
+    //
+    //        Input:           col1    col2
+    //                     10      A
+    //                     20      B
+    //                     30      C
+
+    //    With dummy:      __dummy_group    col1    col2
+    //                     1                10      A
+    //                     1                20      B
+    //                     1                30      C
+
+    //    After grouping:  __dummy_group    sum(col1)
+    //                     1                60
+
+    //    Final result:    sum(col1)
+    //                     60
+    if (group_by_columns.empty() && !agg_columns.empty()) {
+        // We need to add a dummy constant column to group by
+        // First, create a constant column with the same value for all rows
+        arrow::Int32Builder builder;
+        if (!builder.Reserve(input_batch->num_rows()).ok()) {
+            return ReturnType::failure(
+                common::Error(common::ErrorCode::InvalidArgument, "Failed to reserve space for dummy group column"));
         }
-        output_arrays.push_back(array);
+        for (int i = 0; i < input_batch->num_rows(); i++) {
+            if (!builder.Append(1).ok()) {
+                return ReturnType::failure(
+                    common::Error(common::ErrorCode::InvalidArgument, "Failed to append value to dummy group column"));
+            }
+        }
+        std::shared_ptr<arrow::Array> dummy_array;
+        if (!builder.Finish(&dummy_array).ok()) {
+            return ReturnType::failure(
+                common::Error(common::ErrorCode::InvalidArgument, "Failed to finish dummy group column"));
+        }
+
+        // Create a new batch with the dummy column prepended
+        std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("__dummy_group", arrow::int32())};
+        for (int i = 0; i < input_batch->schema()->num_fields(); i++) {
+            fields.push_back(input_batch->schema()->field(i));
+        }
+
+        std::vector<std::shared_ptr<arrow::Array>> arrays = {dummy_array};
+        for (int i = 0; i < input_batch->num_columns(); i++) {
+            arrays.push_back(input_batch->column(i));
+        }
+
+        auto new_schema = arrow::schema(fields);
+        auto new_batch = arrow::RecordBatch::Make(new_schema, input_batch->num_rows(), arrays);
+
+        // Now use this batch and include the dummy column in group_by
+        input_batch = new_batch;
+        group_by_columns.push_back("__dummy_group");
     }
 
-    // Create arrow schema from output schema
-    auto arrow_schema_result = format::SchemaConverter::ToArrowSchema(output_schema);
-    RETURN_IF_ERROR_T(ReturnType, arrow_schema_result);
+    LOG_CHECK(agg_columns.size() == agg_types.size(),
+              "Number of aggregate columns does not match number of aggregate types");
+    LOG_CHECK(output_columns_override.size() == agg_columns.size(),
+              "Number of output columns override does not match number of aggregate columns");
 
-    auto arrow_schema = arrow_schema_result.value();
+    // Call ArrowUtil::HashAggregate with the extracted parameters
+    auto agg_result =
+        ArrowUtil::HashAggregate(input_batch, group_by_columns, agg_columns, agg_types, output_columns_override);
+    RETURN_IF_ERROR_T(ReturnType, agg_result);
 
-    // Create the output batch
-    return common::Result<ArrowDataBatchSharedPtr>::success(
-        arrow::RecordBatch::Make(arrow_schema, num_groups, output_arrays));
+    LOG_STATUS("agg_result: %s", ArrowUtil::BatchToString(agg_result.value()).c_str());
+
+    auto result_batch = agg_result.value();
+
+    // If we added a dummy group column, remove it from the result
+    if (group_by_exprs.empty() && !agg_columns.empty() && result_batch->schema()->GetFieldIndex("__dummy_group") >= 0) {
+        // Create a new batch without the dummy column
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        std::vector<std::shared_ptr<arrow::Array>> arrays;
+
+        for (int i = 0; i < result_batch->schema()->num_fields(); i++) {
+            auto field = result_batch->schema()->field(i);
+            if (field->name() != "__dummy_group") {
+                fields.push_back(field);
+                arrays.push_back(result_batch->column(i));
+            }
+        }
+
+        auto new_schema = arrow::schema(fields);
+        result_batch = arrow::RecordBatch::Make(new_schema, result_batch->num_rows(), arrays);
+    }
+
+    // Verify the schema matches the expected output schema
+    auto output_schema = node.OutputSchema();
+
+    // If schema doesn't match exactly what's expected, we need to create a projection
+    if (result_batch->schema()->num_fields() != output_schema.NumColumns()) {
+        LOG_VERBOSE("Aggregation result schema doesn't match output schema, creating projection");
+
+        // Create a mapping from result columns to output columns
+        std::unordered_map<std::string, int> result_col_indices;
+        for (int i = 0; i < result_batch->schema()->num_fields(); i++) {
+            result_col_indices[result_batch->schema()->field(i)->name()] = i;
+        }
+
+        // Create arrays for the projected output
+        std::vector<std::shared_ptr<arrow::Array>> output_arrays;
+        std::vector<std::shared_ptr<arrow::Field>> output_fields;
+
+        for (const auto& col : output_schema.Columns()) {
+            auto it = result_col_indices.find(col.name);
+            if (it == result_col_indices.end()) {
+                return ReturnType::failure(
+                    common::Error(common::ErrorCode::InvalidArgument,
+                                  "Column from output schema not found in aggregation result: " + col.name));
+            }
+
+            int col_idx = it->second;
+            output_arrays.push_back(result_batch->column(col_idx));
+            output_fields.push_back(result_batch->schema()->field(col_idx));
+        }
+
+        // Create the projected record batch
+        auto arrow_schema = arrow::schema(output_fields);
+        result_batch = arrow::RecordBatch::Make(arrow_schema, result_batch->num_rows(), output_arrays);
+    }
+
+    return ReturnType::success(result_batch);
 }
 
 void MaterializedExecutor::Visit(PhysicalHashAggregateNode& node) {

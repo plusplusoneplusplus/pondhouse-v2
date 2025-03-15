@@ -899,6 +899,10 @@ TEST_F(MaterializedExecutorTest, GroupByWithAggregates) {
     std::string sql_query = "SELECT name, COUNT(*) AS count, AVG(age) AS avg_age, MIN(age) AS min_age, MAX(age) AS "
                             "max_age FROM users GROUP BY name";
 
+    auto logical_plan_result = PlanLogical(sql_query);
+    VERIFY_RESULT(logical_plan_result);
+    auto logical_plan = logical_plan_result.value();
+
     // Plan the query and get the physical plan
     auto physical_plan_result = PlanPhysical(sql_query);
     ASSERT_TRUE(physical_plan_result.ok()) << "Physical planning failed: " << physical_plan_result.error().message();
@@ -959,65 +963,6 @@ TEST_F(MaterializedExecutorTest, GroupByWithAggregates) {
             ASSERT_EQ(min_array->Value(i), 45) << "Eve min age should be 45";
             ASSERT_EQ(max_array->Value(i), 45) << "Eve max age should be 45";
         }
-    }
-}
-
-//
-// Test Setup:
-//      Execute a query with GROUP BY on multiple columns
-// Test Result:
-//      Returns rows grouped by unique combinations of columns
-//
-TEST_F(MaterializedExecutorTest, DISABLED_MultipleColumnGroupBy) {
-    // Create SQL query with GROUP BY on age ranges and salary ranges
-    const std::string query = "SELECT "
-                              "CASE WHEN age < 35 THEN 'young' ELSE 'senior' END AS age_group, "
-                              "CASE WHEN salary < 90000 THEN 'entry' ELSE 'experienced' END AS salary_level, "
-                              "COUNT(*) AS count "
-                              "FROM users "
-                              "GROUP BY "
-                              "CASE WHEN age < 35 THEN 'young' ELSE 'senior' END, "
-                              "CASE WHEN salary < 90000 THEN 'entry' ELSE 'experienced' END";
-
-    // Plan the query and get the physical plan
-    auto physical_plan_result = PlanPhysical(query);
-    VERIFY_RESULT(physical_plan_result);
-    auto physical_plan = physical_plan_result.value();
-
-    // Execute the plan
-    auto result = executor_->ExecuteToCompletion(physical_plan);
-    VERIFY_RESULT(result);
-
-    // Get the batch
-    auto batch = result.value();
-    ASSERT_NE(batch, nullptr) << "Result batch should not be null";
-
-    // Verify batch contents - should have up to 4 rows (age_group x salary_level)
-    ASSERT_GE(batch->num_rows(), 2) << "Batch should have at least 2 rows";
-    ASSERT_LE(batch->num_rows(), 4) << "Batch should have at most 4 rows";
-    ASSERT_EQ(batch->num_columns(), 3) << "Batch should have 3 columns";
-
-    // Verify column names
-    ASSERT_EQ(batch->schema()->field(0)->name(), "age_group");
-    ASSERT_EQ(batch->schema()->field(1)->name(), "salary_level");
-    ASSERT_EQ(batch->schema()->field(2)->name(), "count");
-
-    // Verify the sum of counts equals total rows
-    auto count_array = std::static_pointer_cast<arrow::Int64Array>(batch->column(2));
-    int64_t total_count = 0;
-    for (int i = 0; i < batch->num_rows(); i++) {
-        total_count += count_array->Value(i);
-    }
-    ASSERT_EQ(total_count, 5) << "Sum of counts should equal total number of rows (5)";
-
-    // Get the arrays for verification
-    auto age_group_array = std::static_pointer_cast<arrow::StringArray>(batch->column(0));
-    auto salary_level_array = std::static_pointer_cast<arrow::StringArray>(batch->column(1));
-
-    // Print the groups for debugging
-    for (int i = 0; i < batch->num_rows(); i++) {
-        std::cout << "Group: " << age_group_array->GetString(i) << ", " << salary_level_array->GetString(i)
-                  << ", Count: " << count_array->Value(i) << std::endl;
     }
 }
 
