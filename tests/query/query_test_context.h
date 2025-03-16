@@ -49,6 +49,7 @@ public:
         schema->AddField("amount", common::ColumnType::DOUBLE);
         tables_["orders"] = std::make_unique<TestTableInfo>("orders", schema, partition_spec_);
 
+        // users table
         schema = std::make_shared<common::Schema>();
         schema->AddField("id", common::ColumnType::INT32);
         schema->AddField("name", common::ColumnType::STRING);
@@ -58,6 +59,14 @@ public:
 
         // same schema as users, but different table name
         tables_["multi_users"] = std::make_unique<TestTableInfo>("multi_users", schema, partition_spec_);
+
+        // nullable user
+        schema = std::make_shared<common::Schema>();
+        schema->AddField("id", common::ColumnType::INT32, common::Nullability::NULLABLE);
+        schema->AddField("name", common::ColumnType::STRING, common::Nullability::NULLABLE);
+        schema->AddField("age", common::ColumnType::INT32, common::Nullability::NULLABLE);
+        schema->AddField("salary", common::ColumnType::DOUBLE, common::Nullability::NULLABLE);
+        tables_["nullable_users"] = std::make_unique<TestTableInfo>("nullable_users", schema, partition_spec_);
 
         for (const auto& [name, table_info] : tables_) {
             catalog_->CreateTable(name, table_info->Schema(), partition_spec_, "test_catalog/" + name);

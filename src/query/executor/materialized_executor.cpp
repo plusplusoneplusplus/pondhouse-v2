@@ -506,7 +506,22 @@ void MaterializedExecutor::Visit(PhysicalSortNode& node) {
 }
 
 void MaterializedExecutor::Visit(PhysicalLimitNode& node) {
-    current_result_ = common::Error(common::ErrorCode::NotImplemented, "Limit not implemented in simple executor");
+    // Execute the child node first
+    auto result = ExecuteChildren(node);
+    if (!result.ok()) {
+        current_result_ = result;
+        return;
+    }
+
+    auto limit_result = ExecutorUtil::CreateLimitBatch(current_batch_, node.Limit(), node.Offset());
+    if (!limit_result.ok()) {
+        current_result_ = limit_result;
+        return;
+    }
+
+    current_result_ = limit_result;
+    current_batch_ = limit_result.value();
+    return;
 }
 
 void MaterializedExecutor::Visit(PhysicalShuffleExchangeNode& node) {

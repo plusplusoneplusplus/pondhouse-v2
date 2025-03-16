@@ -33,6 +33,17 @@ public:
      */
     static common::Result<ArrowDataBatchSharedPtr> CreateSortBatch(ArrowDataBatchSharedPtr input_batch,
                                                                    const std::vector<SortSpec>& sort_specs);
+
+    /**
+     * @brief Create a limit batch
+     *
+     * @param input_batch The input batch
+     * @param limit The limit
+     * @return The limited batch
+     */
+    static common::Result<ArrowDataBatchSharedPtr> CreateLimitBatch(ArrowDataBatchSharedPtr input_batch,
+                                                                    size_t limit,
+                                                                    size_t offset);
 };
 
 }  // namespace pond::query

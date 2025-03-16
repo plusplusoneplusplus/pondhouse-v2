@@ -347,4 +347,206 @@ TEST_F(ExecutorUtilTest, SortEmptyBatch) {
     EXPECT_EQ(output_batch->num_columns(), empty_batch->num_columns());
 }
 
+//
+// Test Setup:
+//      Apply limit without offset to input batch
+// Test Result:
+//      Verify output batch contains only the first N rows
+//
+TEST_F(ExecutorUtilTest, LimitWithoutOffset) {
+    // Execute limit
+    auto result = ExecutorUtil::CreateLimitBatch(input_batch_, 3, 0);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+
+    // Verify output has same schema but fewer rows
+    ASSERT_EQ(output_batch->num_columns(), input_batch_->num_columns());
+    ASSERT_EQ(output_batch->num_rows(), 3);
+
+    // Verify data matches first 3 rows of input
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(0));
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(1));
+    auto age_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(2));
+    auto salary_array = std::static_pointer_cast<arrow::DoubleArray>(output_batch->column(3));
+
+    EXPECT_EQ(id_array->Value(0), 1);
+    EXPECT_EQ(name_array->GetString(0), "Alice");
+    EXPECT_EQ(age_array->Value(0), 25);
+    EXPECT_EQ(salary_array->Value(0), 50000.0);
+
+    EXPECT_EQ(id_array->Value(2), 3);
+    EXPECT_EQ(name_array->GetString(2), "Charlie");
+    EXPECT_EQ(age_array->Value(2), 35);
+    EXPECT_EQ(salary_array->Value(2), 70000.0);
+}
+
+//
+// Test Setup:
+//      Apply limit with offset to input batch
+// Test Result:
+//      Verify output batch contains N rows starting from offset
+//
+TEST_F(ExecutorUtilTest, LimitWithOffset) {
+    // Execute limit with offset
+    auto result = ExecutorUtil::CreateLimitBatch(input_batch_, 2, 2);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+
+    // Verify output has same schema but fewer rows
+    ASSERT_EQ(output_batch->num_columns(), input_batch_->num_columns());
+    ASSERT_EQ(output_batch->num_rows(), 2);
+
+    // Verify data matches rows 3-4 of input (0-based index)
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(0));
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(1));
+    auto age_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(2));
+    auto salary_array = std::static_pointer_cast<arrow::DoubleArray>(output_batch->column(3));
+
+    EXPECT_EQ(id_array->Value(0), 3);
+    EXPECT_EQ(name_array->GetString(0), "Charlie");
+    EXPECT_EQ(age_array->Value(0), 35);
+    EXPECT_EQ(salary_array->Value(0), 70000.0);
+
+    EXPECT_EQ(id_array->Value(1), 4);
+    EXPECT_EQ(name_array->GetString(1), "David");
+    EXPECT_EQ(age_array->Value(1), 40);
+    EXPECT_EQ(salary_array->Value(1), 80000.0);
+}
+
+//
+// Test Setup:
+//      Apply limit larger than available rows
+// Test Result:
+//      Verify output batch contains all available rows
+//
+TEST_F(ExecutorUtilTest, LimitBeyondAvailable) {
+    // Execute limit with large value
+    auto result = ExecutorUtil::CreateLimitBatch(input_batch_, 10, 0);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+
+    // Verify output contains all rows from input
+    ASSERT_EQ(output_batch->num_columns(), input_batch_->num_columns());
+    ASSERT_EQ(output_batch->num_rows(), input_batch_->num_rows());
+
+    // Verify last row matches
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(0));
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(1));
+    auto age_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(2));
+    auto salary_array = std::static_pointer_cast<arrow::DoubleArray>(output_batch->column(3));
+
+    EXPECT_EQ(id_array->Value(4), 5);
+    EXPECT_EQ(name_array->GetString(4), "Eve");
+    EXPECT_EQ(age_array->Value(4), 45);
+    EXPECT_EQ(salary_array->Value(4), 90000.0);
+}
+
+//
+// Test Setup:
+//      Apply limit with offset beyond available rows
+// Test Result:
+//      Verify empty output batch is returned
+//
+TEST_F(ExecutorUtilTest, OffsetBeyondAvailable) {
+    // Execute limit with offset beyond available rows
+    auto result = ExecutorUtil::CreateLimitBatch(input_batch_, 2, 10);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+
+    // Verify output is empty but has same schema
+    ASSERT_EQ(output_batch->num_columns(), input_batch_->num_columns());
+    ASSERT_EQ(output_batch->num_rows(), 0);
+}
+
+//
+// Test Setup:
+//      Apply limit to empty batch
+// Test Result:
+//      Verify empty output batch is returned
+//
+TEST_F(ExecutorUtilTest, LimitEmptyBatch) {
+    // Create an empty batch
+    auto empty_batch_result = ArrowRecordBatchBuilder()
+                                  .AddInt32Column("id", {})
+                                  .AddStringColumn("name", {})
+                                  .AddInt32Column("age", {})
+                                  .AddDoubleColumn("salary", {})
+                                  .Build();
+    VERIFY_RESULT(empty_batch_result);
+    auto empty_batch = empty_batch_result.value();
+
+    // Execute limit
+    auto result = ExecutorUtil::CreateLimitBatch(empty_batch, 5, 0);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+
+    // Verify output is empty but has same schema
+    ASSERT_EQ(output_batch->num_columns(), empty_batch->num_columns());
+    ASSERT_EQ(output_batch->num_rows(), 0);
+}
+
+//
+// Test Setup:
+//      Apply limit to batch with null values
+// Test Result:
+//      Verify null values are preserved in output
+//
+TEST_F(ExecutorUtilTest, LimitWithNulls) {
+    // Create a batch with null values
+    auto batch_result = ArrowRecordBatchBuilder()
+                            .AddInt32Column("id", {1, 2, 3})
+                            .AddStringColumn("name", {"Alice", "", "Charlie"}, {true, false, true})
+                            .AddInt32Column("age", {25, 30, 35}, {true, false, true})
+                            .Build();
+    VERIFY_RESULT(batch_result);
+    auto batch_with_nulls = batch_result.value();
+
+    // Execute limit to get first two rows
+    auto result = ExecutorUtil::CreateLimitBatch(batch_with_nulls, 2, 0);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+
+    // Verify output size
+    ASSERT_EQ(output_batch->num_columns(), batch_with_nulls->num_columns());
+    ASSERT_EQ(output_batch->num_rows(), 2);
+
+    // Verify null values are preserved
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(1));
+    auto age_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(2));
+
+    EXPECT_FALSE(name_array->IsNull(0));
+    EXPECT_EQ(name_array->GetString(0), "Alice");
+    EXPECT_TRUE(name_array->IsNull(1));
+
+    EXPECT_FALSE(age_array->IsNull(0));
+    EXPECT_EQ(age_array->Value(0), 25);
+    EXPECT_TRUE(age_array->IsNull(1));
+}
+
+//
+// Test Setup:
+//      Pass null input batch to limit
+// Test Result:
+//      Verify error is returned
+//
+TEST_F(ExecutorUtilTest, LimitNullBatch) {
+    // Execute limit with null input
+    auto result = ExecutorUtil::CreateLimitBatch(nullptr, 5, 0);
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code(), common::ErrorCode::InvalidArgument);
+    EXPECT_TRUE(result.error().message().find("Input batch is null") != std::string::npos);
+}
+
 }  // namespace pond::query

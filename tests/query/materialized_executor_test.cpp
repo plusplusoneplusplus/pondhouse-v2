@@ -1175,4 +1175,138 @@ TEST_F(MaterializedExecutorTest, SortBooleanType) {
         "bool_test");
 }
 
+//
+// Test Setup:
+//      Apply limit with offset to batch containing null values
+// Test Result:
+//      Verify output batch preserves null values in the selected range
+//
+TEST_F(MaterializedExecutorTest, LimitWithNullValues) {
+    // Create test data with null values
+    auto batch_result =
+        ArrowRecordBatchBuilder()
+            .AddInt32Column("id", {1, 2, 3, 4, 5})
+            .AddStringColumn("name", {"Alice", "", "Charlie", "", "Eve"}, {true, false, true, false, true})
+            .AddInt32Column("age", {25, 30, 35, 40, 45}, {true, true, false, true, true})
+            .AddDoubleColumn("salary", {100000, 90000, 80000, 70000, 60000})
+            .Build();
+    VERIFY_RESULT(batch_result);
+    IngestData("nullable_users", batch_result.value());
+
+    // Create scan plan
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("nullable_users", *GetSchema("nullable_users"));
+
+    // Create limit node with offset
+    auto limit_node = std::make_shared<PhysicalLimitNode>(2, 1, scan_node->OutputSchema());
+    limit_node->AddChild(scan_node);
+
+    // Execute the plan
+    auto result = executor_->ExecuteToCompletion(limit_node);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    std::cout << "Output batch: " << ArrowUtil::BatchToString(output_batch) << std::endl;
+    ASSERT_NE(output_batch, nullptr);
+    ASSERT_EQ(output_batch->num_rows(), 2);
+
+    // Verify data and null values
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(1));
+    auto age_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(2));
+
+    EXPECT_TRUE(name_array->IsNull(0));  // Second row from original (null)
+    EXPECT_EQ(name_array->GetString(1), "Charlie");
+    EXPECT_TRUE(age_array->IsValid(0));
+    EXPECT_EQ(age_array->Value(0), 30);
+    EXPECT_TRUE(age_array->IsNull(1));
+}
+
+//
+// Test Setup:
+//      Apply limit with large offset that exceeds batch size
+// Test Result:
+//      Verify empty batch is returned with correct schema
+//
+TEST_F(MaterializedExecutorTest, LimitWithLargeOffset) {
+    IngestDefaultTestData();
+
+    // Create scan plan
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *GetSchema("users"));
+
+    // Create limit node with offset beyond data size
+    auto limit_node = std::make_shared<PhysicalLimitNode>(5, 10, scan_node->OutputSchema());
+    limit_node->AddChild(scan_node);
+
+    // Execute the plan
+    auto result = executor_->ExecuteToCompletion(limit_node);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+    ASSERT_EQ(output_batch->num_rows(), 0);
+    ASSERT_EQ(output_batch->num_columns(), 4);  // Schema should be preserved
+}
+
+//
+// Test Setup:
+//      Apply limit after filter operation
+// Test Result:
+//      Verify limit is correctly applied to filtered results
+//
+TEST_F(MaterializedExecutorTest, LimitAfterFilter) {
+    IngestDefaultTestData();
+
+    // Create scan plan
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *GetSchema("users"));
+
+    // Add filter: age > 30
+    auto age_column = common::MakeColumnExpression("", "age");
+    auto constant = common::MakeIntegerConstant(30);
+    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, age_column, constant);
+    auto filter_node = std::make_shared<PhysicalFilterNode>(predicate, scan_node->OutputSchema());
+    filter_node->AddChild(scan_node);
+
+    // Add limit: first 2 rows
+    auto limit_node = std::make_shared<PhysicalLimitNode>(2, 0, filter_node->OutputSchema());
+    limit_node->AddChild(filter_node);
+
+    // Execute the plan
+    auto result = executor_->ExecuteToCompletion(limit_node);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+    ASSERT_EQ(output_batch->num_rows(), 2);
+
+    // Verify we got the first two rows where age > 30
+    auto age_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(2));
+    EXPECT_EQ(age_array->Value(0), 35);  // Charlie
+    EXPECT_EQ(age_array->Value(1), 40);  // David
+}
+
+//
+// Test Setup:
+//      Apply limit with zero rows requested
+// Test Result:
+//      Verify empty batch is returned with correct schema
+//
+TEST_F(MaterializedExecutorTest, LimitZeroRows) {
+    IngestDefaultTestData();
+
+    // Create scan plan
+    auto scan_node = std::make_shared<PhysicalSequentialScanNode>("users", *GetSchema("users"));
+
+    // Create limit node with zero rows
+    auto limit_node = std::make_shared<PhysicalLimitNode>(0, 0, scan_node->OutputSchema());
+    limit_node->AddChild(scan_node);
+
+    // Execute the plan
+    auto result = executor_->ExecuteToCompletion(limit_node);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+    ASSERT_EQ(output_batch->num_rows(), 0);
+    ASSERT_EQ(output_batch->num_columns(), 4);  // Schema should be preserved
+}
+
 }  // namespace pond::query

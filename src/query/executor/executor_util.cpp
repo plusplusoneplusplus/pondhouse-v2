@@ -264,4 +264,81 @@ common::Result<ArrowDataBatchSharedPtr> ExecutorUtil::CreateSortBatch(ArrowDataB
     return common::Result<ArrowDataBatchSharedPtr>::success(sorted_batch);
 }
 
+common::Result<ArrowDataBatchSharedPtr> ExecutorUtil::CreateLimitBatch(ArrowDataBatchSharedPtr input_batch,
+                                                                       size_t limit,
+                                                                       size_t offset) {
+    if (!input_batch) {
+        return common::Result<ArrowDataBatchSharedPtr>::failure(
+            common::Error(common::ErrorCode::InvalidArgument, "Input batch is null"));
+    }
+
+    // If offset is beyond the input size, return empty batch
+    if (offset >= input_batch->num_rows()) {
+        std::vector<std::shared_ptr<arrow::Array>> empty_arrays;
+        for (int i = 0; i < input_batch->num_columns(); i++) {
+            auto array_type = input_batch->column(i)->type();
+            auto column_type_result = format::SchemaConverter::FromArrowDataType(array_type);
+            if (!column_type_result.ok()) {
+                return common::Result<ArrowDataBatchSharedPtr>::failure(column_type_result.error());
+            }
+            auto builder_result = ArrowUtil::CreateArrayBuilder(column_type_result.value());
+            if (!builder_result.ok()) {
+                return common::Result<ArrowDataBatchSharedPtr>::failure(builder_result.error());
+            }
+            std::shared_ptr<arrow::Array> empty_array;
+            if (!builder_result.value()->Finish(&empty_array).ok()) {
+                return common::Result<ArrowDataBatchSharedPtr>::failure(
+                    common::Error(common::ErrorCode::Failure, "Failed to finish array"));
+            }
+            empty_arrays.push_back(empty_array);
+        }
+        return common::Result<ArrowDataBatchSharedPtr>::success(
+            arrow::RecordBatch::Make(input_batch->schema(), 0, empty_arrays));
+    }
+
+    // Calculate actual number of rows to include
+    size_t available_rows = input_batch->num_rows() - offset;
+    size_t actual_limit = std::min(limit, available_rows);
+
+    // Create arrays for the output batch
+    std::vector<std::shared_ptr<arrow::Array>> output_arrays;
+    for (int i = 0; i < input_batch->num_columns(); i++) {
+        auto input_array = input_batch->column(i);
+        auto array_type = input_array->type();
+
+        // Get column type
+        auto column_type_result = format::SchemaConverter::FromArrowDataType(array_type);
+        if (!column_type_result.ok()) {
+            return common::Result<ArrowDataBatchSharedPtr>::failure(column_type_result.error());
+        }
+
+        // Create builder
+        auto builder_result = ArrowUtil::CreateArrayBuilder(column_type_result.value());
+        if (!builder_result.ok()) {
+            return common::Result<ArrowDataBatchSharedPtr>::failure(builder_result.error());
+        }
+        auto builder = builder_result.value();
+
+        // Append values from offset to offset + actual_limit
+        for (size_t j = offset; j < offset + actual_limit; j++) {
+            auto result = ArrowUtil::AppendGroupValue(input_array, builder, j);
+            if (!result.ok()) {
+                return common::Result<ArrowDataBatchSharedPtr>::failure(result.error());
+            }
+        }
+
+        // Finish array
+        std::shared_ptr<arrow::Array> output_array;
+        if (!builder->Finish(&output_array).ok()) {
+            return common::Result<ArrowDataBatchSharedPtr>::failure(
+                common::Error(common::ErrorCode::Failure, "Failed to finish array"));
+        }
+        output_arrays.push_back(output_array);
+    }
+
+    // Create output batch
+    return common::Result<ArrowDataBatchSharedPtr>::success(
+        arrow::RecordBatch::Make(input_batch->schema(), actual_limit, output_arrays));
+}
+
 }  // namespace pond::query
