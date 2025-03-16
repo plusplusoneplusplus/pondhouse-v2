@@ -549,4 +549,319 @@ TEST_F(ExecutorUtilTest, LimitNullBatch) {
     EXPECT_TRUE(result.error().message().find("Input batch is null") != std::string::npos);
 }
 
+//
+// Test Setup:
+//      Join with duplicate keys in both sides
+// Test Result:
+//      Verify cartesian product of matching rows
+//
+TEST_F(ExecutorUtilTest, HashJoinWithDuplicateKeys) {
+    // Create left batch with duplicate keys
+    auto left_batch_result = ArrowRecordBatchBuilder()
+                                 .AddInt32Column("key", {1, 1, 2})
+                                 .AddStringColumn("left_val", {"A1", "A2", "B"})
+                                 .Build();
+    VERIFY_RESULT(left_batch_result);
+    auto left_batch = left_batch_result.value();
+
+    // Create right batch with duplicate keys
+    auto right_batch_result = ArrowRecordBatchBuilder()
+                                  .AddInt32Column("key", {1, 1, 3})
+                                  .AddStringColumn("right_val", {"X1", "X2", "Z"})
+                                  .Build();
+    VERIFY_RESULT(right_batch_result);
+    auto right_batch = right_batch_result.value();
+
+    // Create join condition: left.key = right.key
+    auto left_col = common::MakeColumnExpression("", "key");
+    auto right_col = common::MakeColumnExpression("", "key");
+    auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
+
+    // Execute join
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+
+    // Verify output schema
+    ASSERT_EQ(output_batch->num_columns(), 3);  // key, left_val, right_val
+
+    // Verify number of rows (should be 4: 2 left rows with key=1 × 2 right rows with key=1)
+    ASSERT_EQ(output_batch->num_rows(), 4);
+
+    // Verify joined data
+    auto key_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(0));
+    auto left_val_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(1));
+    auto right_val_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(2));
+
+    // Check that we have all combinations of matching rows
+    std::set<std::pair<std::string, std::string>> expected_combinations = {
+        {"A1", "X1"}, {"A1", "X2"}, {"A2", "X1"}, {"A2", "X2"}};
+
+    std::set<std::pair<std::string, std::string>> actual_combinations;
+    for (int i = 0; i < output_batch->num_rows(); i++) {
+        EXPECT_EQ(key_array->Value(i), 1);  // All rows should have key=1
+        actual_combinations.insert({left_val_array->GetString(i), right_val_array->GetString(i)});
+    }
+
+    EXPECT_EQ(actual_combinations, expected_combinations);
+}
+
+//
+// Test Setup:
+//      Join with name collision in output schema
+// Test Result:
+//      Verify column names are properly disambiguated
+//
+TEST_F(ExecutorUtilTest, HashJoinWithNameCollision) {
+    // Create left batch with columns that will collide with right batch
+    auto left_batch_result = ArrowRecordBatchBuilder()
+                                 .AddInt32Column("id", {1, 2, 3})
+                                 .AddStringColumn("name", {"Alice", "Bob", "Charlie"})
+                                 .AddStringColumn("value", {"L1", "L2", "L3"})
+                                 .Build();
+    VERIFY_RESULT(left_batch_result);
+    auto left_batch = left_batch_result.value();
+
+    // Create right batch with columns that collide with left batch
+    auto right_batch_result =
+        ArrowRecordBatchBuilder().AddInt32Column("id", {1, 2, 4}).AddStringColumn("value", {"R1", "R2", "R4"}).Build();
+    VERIFY_RESULT(right_batch_result);
+    auto right_batch = right_batch_result.value();
+
+    // Create join condition: left.id = right.id
+    auto left_col = common::MakeColumnExpression("", "id");
+    auto right_col = common::MakeColumnExpression("", "id");
+    auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
+
+    // Execute join
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+
+    // Verify output schema - should have renamed the colliding column
+    ASSERT_EQ(output_batch->num_columns(), 4);  // id, name, value, right_value
+    EXPECT_EQ(output_batch->schema()->field(0)->name(), "id");
+    EXPECT_EQ(output_batch->schema()->field(1)->name(), "name");
+    EXPECT_EQ(output_batch->schema()->field(2)->name(), "value");
+    EXPECT_EQ(output_batch->schema()->field(3)->name(), "right_value");
+
+    // Verify number of rows (should be 2: id=1,2 match)
+    ASSERT_EQ(output_batch->num_rows(), 2);
+
+    // Verify joined data
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(output_batch->column(0));
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(1));
+    auto left_value_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(2));
+    auto right_value_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(3));
+
+    // Check for expected matches
+    std::unordered_map<int, std::tuple<std::string, std::string, std::string>> expected_matches = {
+        {1, {"Alice", "L1", "R1"}}, {2, {"Bob", "L2", "R2"}}};
+
+    for (int i = 0; i < output_batch->num_rows(); i++) {
+        int id = id_array->Value(i);
+        ASSERT_TRUE(expected_matches.find(id) != expected_matches.end());
+        EXPECT_EQ(name_array->GetString(i), std::get<0>(expected_matches[id]));
+        EXPECT_EQ(left_value_array->GetString(i), std::get<1>(expected_matches[id]));
+        EXPECT_EQ(right_value_array->GetString(i), std::get<2>(expected_matches[id]));
+    }
+}
+
+//
+// Test Setup:
+//      Join with incompatible column types
+// Test Result:
+//      Verify error is returned
+//
+TEST_F(ExecutorUtilTest, HashJoinIncompatibleTypes) {
+    // Create left batch with integer join column
+    auto left_batch_result = ArrowRecordBatchBuilder()
+                                 .AddInt32Column("id", {1, 2, 3})
+                                 .AddStringColumn("name", {"Alice", "Bob", "Charlie"})
+                                 .Build();
+    VERIFY_RESULT(left_batch_result);
+    auto left_batch = left_batch_result.value();
+
+    // Create right batch with string join column
+    auto right_batch_result = ArrowRecordBatchBuilder()
+                                  .AddStringColumn("id", {"1", "2", "3"})  // String type, not int
+                                  .AddStringColumn("value", {"A", "B", "C"})
+                                  .Build();
+    VERIFY_RESULT(right_batch_result);
+    auto right_batch = right_batch_result.value();
+
+    // Create join condition: left.id = right.id
+    auto left_col = common::MakeColumnExpression("", "id");
+    auto right_col = common::MakeColumnExpression("", "id");
+    auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
+
+    // Execute join - should fail due to incompatible types
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    VERIFY_ERROR_CODE_KEYWORD(result, common::ErrorCode::InvalidArgument, "Join column types do not match");
+}
+
+//
+// Test Setup:
+//      Join with non-equality condition
+// Test Result:
+//      Verify error is returned
+//
+TEST_F(ExecutorUtilTest, HashJoinNonEqualityCondition) {
+    // Create left and right batches
+    auto left_batch_result = ArrowRecordBatchBuilder()
+                                 .AddInt32Column("id", {1, 2, 3})
+                                 .AddStringColumn("name", {"Alice", "Bob", "Charlie"})
+                                 .Build();
+    VERIFY_RESULT(left_batch_result);
+    auto left_batch = left_batch_result.value();
+
+    auto right_batch_result =
+        ArrowRecordBatchBuilder().AddInt32Column("id", {1, 2, 3}).AddStringColumn("value", {"A", "B", "C"}).Build();
+    VERIFY_RESULT(right_batch_result);
+    auto right_batch = right_batch_result.value();
+
+    // Create join condition with non-equality operator: left.id > right.id
+    auto left_col = common::MakeColumnExpression("", "id");
+    auto right_col = common::MakeColumnExpression("", "id");
+    auto condition = common::MakeComparisonExpression(common::BinaryOpType::Greater, left_col, right_col);
+
+    // Execute join - should fail due to non-equality condition
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    VERIFY_ERROR_CODE_KEYWORD(result, common::ErrorCode::NotImplemented, "Only equality joins are supported");
+}
+
+//
+// Test Setup:
+//      Join with null input batches
+// Test Result:
+//      Verify error is returned
+//
+TEST_F(ExecutorUtilTest, HashJoinNullInputs) {
+    // Create a valid batch
+    auto batch_result = ArrowRecordBatchBuilder()
+                            .AddInt32Column("id", {1, 2, 3})
+                            .AddStringColumn("name", {"Alice", "Bob", "Charlie"})
+                            .Build();
+    VERIFY_RESULT(batch_result);
+    auto batch = batch_result.value();
+
+    // Create join condition
+    auto left_col = common::MakeColumnExpression("", "id");
+    auto right_col = common::MakeColumnExpression("", "id");
+    auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
+
+    // Test with null left batch
+    auto result1 = ExecutorUtil::CreateHashJoinBatch(nullptr, batch, *condition);
+    VERIFY_ERROR_CODE_KEYWORD(result1, common::ErrorCode::InvalidArgument, "Left batch is null");
+
+    // Test with null right batch
+    auto result2 = ExecutorUtil::CreateHashJoinBatch(batch, nullptr, *condition);
+    VERIFY_ERROR_CODE_KEYWORD(result2, common::ErrorCode::InvalidArgument, "Right batch is null");
+}
+
+//
+// Test Setup:
+//      Join with non-existent columns
+// Test Result:
+//      Verify error is returned
+//
+TEST_F(ExecutorUtilTest, HashJoinNonExistentColumns) {
+    // Create left and right batches
+    auto left_batch_result = ArrowRecordBatchBuilder()
+                                 .AddInt32Column("id", {1, 2, 3})
+                                 .AddStringColumn("name", {"Alice", "Bob", "Charlie"})
+                                 .Build();
+    VERIFY_RESULT(left_batch_result);
+    auto left_batch = left_batch_result.value();
+
+    auto right_batch_result =
+        ArrowRecordBatchBuilder().AddInt32Column("id", {1, 2, 3}).AddStringColumn("value", {"A", "B", "C"}).Build();
+    VERIFY_RESULT(right_batch_result);
+    auto right_batch = right_batch_result.value();
+
+    // Create join condition with non-existent column: left.non_existent = right.id
+    auto left_col = common::MakeColumnExpression("", "non_existent");
+    auto right_col = common::MakeColumnExpression("", "id");
+    auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
+
+    // Execute join - should fail due to non-existent column
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    VERIFY_ERROR_CODE_KEYWORD(result, common::ErrorCode::InvalidArgument, "Left join column not found");
+
+    // Create join condition with non-existent column: left.id = right.non_existent
+    auto left_col2 = common::MakeColumnExpression("", "id");
+    auto right_col2 = common::MakeColumnExpression("", "non_existent");
+    auto condition2 = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col2, right_col2);
+
+    // Execute join - should fail due to non-existent column
+    auto result2 = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition2);
+    VERIFY_ERROR_CODE_KEYWORD(result2, common::ErrorCode::InvalidArgument, "Right join column not found");
+}
+
+//
+// Test Setup:
+//      Join with boolean columns
+// Test Result:
+//      Verify boolean columns are handled correctly
+//
+TEST_F(ExecutorUtilTest, HashJoinBooleanColumns) {
+    // Create left batch with boolean join column
+    auto left_batch_result = ArrowRecordBatchBuilder()
+                                 .AddBooleanColumn("active", {true, false, true})
+                                 .AddStringColumn("name", {"Alice", "Bob", "Charlie"})
+                                 .Build();
+    VERIFY_RESULT(left_batch_result);
+    auto left_batch = left_batch_result.value();
+
+    // Create right batch with boolean join column
+    auto right_batch_result = ArrowRecordBatchBuilder()
+                                  .AddBooleanColumn("active", {true, false})
+                                  .AddStringColumn("status", {"Active", "Inactive"})
+                                  .Build();
+    VERIFY_RESULT(right_batch_result);
+    auto right_batch = right_batch_result.value();
+
+    // Create join condition: left.active = right.active
+    auto left_col = common::MakeColumnExpression("", "active");
+    auto right_col = common::MakeColumnExpression("", "active");
+    auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
+
+    // Execute join
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    VERIFY_RESULT(result);
+
+    auto output_batch = result.value();
+    ASSERT_NE(output_batch, nullptr);
+
+    // Verify output schema
+    ASSERT_EQ(output_batch->num_columns(), 3);  // active, name, status
+
+    // Verify number of rows (should be 3: 2 rows with active=true, 1 row with active=false)
+    ASSERT_EQ(output_batch->num_rows(), 3);
+
+    // Verify joined data
+    auto active_array = std::static_pointer_cast<arrow::BooleanArray>(output_batch->column(0));
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(1));
+    auto status_array = std::static_pointer_cast<arrow::StringArray>(output_batch->column(2));
+
+    // Check for expected matches
+    for (int i = 0; i < output_batch->num_rows(); i++) {
+        bool is_active = active_array->Value(i);
+        std::string name = name_array->GetString(i);
+        std::string status = status_array->GetString(i);
+
+        if (is_active) {
+            EXPECT_EQ(status, "Active");
+            EXPECT_TRUE(name == "Alice" || name == "Charlie");
+        } else {
+            EXPECT_EQ(status, "Inactive");
+            EXPECT_EQ(name, "Bob");
+        }
+    }
+}
+
 }  // namespace pond::query

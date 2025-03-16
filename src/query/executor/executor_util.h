@@ -44,6 +44,18 @@ public:
     static common::Result<ArrowDataBatchSharedPtr> CreateLimitBatch(ArrowDataBatchSharedPtr input_batch,
                                                                     size_t limit,
                                                                     size_t offset);
+
+    /**
+     * @brief Create a hash join batch
+     *
+     * @param left_batch The left input batch
+     * @param right_batch The right input batch
+     * @param condition The join condition
+     * @return The joined batch
+     */
+    static common::Result<ArrowDataBatchSharedPtr> CreateHashJoinBatch(ArrowDataBatchSharedPtr left_batch,
+                                                                       ArrowDataBatchSharedPtr right_batch,
+                                                                       const common::Expression& condition);
 };
 
 }  // namespace pond::query

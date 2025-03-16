@@ -252,7 +252,27 @@ void MaterializedExecutor::Visit(PhysicalProjectionNode& node) {
 }
 
 void MaterializedExecutor::Visit(PhysicalHashJoinNode& node) {
-    current_result_ = common::Error(common::ErrorCode::NotImplemented, "Hash join not implemented in simple executor");
+    node.LeftChild()->Accept(*this);
+    if (!current_result_.ok()) {
+        return;
+    }
+    auto left_batch = current_batch_;
+
+    node.RightChild()->Accept(*this);
+    if (!current_result_.ok()) {
+        return;
+    }
+    auto right_batch = current_batch_;
+
+    // Perform hash join
+    auto join_result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *node.Condition());
+    if (!join_result.ok()) {
+        current_result_ = join_result;
+        return;
+    }
+
+    current_batch_ = join_result.value();
+    current_result_ = common::Result<ArrowDataBatchSharedPtr>::success(current_batch_);
 }
 
 void MaterializedExecutor::Visit(PhysicalNestedLoopJoinNode& node) {

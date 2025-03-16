@@ -254,6 +254,10 @@ public:
         return *this;
     }
 
+    SchemaBuilder& AddField(const std::string& name, ColumnType type, Nullability nullability) {
+        return AddField(name, type, nullability == Nullability::NULLABLE);
+    }
+
     // Add a field with nullability and default value
     SchemaBuilder& AddField(const std::string& name, ColumnType type, bool nullable, const DataChunk& default_value) {
         schema_->AddField(name, type, nullable, default_value);

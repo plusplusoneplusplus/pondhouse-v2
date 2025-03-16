@@ -187,6 +187,12 @@ public:
     const common::Schema& OutputSchema() const override { return schema_; }
     void Accept(PhysicalPlanVisitor& visitor) override;
 
+    // Get the left child
+    std::shared_ptr<PhysicalPlanNode> LeftChild() const { return children_[0]; }
+
+    // Get the right child
+    std::shared_ptr<PhysicalPlanNode> RightChild() const { return children_[1]; }
+
 private:
     std::shared_ptr<common::Expression> condition_;
     common::Schema schema_;

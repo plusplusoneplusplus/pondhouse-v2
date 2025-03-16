@@ -36,14 +36,13 @@ private:
     std::vector<bool> null_flags_;
 };
 
-
-    // Add a template helper to handle the type mapping
-    template <typename T>
-    struct AggregateTypeMap {
-        using ArrayType = void;
-        using BuilderType = void;
-        using ValueType = void;
-    };
+// Add a template helper to handle the type mapping
+template <typename T>
+struct AggregateTypeMap {
+    using ArrayType = void;
+    using BuilderType = void;
+    using ValueType = void;
+};
 
 // Specializations for each type
 template <>
@@ -94,7 +93,6 @@ struct AggregateTypeMap<arrow::StringType> {
     using BuilderType = arrow::StringBuilder;
     using ValueType = std::string;
 };
-
 
 /**
  * @brief Utility functions for working with Arrow data
@@ -330,6 +328,32 @@ public:
      * 2              | null          | 2.718
      */
     static std::string BatchToString(const ArrowDataBatchSharedPtr& batch, size_t max_rows = 0);
+
+    /**
+     * @brief Get a scalar value from an Arrow array at the specified index
+     * @param array The input array
+     * @param index The index to get the value from
+     * @return Result containing the scalar value or an error
+     */
+    static common::Result<std::shared_ptr<arrow::Scalar>> GetScalar(const std::shared_ptr<arrow::Array>& array,
+                                                                    int64_t index) {
+        if (!array) {
+            return common::Result<std::shared_ptr<arrow::Scalar>>::failure(
+                common::Error(common::ErrorCode::InvalidArgument, "Input array is null"));
+        }
+        if (index < 0 || index >= array->length()) {
+            return common::Result<std::shared_ptr<arrow::Scalar>>::failure(
+                common::Error(common::ErrorCode::InvalidArgument, "Index out of bounds"));
+        }
+
+        auto result = array->GetScalar(index);
+        if (!result.ok()) {
+            return common::Result<std::shared_ptr<arrow::Scalar>>::failure(
+                common::Error(common::ErrorCode::Failure, "Failed to create scalar: " + result.status().ToString()));
+        }
+
+        return common::Result<std::shared_ptr<arrow::Scalar>>::success(result.ValueOrDie());
+    }
 
 private:
     /**
@@ -699,6 +723,5 @@ struct ArrowUtil::IsNumericOnly<ArrowUtil::SumOperation> : std::true_type {};
 
 template <>
 struct ArrowUtil::IsNumericOnly<ArrowUtil::AverageOperation> : std::true_type {};
-
 
 }  // namespace pond::query

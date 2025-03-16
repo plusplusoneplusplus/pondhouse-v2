@@ -17,6 +17,11 @@
     ASSERT_FALSE((result).ok());                 \
     ASSERT_EQ((result).error().code(), (expected_code)) << "Unexpected error: " << (result).error().to_string()
 
+#define VERIFY_ERROR_CODE_KEYWORD(result, expected_code, keyword)                                                \
+    ASSERT_FALSE((result).ok());                                                                                 \
+    ASSERT_EQ((result).error().code(), (expected_code)) << "Unexpected error: " << (result).error().to_string(); \
+    EXPECT_TRUE((result).error().message().find(keyword) != std::string::npos);
+
 namespace pond::test {
 
 struct TestKvEntry {

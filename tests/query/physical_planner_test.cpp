@@ -182,8 +182,8 @@ TEST_F(PhysicalPlannerTest, PhysicalPlanHashJoin) {
     // Verify child nodes are sequential scans
     ASSERT_EQ(2, hash_join->Children().size());
 
-    auto left_scan = hash_join->Children()[0]->as<PhysicalSequentialScanNode>();
-    auto right_scan = hash_join->Children()[1]->as<PhysicalSequentialScanNode>();
+    auto left_scan = hash_join->LeftChild()->as<PhysicalSequentialScanNode>();
+    auto right_scan = hash_join->RightChild()->as<PhysicalSequentialScanNode>();
 
     ASSERT_EQ("users", left_scan->TableName());
     ASSERT_EQ("orders", right_scan->TableName());
@@ -230,8 +230,8 @@ TEST_F(PhysicalPlannerTest, PredicatePushdownWithJoin) {
     // Verify child nodes are sequential scans with pushed down predicates
     ASSERT_EQ(2, hash_join->Children().size());
 
-    auto left_scan = hash_join->Children()[0]->as<PhysicalSequentialScanNode>();
-    auto right_scan = hash_join->Children()[1]->as<PhysicalSequentialScanNode>();
+    auto left_scan = hash_join->LeftChild()->as<PhysicalSequentialScanNode>();
+    auto right_scan = hash_join->RightChild()->as<PhysicalSequentialScanNode>();
 
     ASSERT_EQ("users", left_scan->TableName());
     ASSERT_EQ("orders", right_scan->TableName());
