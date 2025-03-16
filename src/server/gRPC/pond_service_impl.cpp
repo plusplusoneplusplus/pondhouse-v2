@@ -333,6 +333,8 @@ grpc::Status PondServiceImpl::ExecuteSQL(grpc::ServerContext* context,
             response->set_success(false);
             response->set_error(result.error().message());
         }
+
+        LOG_STATUS("ExecuteSQL result: %s", result.ok() ? "success" : result.error().message().c_str());
     } catch (const std::exception& e) {
         response->set_success(false);
         response->set_error(std::string("Error executing SQL: ") + e.what());
@@ -794,8 +796,12 @@ grpc::Status PondServiceImpl::ExecuteQuery(grpc::ServerContext* context,
             return grpc::Status::OK;
         }
 
+        auto plan = plan_result.value();
+
+        LOG_STATUS("Plan: %s", GetPhysicalPlanUserFriendlyString(*plan).c_str());
+
         // Execute the plan
-        auto iterator_result = query_executor_->Execute(plan_result.value());
+        auto iterator_result = query_executor_->Execute(plan);
         if (!iterator_result.ok()) {
             LOG_ERROR("Failed to execute query: %s", iterator_result.error().message().c_str());
             pond::proto::ExecuteQueryResponse response;

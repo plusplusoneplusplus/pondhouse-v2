@@ -27,13 +27,77 @@
                     <h5 class="mb-0">Execute SQL Query</h5>
                 </div>
                 <div class="card-body">
+
                     <form action="/catalog/execute-query" method="post">
                         <div class="mb-3">
                             <label for="sql_query" class="form-label">SQL Query</label>
-                            <textarea class="form-control" id="sql_query" name="sql_query" rows="4" placeholder="Enter your SQL query here..." required></textarea>
+                            <textarea class="form-control" id="sql_query" name="sql_query" rows="4" required></textarea>
                         </div>
                         <button type="submit" class="btn btn-primary">Execute Query</button>
                     </form>
+
+                    </br>
+
+                    <!-- Collapsible Query Examples -->
+                    <div class="mb-4">
+                        <button class="btn btn-info w-100 mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#queryExamples" aria-expanded="false" aria-controls="queryExamples">
+                            <i class="bi bi-lightbulb"></i> Show/Hide Query Examples
+                        </button>
+                        
+                        <div class="collapse" id="queryExamples">
+                            <div class="alert alert-info">
+                                <h5 class="alert-heading">Query Examples</h5>
+                                <hr>
+                                
+                                <!-- Basic SELECT -->
+                                <div class="mb-3">
+                                    <p class="fw-bold mb-1">Basic SELECT with WHERE:</p>
+                                    <pre class="bg-light p-2 rounded">SELECT name, age, salary 
+FROM employees 
+WHERE age > 25 AND salary >= 50000;</pre>
+                                </div>
+
+                                <!-- GROUP BY -->
+                                <div class="mb-3">
+                                    <p class="fw-bold mb-1">GROUP BY with Aggregation:</p>
+                                    <pre class="bg-light p-2 rounded">SELECT 
+    department,
+    COUNT(*) as employee_count,
+    AVG(salary) as avg_salary,
+    MAX(salary) as highest_salary
+FROM employees
+GROUP BY department;</pre>
+                                </div>
+
+                                <!-- JOIN -->
+                                <div class="mb-3">
+                                    <p class="fw-bold mb-1">JOIN Example:</p>
+                                    <pre class="bg-light p-2 rounded">SELECT 
+    e.name,
+    e.position,
+    d.department_name,
+    d.location
+FROM employees e
+JOIN departments d ON e.dept_id = d.id;</pre>
+                                </div>
+
+                                <!-- Complex Query -->
+                                <div>
+                                    <p class="fw-bold mb-1">Complex Query:</p>
+                                    <pre class="bg-light p-2 rounded">SELECT 
+    d.department_name,
+    COUNT(*) as emp_count,
+    AVG(e.salary) as avg_salary
+FROM employees e
+JOIN departments d ON e.dept_id = d.id
+WHERE e.salary > 40000
+GROUP BY d.department_name
+HAVING COUNT(*) > 5
+ORDER BY avg_salary DESC;</pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -124,18 +188,22 @@
         </div>
         <div class="col-md-3">
             <select class="form-select" name="column_types[]" required>
-                <option value="INT32">INT32</option>
-                <option value="INT64">INT64</option>
-                <option value="FLOAT">FLOAT</option>
+                <option value="INTEGER">INTEGER</option>
+                <option value="BIGINT">BIGINT</option>
+                <option value="REAL">REAL</option>
                 <option value="DOUBLE">DOUBLE</option>
-                <option value="STRING">STRING</option>
-                <option value="BOOL">BOOL</option>
-                <option value="BINARY">BINARY</option>
+                <option value="VARCHAR">VARCHAR</option>
+                <option value="CHAR">CHAR</option>
+                <option value="TEXT">TEXT</option>
+                <option value="BOOLEAN">BOOLEAN</option>
+                <option value="DATE">DATE</option>
+                <option value="TIMESTAMP">TIMESTAMP</option>
+                <option value="FLOAT">FLOAT</option>
             </select>
         </div>
         <div class="col-md-3">
             <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="column_nullables[]" value="1" checked>
+                <input class="form-check-input" type="checkbox" name="column_nullables[]" value="1">
                 <label class="form-check-label">Nullable</label>
             </div>
         </div>

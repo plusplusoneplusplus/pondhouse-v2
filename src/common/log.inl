@@ -73,7 +73,9 @@ std::string Logger::formatMessage(const char* format, Args&&... args) const {
         char buffer[4096];
         int len = snprintf(buffer, sizeof(buffer), format, std::forward<Args>(args)...);
         if (len < 0 || len >= static_cast<int>(sizeof(buffer))) {
-            throw std::runtime_error("Formatted message is too long");
+            // Truncate the message instead of throwing an error
+            buffer[sizeof(buffer) - 1] = '\0';  // Ensure null termination
+            return std::string(buffer) + " [TRUNCATED]";
         }
         return std::string(buffer);
     }

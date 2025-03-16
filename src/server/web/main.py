@@ -222,7 +222,7 @@ class PondClient:
                 error=str(e)
             )
 
-    def execute_sql(self, sql_query: str) -> tuple[bool, Optional[str], Optional[str]]:
+    async def execute_sql(self, sql_query: str) -> tuple[bool, Optional[str], Optional[str]]:
         """
         Execute a SQL query for table management. Currently only supports CREATE TABLE statements.
         
@@ -444,39 +444,24 @@ class PondClient:
         except Exception as e:
             return [], 0, str(e)
 
-    def update_partition_spec(self, table_name: str, partition_spec: List[Dict[str, any]]) -> tuple[bool, Optional[str]]:
+    async def update_partition_spec(self, table_name: str, partition_spec: List[Dict[str, any]]) -> tuple[bool, Optional[str]]:
         """
         Update the partition specification for a table.
         
-        Args:
-            table_name: Name of the table
-            partition_spec: List of partition field specifications, each containing:
-                - source_id: Column index in the schema
-                - field_id: Unique ID for the partition field
-                - name: Column name
-                - transform: Transform type (e.g., 'identity', 'year', 'month', etc.)
-                - transform_param: Optional parameter for transforms like 'bucket' or 'truncate'
-                
-        Returns:
-            Tuple of (success, error)
+        Returns a tuple of (success, error)
         """
         try:
-            # Convert partition spec to protobuf format
-            pb_fields = []
-            for field in partition_spec:
-                pb_field = pb2.PartitionField(
-                    source_id=field["source_id"],
-                    field_id=field["field_id"],
-                    name=field["name"],
-                    transform=field["transform"]
-                )
-                if "transform_param" in field:
-                    pb_field.transform_param = str(field["transform_param"])
-                pb_fields.append(pb_field)
-            
             request = pb2.UpdatePartitionSpecRequest(
                 table_name=table_name,
-                partition_spec=pb2.PartitionSpec(fields=pb_fields)
+                partition_spec=pb2.PartitionSpec(fields=[
+                    pb2.PartitionField(
+                        source_id=field["source_id"],
+                        field_id=field["field_id"],
+                        name=field["name"],
+                        transform=field["transform"],
+                        transform_param=str(field["transform_param"]) if "transform_param" in field else ""
+                    ) for field in partition_spec
+                ])
             )
             response = self.stub.UpdatePartitionSpec(request)
             
@@ -790,19 +775,61 @@ async def catalog_home(request: Request):
         }
     )
 
-@app.post("/catalog/execute-sql", response_class=HTMLResponse)
-async def execute_sql(request: Request):
+@app.post("/catalog/execute-query", response_class=HTMLResponse)
+async def execute_query(request: Request):
     form = await request.form()
-    sql_query = form.get("sql_query", "")
+    sql_query = form.get("sql_query", "").strip()
+    sql_query = " ".join(line.strip() for line in sql_query.splitlines() if line.strip())
     
     try:
-        await pond_client.execute_sql(sql_query)
-        return RedirectResponse(url="/catalog", status_code=303)
+        # Check if it's a CREATE TABLE statement
+        if sql_query.upper().startswith("CREATE TABLE"):
+            success, message, error = await pond_client.execute_sql(sql_query)
+            if error:
+                raise Exception(error)
+            
+            # Redirect to catalog page after successful table creation
+            return RedirectResponse(url="/catalog", status_code=303)
+        
+        # For other queries (SELECT, etc)
+        rows, total_rows, error = pond_client.execute_query(sql_query)
+        
+        if error:
+            return templates.TemplateResponse(
+                "catalog.html",
+                {
+                    "request": request,
+                    "active_page": "catalog",
+                    "result": f"Error executing query: {error}",
+                    "tables": pond_client.list_tables()[0]
+                }
+            )
+        
+        # Get column names from first row
+        columns = []
+        if rows:
+            columns = list(rows[0].keys())
+        
+        return templates.TemplateResponse(
+            "query_results.html",
+            {
+                "request": request,
+                "active_page": "catalog",
+                "rows": rows,
+                "columns": columns,
+                "total_rows": total_rows,
+                "query": sql_query
+            }
+        )
     except Exception as e:
-        tables = pond_client.list_tables()
         return templates.TemplateResponse(
             "catalog.html",
-            {"request": request, "tables": tables, "result": f"Error: {str(e)}"}
+            {
+                "request": request,
+                "active_page": "catalog",
+                "result": f"Error: {str(e)}",
+                "tables": pond_client.list_tables()[0]
+            }
         )
 
 @app.post("/catalog/create-table")
@@ -811,25 +838,27 @@ async def create_table(request: Request):
     table_name = form.get("table_name", "")
     location = form.get("location", "")
     
-    # Get column information
-    column_names = form.getlist("column_names[]")
-    column_types = form.getlist("column_types[]")
-    column_nullables = form.getlist("column_nullables[]")
-    
-    # Get partition information
-    partition_columns = form.getlist("partition_columns[]")
-    partition_transforms = form.getlist("partition_transforms[]")
-    transform_params = form.getlist("transform_params[]")
-    
     try:
+        # Get column information
+        column_names = form.getlist("column_names[]")
+        column_types = form.getlist("column_types[]")
+        column_nullables = form.getlist("column_nullables[]")
+        
         # Build schema
         schema = []
         for i, name in enumerate(column_names):
+            sql_type = column_types[i]
+                
             schema.append({
                 "name": name,
-                "type": column_types[i],
+                "type": sql_type,  # Use original SQL type
                 "nullable": str(i) in column_nullables or f"{i}" in column_nullables or "1" in column_nullables
             })
+        
+        # Get partition information
+        partition_columns = form.getlist("partition_columns[]")
+        partition_transforms = form.getlist("partition_transforms[]")
+        transform_params = form.getlist("transform_params[]")
         
         # Build partition spec
         partition_spec = []
@@ -871,19 +900,29 @@ async def create_table(request: Request):
         
         sql = f"CREATE TABLE {table_name} ({', '.join(columns_sql)})"
         
-        # Execute table creation
-        await pond_client.execute_sql(sql)
-        
+        # Execute table creation - Fix: properly await the result
+        success, message, error = await pond_client.execute_sql(sql)
+        if error:
+            raise Exception(error)
+            
         # Update partition spec if needed
         if partition_spec:
-            await pond_client.update_partition_spec(table_name, partition_spec)
+            success, error = await pond_client.update_partition_spec(table_name, partition_spec)
+            if error:
+                raise Exception(f"Table created but failed to set partition spec: {error}")
         
         return RedirectResponse(url="/catalog", status_code=303)
+        
     except Exception as e:
-        tables = pond_client.list_tables()
+        tables, _ = pond_client.list_tables()
         return templates.TemplateResponse(
             "catalog.html",
-            {"request": request, "tables": tables, "result": f"Error: {str(e)}"}
+            {
+                "request": request,
+                "tables": tables,
+                "result": f"Error: {str(e)}",
+                "active_page": "catalog"
+            }
         )
 
 @app.get("/catalog/table/{table_name}", response_class=HTMLResponse)
@@ -1160,52 +1199,6 @@ async def update_partition_spec(request: Request, table_name: str):
                     "success": False,
                     "message": f"Error updating partition spec: {str(e)}"
                 }
-            }
-        )
-
-@app.post("/catalog/execute-query", response_class=HTMLResponse)
-async def execute_query(request: Request):
-    form = await request.form()
-    sql_query = form.get("sql_query", "")
-    
-    try:
-        rows, total_rows, error = pond_client.execute_query(sql_query)
-        
-        if error:
-            return templates.TemplateResponse(
-                "catalog.html",
-                {
-                    "request": request,
-                    "active_page": "catalog",
-                    "result": f"Error executing query: {error}",
-                    "tables": pond_client.list_tables()[0]
-                }
-            )
-        
-        # Get column names from first row
-        columns = []
-        if rows:
-            columns = list(rows[0].keys())
-        
-        return templates.TemplateResponse(
-            "query_results.html",
-            {
-                "request": request,
-                "active_page": "catalog",
-                "rows": rows,
-                "columns": columns,
-                "total_rows": total_rows,
-                "query": sql_query
-            }
-        )
-    except Exception as e:
-        return templates.TemplateResponse(
-            "catalog.html",
-            {
-                "request": request,
-                "active_page": "catalog",
-                "result": f"Error: {str(e)}",
-                "tables": pond_client.list_tables()[0]
             }
         )
 

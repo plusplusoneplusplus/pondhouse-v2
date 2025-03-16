@@ -36,6 +36,66 @@ private:
     std::vector<bool> null_flags_;
 };
 
+
+    // Add a template helper to handle the type mapping
+    template <typename T>
+    struct AggregateTypeMap {
+        using ArrayType = void;
+        using BuilderType = void;
+        using ValueType = void;
+    };
+
+// Specializations for each type
+template <>
+struct AggregateTypeMap<arrow::Int32Type> {
+    using ArrayType = arrow::Int32Array;
+    using BuilderType = arrow::Int32Builder;
+    using ValueType = int32_t;
+};
+
+template <>
+struct AggregateTypeMap<arrow::Int64Type> {
+    using ArrayType = arrow::Int64Array;
+    using BuilderType = arrow::Int64Builder;
+    using ValueType = int64_t;
+};
+
+template <>
+struct AggregateTypeMap<arrow::UInt32Type> {
+    using ArrayType = arrow::UInt32Array;
+    using BuilderType = arrow::UInt32Builder;
+    using ValueType = uint32_t;
+};
+
+template <>
+struct AggregateTypeMap<arrow::UInt64Type> {
+    using ArrayType = arrow::UInt64Array;
+    using BuilderType = arrow::UInt64Builder;
+    using ValueType = uint64_t;
+};
+
+template <>
+struct AggregateTypeMap<arrow::FloatType> {
+    using ArrayType = arrow::FloatArray;
+    using BuilderType = arrow::FloatBuilder;
+    using ValueType = float;
+};
+
+template <>
+struct AggregateTypeMap<arrow::DoubleType> {
+    using ArrayType = arrow::DoubleArray;
+    using BuilderType = arrow::DoubleBuilder;
+    using ValueType = double;
+};
+
+template <>
+struct AggregateTypeMap<arrow::StringType> {
+    using ArrayType = arrow::StringArray;
+    using BuilderType = arrow::StringBuilder;
+    using ValueType = std::string;
+};
+
+
 /**
  * @brief Utility functions for working with Arrow data
  */
@@ -392,64 +452,6 @@ private:
         return common::Result<void>::success();
     }
 
-    // Add a template helper to handle the type mapping
-    template <typename T>
-    struct AggregateTypeMap {
-        using ArrayType = void;
-        using BuilderType = void;
-        using ValueType = void;
-    };
-
-    // Specializations for each type
-    template <>
-    struct AggregateTypeMap<arrow::Int32Type> {
-        using ArrayType = arrow::Int32Array;
-        using BuilderType = arrow::Int32Builder;
-        using ValueType = int32_t;
-    };
-
-    template <>
-    struct AggregateTypeMap<arrow::Int64Type> {
-        using ArrayType = arrow::Int64Array;
-        using BuilderType = arrow::Int64Builder;
-        using ValueType = int64_t;
-    };
-
-    template <>
-    struct AggregateTypeMap<arrow::UInt32Type> {
-        using ArrayType = arrow::UInt32Array;
-        using BuilderType = arrow::UInt32Builder;
-        using ValueType = uint32_t;
-    };
-
-    template <>
-    struct AggregateTypeMap<arrow::UInt64Type> {
-        using ArrayType = arrow::UInt64Array;
-        using BuilderType = arrow::UInt64Builder;
-        using ValueType = uint64_t;
-    };
-
-    template <>
-    struct AggregateTypeMap<arrow::FloatType> {
-        using ArrayType = arrow::FloatArray;
-        using BuilderType = arrow::FloatBuilder;
-        using ValueType = float;
-    };
-
-    template <>
-    struct AggregateTypeMap<arrow::DoubleType> {
-        using ArrayType = arrow::DoubleArray;
-        using BuilderType = arrow::DoubleBuilder;
-        using ValueType = double;
-    };
-
-    template <>
-    struct AggregateTypeMap<arrow::StringType> {
-        using ArrayType = arrow::StringArray;
-        using BuilderType = arrow::StringBuilder;
-        using ValueType = std::string;
-    };
-
     // Template for Sum operation
     template <typename ArrayType, typename BuilderType, typename ValueType>
     struct SumOperation {
@@ -499,12 +501,6 @@ private:
     // Helper trait to detect numeric-only operations
     template <template <typename, typename, typename> class>
     struct IsNumericOnly : std::false_type {};
-
-    template <>
-    struct IsNumericOnly<SumOperation> : std::true_type {};
-
-    template <>
-    struct IsNumericOnly<AverageOperation> : std::true_type {};
 
     // Helper function to handle the switch cases
     template <template <typename, typename, typename> class AggregateFunc>
@@ -697,5 +693,12 @@ private:
                                  const std::string& header,
                                  size_t max_rows);
 };
+
+template <>
+struct ArrowUtil::IsNumericOnly<ArrowUtil::SumOperation> : std::true_type {};
+
+template <>
+struct ArrowUtil::IsNumericOnly<ArrowUtil::AverageOperation> : std::true_type {};
+
 
 }  // namespace pond::query
