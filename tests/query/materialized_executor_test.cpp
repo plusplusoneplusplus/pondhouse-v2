@@ -1309,4 +1309,312 @@ TEST_F(MaterializedExecutorTest, LimitZeroRows) {
     ASSERT_EQ(output_batch->num_columns(), 4);  // Schema should be preserved
 }
 
+//
+// Test Setup:
+//      - Create 'users' and 'orders' tables
+//      - users: id, name
+//      - orders: order_id, user_id, amount
+//      - Ingest sample data with matching user IDs
+// Test Result:
+//      - Joined result should have correct columns from both tables
+//      - Number of rows should match expected joins
+//
+TEST_F(MaterializedExecutorTest, HashJoinBasic) {
+    // Setup users table
+    auto user_schema = std::make_shared<common::Schema>();
+    user_schema->AddField("id", common::ColumnType::INT32);
+    user_schema->AddField("name", common::ColumnType::STRING);
+    CreateNewTable("join_users", user_schema);
+
+    // Setup orders table
+    auto order_schema = std::make_shared<common::Schema>();
+    order_schema->AddField("order_id", common::ColumnType::INT32);
+    order_schema->AddField("user_id", common::ColumnType::INT32);
+    order_schema->AddField("amount", common::ColumnType::DOUBLE);
+    CreateNewTable("join_orders", order_schema);
+
+    // Ingest sample data
+    auto user_batch = ArrowRecordBatchBuilder()
+                          .AddInt32Column("id", {1, 2, 3})
+                          .AddStringColumn("name", {"Alice", "Bob", "Charlie"})
+                          .Build()
+                          .value();
+    IngestData("join_users", user_batch);
+
+    auto order_batch = ArrowRecordBatchBuilder()
+                           .AddInt32Column("order_id", {100, 101, 102})
+                           .AddInt32Column("user_id", {1, 2, 1})
+                           .AddDoubleColumn("amount", {50.0, 100.0, 75.0})
+                           .Build()
+                           .value();
+    IngestData("join_orders", order_batch);
+
+    // Create join plan
+    auto left_plan = std::make_shared<PhysicalSequentialScanNode>(
+        "join_users", *user_schema, nullptr, std::nullopt, std::nullopt, std::nullopt);
+    auto right_plan = std::make_shared<PhysicalSequentialScanNode>(
+        "join_orders", *order_schema, nullptr, std::nullopt, std::nullopt, std::nullopt);
+
+    auto join_condition =
+        std::make_shared<common::BinaryExpression>(common::BinaryOpType::Equal,
+                                                   std::make_shared<common::ColumnExpression>("", "id"),
+                                                   std::make_shared<common::ColumnExpression>("", "user_id"));
+
+    common::Schema output_schema;
+    output_schema.AddField("id", common::ColumnType::INT32);
+    output_schema.AddField("name", common::ColumnType::STRING);
+    output_schema.AddField("order_id", common::ColumnType::INT32);
+    output_schema.AddField("user_id", common::ColumnType::INT32);
+    output_schema.AddField("amount", common::ColumnType::DOUBLE);
+
+    auto join_node = std::make_shared<PhysicalHashJoinNode>(join_condition, output_schema, common::JoinType::Inner);
+    join_node->AddChild(left_plan);
+    join_node->AddChild(right_plan);
+
+    // Execute
+    auto result = executor_->ExecuteToCompletion(join_node);
+    std::cout << "Result: " << ArrowUtil::BatchToString(result.value()) << std::endl;
+    VERIFY_RESULT(result);
+
+    auto batch = result.value();
+    EXPECT_EQ(batch->num_rows(), 3);
+    EXPECT_EQ(batch->num_columns(), 5);
+
+    // Verify first row
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(batch->column(1));
+    auto order_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(2));
+    auto user_id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(3));
+    auto amount_array = std::static_pointer_cast<arrow::DoubleArray>(batch->column(4));
+
+    EXPECT_EQ(id_array->Value(0), 1);
+    EXPECT_EQ(name_array->GetString(0), "Alice");
+    EXPECT_EQ(order_array->Value(0), 100);
+    EXPECT_EQ(user_id_array->Value(0), 1);
+    EXPECT_EQ(amount_array->Value(0), 50.0);
+}
+
+//
+// Test Setup:
+//      - Create two tables with non-overlapping join keys
+// Test Result:
+//      - Joined result should be empty
+//
+TEST_F(MaterializedExecutorTest, HashJoinNoMatches) {
+    // Setup users table
+    auto user_schema = std::make_shared<common::Schema>();
+    user_schema->AddField("id", common::ColumnType::INT32);
+    user_schema->AddField("name", common::ColumnType::STRING);
+    CreateNewTable("no_match_users", user_schema);
+
+    // Setup orders table
+    auto order_schema = std::make_shared<common::Schema>();
+    order_schema->AddField("user_id", common::ColumnType::INT32);
+    order_schema->AddField("order_id", common::ColumnType::INT32);
+    CreateNewTable("no_match_orders", order_schema);
+
+    // Ingest non-matching data
+    auto user_batch = ArrowRecordBatchBuilder()
+                          .AddInt32Column("id", {1, 2, 3})
+                          .AddStringColumn("name", {"Alice", "Bob", "Charlie"})
+                          .Build()
+                          .value();
+    IngestData("no_match_users", user_batch);
+
+    auto order_batch = ArrowRecordBatchBuilder()
+                           .AddInt32Column("user_id", {4, 5, 6})
+                           .AddInt32Column("order_id", {100, 101, 102})
+                           .Build()
+                           .value();
+    IngestData("no_match_orders", order_batch);
+
+    // Create join plan
+    auto left_plan = std::make_shared<PhysicalSequentialScanNode>(
+        "no_match_users", *user_schema, nullptr, std::nullopt, std::nullopt, std::nullopt);
+    auto right_plan = std::make_shared<PhysicalSequentialScanNode>(
+        "no_match_orders", *order_schema, nullptr, std::nullopt, std::nullopt, std::nullopt);
+
+    auto join_condition =
+        std::make_shared<common::BinaryExpression>(common::BinaryOpType::Equal,
+                                                   std::make_shared<common::ColumnExpression>("", "id"),
+                                                   std::make_shared<common::ColumnExpression>("", "user_id"));
+
+    common::Schema output_schema;
+    output_schema.AddField("id", common::ColumnType::INT32);
+    output_schema.AddField("name", common::ColumnType::STRING);
+    output_schema.AddField("user_id", common::ColumnType::INT32);
+    output_schema.AddField("order_id", common::ColumnType::INT32);
+
+    auto join_node = std::make_shared<PhysicalHashJoinNode>(join_condition, output_schema, common::JoinType::Inner);
+    join_node->AddChild(left_plan);
+    join_node->AddChild(right_plan);
+
+    // Execute
+    auto result = executor_->ExecuteToCompletion(join_node);
+    VERIFY_RESULT(result);
+
+    auto batch = result.value();
+    EXPECT_EQ(batch->num_rows(), 0);
+    EXPECT_EQ(batch->num_columns(), 4);
+}
+
+//
+// Test Setup:
+//      - Create tables with NULL values in join columns
+// Test Result:
+//      - Rows with NULL join keys should not be matched
+//
+TEST_F(MaterializedExecutorTest, HashJoinWithNulls) {
+    // Create nullable tables
+    auto left_schema = std::make_shared<common::Schema>();
+    left_schema->AddField("id", common::ColumnType::INT32, common::Nullability::NULLABLE);
+    left_schema->AddField("data", common::ColumnType::STRING);
+    CreateNewTable("nullable_left", left_schema);
+
+    auto right_schema = std::make_shared<common::Schema>();
+    right_schema->AddField("id", common::ColumnType::INT32, common::Nullability::NULLABLE);
+    right_schema->AddField("info", common::ColumnType::STRING);
+    CreateNewTable("nullable_right", right_schema);
+
+    // Ingest data with nulls
+    auto left_batch = ArrowRecordBatchBuilder()
+                          .AddInt32Column("id", {1, 2, -1}, {true, true, false})
+                          .AddStringColumn("data", {"A", "B", "C"})
+                          .Build()
+                          .value();
+    IngestData("nullable_left", left_batch);
+
+    auto right_batch = ArrowRecordBatchBuilder()
+                           .AddInt32Column("id", {1, -1, 3}, {true, false, true})
+                           .AddStringColumn("info", {"X", "Y", "Z"})
+                           .Build()
+                           .value();
+    IngestData("nullable_right", right_batch);
+
+    // Create join plan
+    auto left_plan = std::make_shared<PhysicalSequentialScanNode>(
+        "nullable_left", *left_schema, nullptr, std::nullopt, std::nullopt, std::nullopt);
+    auto right_plan = std::make_shared<PhysicalSequentialScanNode>(
+        "nullable_right", *right_schema, nullptr, std::nullopt, std::nullopt, std::nullopt);
+
+    auto join_condition =
+        std::make_shared<common::BinaryExpression>(common::BinaryOpType::Equal,
+                                                   std::make_shared<common::ColumnExpression>("", "id"),
+                                                   std::make_shared<common::ColumnExpression>("", "id"));
+
+    common::Schema output_schema;
+    output_schema.AddField("id", common::ColumnType::INT32);
+    output_schema.AddField("data", common::ColumnType::STRING);
+    output_schema.AddField("info", common::ColumnType::STRING);
+
+    auto join_node = std::make_shared<PhysicalHashJoinNode>(join_condition, output_schema, common::JoinType::Inner);
+    join_node->AddChild(left_plan);
+    join_node->AddChild(right_plan);
+
+    // Execute
+    auto result = executor_->ExecuteToCompletion(join_node);
+    VERIFY_RESULT(result);
+
+    std::cout << "Result: " << ArrowUtil::BatchToString(result.value()) << std::endl;
+
+    auto batch = result.value();
+    EXPECT_EQ(batch->num_rows(), 1);  // Only ID=1 should match
+    EXPECT_EQ(batch->num_columns(), 3);
+}
+
+//
+// Test Setup:
+//      - Create tables with duplicate join keys
+// Test Result:
+//      - Should produce Cartesian product of matching rows
+//
+TEST_F(MaterializedExecutorTest, HashJoinDuplicateKeys) {
+    // Setup tables
+    auto left_schema = std::make_shared<common::Schema>();
+    left_schema->AddField("key", common::ColumnType::INT32);
+    CreateNewTable("dup_left", left_schema);
+
+    auto right_schema = std::make_shared<common::Schema>();
+    right_schema->AddField("key", common::ColumnType::INT32);
+    CreateNewTable("dup_right", right_schema);
+
+    // Ingest duplicate data
+    auto left_batch = ArrowRecordBatchBuilder().AddInt32Column("key", {1, 1, 2}).Build().value();
+    IngestData("dup_left", left_batch);
+
+    auto right_batch = ArrowRecordBatchBuilder().AddInt32Column("key", {1, 1, 3}).Build().value();
+    IngestData("dup_right", right_batch);
+
+    // Create join plan
+    auto left_plan = std::make_shared<PhysicalSequentialScanNode>(
+        "dup_left", *left_schema, nullptr, std::nullopt, std::nullopt, std::nullopt);
+    auto right_plan = std::make_shared<PhysicalSequentialScanNode>(
+        "dup_right", *right_schema, nullptr, std::nullopt, std::nullopt, std::nullopt);
+
+    auto join_condition =
+        std::make_shared<common::BinaryExpression>(common::BinaryOpType::Equal,
+                                                   std::make_shared<common::ColumnExpression>("", "key"),
+                                                   std::make_shared<common::ColumnExpression>("", "key"));
+
+    common::Schema output_schema;
+    output_schema.AddField("key", common::ColumnType::INT32);
+
+    auto join_node = std::make_shared<PhysicalHashJoinNode>(join_condition, output_schema, common::JoinType::Inner);
+    join_node->AddChild(left_plan);
+    join_node->AddChild(right_plan);
+
+    // Execute
+    auto result = executor_->ExecuteToCompletion(join_node);
+    VERIFY_RESULT(result);
+
+    auto batch = result.value();
+    EXPECT_EQ(batch->num_rows(), 4);  // 2 left * 2 right matches
+}
+
+//
+// Test Setup:
+//      - Use non-equality condition in join
+// Test Result:
+//      - Should return NOT_IMPLEMENTED error
+//
+TEST_F(MaterializedExecutorTest, HashJoinInvalidCondition) {
+    // Create schemas for left and right tables
+    auto left_schema = std::make_shared<common::Schema>();
+    left_schema->AddField("a", common::ColumnType::INT32);
+    CreateNewTable("left_table", left_schema);
+
+    auto right_schema = std::make_shared<common::Schema>();
+    right_schema->AddField("b", common::ColumnType::INT32);
+    CreateNewTable("right_table", right_schema);
+
+    // Create scan plans
+    auto left_plan = std::make_shared<PhysicalSequentialScanNode>(
+        "left_table", *left_schema, nullptr, std::nullopt, std::nullopt, std::nullopt);
+    auto right_plan = std::make_shared<PhysicalSequentialScanNode>(
+        "right_table", *right_schema, nullptr, std::nullopt, std::nullopt, std::nullopt);
+
+    // Create join condition with greater than operator
+    auto join_condition =
+        std::make_shared<common::BinaryExpression>(common::BinaryOpType::Greater,
+                                                   std::make_shared<common::ColumnExpression>("", "a"),
+                                                   std::make_shared<common::ColumnExpression>("", "b"));
+
+    // Create output schema
+    common::Schema output_schema;
+    output_schema.AddField("a", common::ColumnType::INT32);
+    output_schema.AddField("b", common::ColumnType::INT32);
+
+    // Create join node
+    auto join_node = std::make_shared<PhysicalHashJoinNode>(join_condition, output_schema, common::JoinType::Inner);
+    join_node->AddChild(left_plan);
+    join_node->AddChild(right_plan);
+
+    // Execute
+    auto result = executor_->ExecuteToCompletion(join_node);
+
+    // Verify error
+    EXPECT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code(), common::ErrorCode::NotImplemented);
+}
+
 }  // namespace pond::query

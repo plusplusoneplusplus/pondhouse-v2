@@ -264,8 +264,10 @@ void MaterializedExecutor::Visit(PhysicalHashJoinNode& node) {
     }
     auto right_batch = current_batch_;
 
-    // Perform hash join
-    auto join_result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *node.Condition());
+    // Perform the join using the node's condition and predefined schema
+    auto join_result =
+        ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *node.Condition(), node.GetJoinType());
+
     if (!join_result.ok()) {
         current_result_ = join_result;
         return;

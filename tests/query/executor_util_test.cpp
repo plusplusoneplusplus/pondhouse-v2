@@ -578,11 +578,13 @@ TEST_F(ExecutorUtilTest, HashJoinWithDuplicateKeys) {
     auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
 
     // Execute join
-    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition, common::JoinType::Inner);
     VERIFY_RESULT(result);
 
     auto output_batch = result.value();
     ASSERT_NE(output_batch, nullptr);
+
+    std::cout << ArrowUtil::BatchToString(output_batch) << std::endl;
 
     // Verify output schema
     ASSERT_EQ(output_batch->num_columns(), 3);  // key, left_val, right_val
@@ -636,7 +638,7 @@ TEST_F(ExecutorUtilTest, HashJoinWithNameCollision) {
     auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
 
     // Execute join
-    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition, common::JoinType::Inner);
     VERIFY_RESULT(result);
 
     auto output_batch = result.value();
@@ -700,7 +702,7 @@ TEST_F(ExecutorUtilTest, HashJoinIncompatibleTypes) {
     auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
 
     // Execute join - should fail due to incompatible types
-    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition, common::JoinType::Inner);
     VERIFY_ERROR_CODE_KEYWORD(result, common::ErrorCode::InvalidArgument, "Join column types do not match");
 }
 
@@ -730,7 +732,7 @@ TEST_F(ExecutorUtilTest, HashJoinNonEqualityCondition) {
     auto condition = common::MakeComparisonExpression(common::BinaryOpType::Greater, left_col, right_col);
 
     // Execute join - should fail due to non-equality condition
-    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition, common::JoinType::Inner);
     VERIFY_ERROR_CODE_KEYWORD(result, common::ErrorCode::NotImplemented, "Only equality joins are supported");
 }
 
@@ -755,11 +757,11 @@ TEST_F(ExecutorUtilTest, HashJoinNullInputs) {
     auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
 
     // Test with null left batch
-    auto result1 = ExecutorUtil::CreateHashJoinBatch(nullptr, batch, *condition);
+    auto result1 = ExecutorUtil::CreateHashJoinBatch(nullptr, batch, *condition, common::JoinType::Inner);
     VERIFY_ERROR_CODE_KEYWORD(result1, common::ErrorCode::InvalidArgument, "Left batch is null");
 
     // Test with null right batch
-    auto result2 = ExecutorUtil::CreateHashJoinBatch(batch, nullptr, *condition);
+    auto result2 = ExecutorUtil::CreateHashJoinBatch(batch, nullptr, *condition, common::JoinType::Inner);
     VERIFY_ERROR_CODE_KEYWORD(result2, common::ErrorCode::InvalidArgument, "Right batch is null");
 }
 
@@ -789,7 +791,7 @@ TEST_F(ExecutorUtilTest, HashJoinNonExistentColumns) {
     auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
 
     // Execute join - should fail due to non-existent column
-    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition, common::JoinType::Inner);
     VERIFY_ERROR_CODE_KEYWORD(result, common::ErrorCode::InvalidArgument, "Left join column not found");
 
     // Create join condition with non-existent column: left.id = right.non_existent
@@ -798,7 +800,7 @@ TEST_F(ExecutorUtilTest, HashJoinNonExistentColumns) {
     auto condition2 = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col2, right_col2);
 
     // Execute join - should fail due to non-existent column
-    auto result2 = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition2);
+    auto result2 = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition2, common::JoinType::Inner);
     VERIFY_ERROR_CODE_KEYWORD(result2, common::ErrorCode::InvalidArgument, "Right join column not found");
 }
 
@@ -831,7 +833,7 @@ TEST_F(ExecutorUtilTest, HashJoinBooleanColumns) {
     auto condition = common::MakeComparisonExpression(common::BinaryOpType::Equal, left_col, right_col);
 
     // Execute join
-    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition);
+    auto result = ExecutorUtil::CreateHashJoinBatch(left_batch, right_batch, *condition, common::JoinType::Inner);
     VERIFY_RESULT(result);
 
     auto output_batch = result.value();

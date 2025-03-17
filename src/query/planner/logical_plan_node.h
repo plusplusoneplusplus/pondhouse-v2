@@ -17,8 +17,6 @@ class LogicalPlanVisitor;
 
 enum class LogicalNodeType { Invalid, Scan, Filter, Projection, Join, Aggregate, Sort, Limit };
 
-enum class JoinType { Inner, Left, Right, Full, Cross };
-
 // Base class for all logical plan nodes
 class LogicalPlanNode {
 public:

@@ -188,6 +188,7 @@ add_library(pondhouse_common
     src/query/planner/planner.cpp
     src/query/executor/executor.cpp
     src/query/executor/executor_util.cpp
+    src/query/executor/hash_join.cpp
     src/query/executor/materialized_executor.cpp
     src/query/executor/operator_iterators.cpp
     src/query/executor/vectorized_executor.cpp
@@ -297,6 +298,7 @@ add_executable(
     tests/main.cpp
     tests/query/arrow_util_test.cpp
     tests/query/arrow_record_batch_builder_test.cpp
+    tests/query/hash_join_test.cpp
     tests/query/data_accessor_test.cpp
     tests/query/logical_planner_test.cpp
     tests/query/logical_optimizer_test.cpp

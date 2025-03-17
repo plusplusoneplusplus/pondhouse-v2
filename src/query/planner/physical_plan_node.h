@@ -180,8 +180,13 @@ private:
  */
 class PhysicalHashJoinNode : public PhysicalPlanNode {
 public:
-    PhysicalHashJoinNode(std::shared_ptr<common::Expression> condition, common::Schema schema)
-        : PhysicalPlanNode(PhysicalNodeType::HashJoin), condition_(std::move(condition)), schema_(std::move(schema)) {}
+    PhysicalHashJoinNode(std::shared_ptr<common::Expression> condition,
+                         common::Schema schema,
+                         common::JoinType join_type)
+        : PhysicalPlanNode(PhysicalNodeType::HashJoin),
+          condition_(std::move(condition)),
+          schema_(std::move(schema)),
+          join_type_(join_type) {}
 
     const std::shared_ptr<common::Expression>& Condition() const { return condition_; }
     const common::Schema& OutputSchema() const override { return schema_; }
@@ -193,7 +198,10 @@ public:
     // Get the right child
     std::shared_ptr<PhysicalPlanNode> RightChild() const { return children_[1]; }
 
+    JoinType GetJoinType() const { return join_type_; }
+
 private:
+    JoinType join_type_;
     std::shared_ptr<common::Expression> condition_;
     common::Schema schema_;
 };

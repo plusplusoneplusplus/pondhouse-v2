@@ -1,9 +1,12 @@
 #pragma once
 
+#include <optional>
+
 #include "common/expression.h"
 #include "common/result.h"
 #include "common/schema.h"
 #include "query/data/arrow_util.h"
+#include "query/executor/hash_join.h"
 #include "query/planner/physical_plan_node.h"
 
 namespace pond::query {
@@ -51,11 +54,13 @@ public:
      * @param left_batch The left input batch
      * @param right_batch The right input batch
      * @param condition The join condition
+     * @param join_type The join type
      * @return The joined batch
      */
     static common::Result<ArrowDataBatchSharedPtr> CreateHashJoinBatch(ArrowDataBatchSharedPtr left_batch,
                                                                        ArrowDataBatchSharedPtr right_batch,
-                                                                       const common::Expression& condition);
+                                                                       const common::Expression& condition,
+                                                                       common::JoinType join_type);
 };
 
 }  // namespace pond::query

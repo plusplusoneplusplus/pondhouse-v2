@@ -124,7 +124,8 @@ Result<std::shared_ptr<PhysicalPlanNode>> PhysicalPlanner::PlanJoin(LogicalJoinN
     std::shared_ptr<PhysicalPlanNode> join_node;
 
     if (use_hash_join) {
-        join_node = std::make_shared<PhysicalHashJoinNode>(node->GetCondition(), node->OutputSchema());
+        join_node =
+            std::make_shared<PhysicalHashJoinNode>(node->GetCondition(), node->OutputSchema(), node->GetJoinType());
     } else {
         join_node = std::make_shared<PhysicalNestedLoopJoinNode>(node->GetCondition(), node->OutputSchema());
     }

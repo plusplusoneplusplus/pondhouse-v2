@@ -22,4 +22,6 @@ enum class BinaryOpType {
 
 enum class AggregateType { Count, Sum, Avg, Min, Max };
 
+enum class JoinType { Inner, Left, Right, Full, Cross };
+
 }  // namespace pond::common
