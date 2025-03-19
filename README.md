@@ -11,7 +11,9 @@ git submodule update --init --recursive
 
 ```
 sudo apt install libabsl-dev libgrpc++-dev protobuf-compiler
-    build-essential autoconf libtool pkg-config cmake libgflags-dev
-    libgtest-dev clang libc++-dev libparquet-dev ca-certificates
-    lsb-release wget libxxhash-dev
+sudo apt install build-essential autoconf libtool pkg-config cmake libgflags-dev
+sudo apt install libgtest-dev clang libc++-dev ca-certificates lsb-release wget libxxhash-dev
+
+# if fails, follow https://arrow.apache.org/install/
+sudo apt install libparquet-dev
 ```
