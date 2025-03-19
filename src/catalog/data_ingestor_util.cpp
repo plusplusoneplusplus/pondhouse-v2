@@ -31,8 +31,14 @@ namespace pond::catalog {
                                  "Invalid partition field: " + partition_field.name);
         }
 
+        if (partition_field.source_id >= metadata.schema->Columns().size()) {
+            return common::Error(
+                common::ErrorCode::SchemaMismatch,
+                "Partition field source_id out of bounds: " + std::to_string(partition_field.source_id));
+        }
+
         // Get the source field name from schema
-        std::string source_field_name = metadata.schema->Fields()[partition_field.source_id].name;
+        std::string source_field_name = metadata.schema->Columns()[partition_field.source_id].name;
 
         // Find the field in the input batch
         int field_idx = batch->schema()->GetFieldIndex(source_field_name);
