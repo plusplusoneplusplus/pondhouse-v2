@@ -62,6 +62,8 @@ public:
     }
 
     Result<bool> closeFile(FileHandle handle) {
+        std::lock_guard<std::mutex> lock(mutex);
+
         if (!handle) {
             return Result<bool>::failure(common::ErrorCode::InvalidHandle, "Invalid handle");
         }
@@ -71,11 +73,11 @@ public:
             return Result<bool>::failure(common::ErrorCode::InvalidHandle, "Invalid handle");
         }
 
-        files_.erase(it);
-
         if (it->second.stream) {
             it->second.stream->close();
         }
+
+        files_.erase(it);
 
         delete handle;
         return Result<bool>::success(true);
@@ -355,12 +357,12 @@ Result<std::vector<FileSystemEntry>> LocalAppendOnlyFileSystem::ListDetailed(con
 
         if (!std::filesystem::exists(base_path)) {
             return Result<std::vector<FileSystemEntry>>::failure(common::ErrorCode::DirectoryNotFound,
-                                                                "Directory does not exist: " + path);
+                                                                 "Directory does not exist: " + path);
         }
 
         if (!std::filesystem::is_directory(base_path)) {
             return Result<std::vector<FileSystemEntry>>::failure(common::ErrorCode::NotADirectory,
-                                                                "Path is not a directory: " + path);
+                                                                 "Path is not a directory: " + path);
         }
 
         // Convert base_path to canonical form for proper relative path calculation
@@ -381,7 +383,7 @@ Result<std::vector<FileSystemEntry>> LocalAppendOnlyFileSystem::ListDetailed(con
         return Result<std::vector<FileSystemEntry>>::success(std::move(entries));
     } catch (const std::filesystem::filesystem_error& e) {
         return Result<std::vector<FileSystemEntry>>::failure(common::ErrorCode::FileOpenFailed,
-                                                            std::string("Failed to list directory: ") + e.what());
+                                                             std::string("Failed to list directory: ") + e.what());
     }
 }
 
