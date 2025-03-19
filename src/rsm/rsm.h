@@ -69,13 +69,23 @@ public:
     ~ReplicatedStateMachine();
 
     Result<bool> Initialize(const ReplicationConfig& config, const SnapshotConfig& snapshot_config);
+
+    /**
+     * @return Result<bool> Success if the state machine was closed, error otherwise
+     *
+     * Note: This function must be called before any state in the inherited class is destroyed
+     */
     Result<bool> Close();
+
+    // Stop the state machine and drain the pending entries
     Result<void> StopAndDrain();
 
-    // Replicate a log entry
-    // @param data The data to replicate
-    // @param callback The callback to call when the log entry is committed and executed
-    // @return Result<bool> Success if the log entry is replicated, error otherwise
+    /**
+     * Replicate a log entry
+     * @param data The data to replicate
+     * @param callback The callback to call when the log entry is committed and executed
+     * @return Result<bool> Success if the log entry is replicated, error otherwise
+     */
     Result<bool> Replicate(const DataChunk& data, std::function<void()> callback = nullptr);
 
     // IReplicatedStateMachine interface

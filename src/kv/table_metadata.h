@@ -164,6 +164,8 @@ public:
         return Recover();
     }
 
+    ~TableMetadataStateMachine() { Close(); }
+
 protected:
     // ReplicatedStateMachine interface
     void ExecuteReplicatedLog(uint64_t lsn, const common::DataChunk& data) override;
