@@ -143,6 +143,30 @@ add_custom_target(build_sql_parser
     DEPENDS ${CMAKE_BINARY_DIR}/libsqlparser.so
 )
 
+# Add RocksDB build commands
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rocksdb/librocksdb.so
+    COMMAND make clean
+    COMMAND make shared_lib EXTRA_CXXFLAGS="-Wno-error=array-bounds" EXTRA_CFLAGS="-Wno-error=array-bounds" USE_RTTI=1 WITH_CORE_TOOLS=1 -j8
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rocksdb
+    COMMENT "Building RocksDB shared library"
+)
+
+# Add command to copy the RocksDB library to build directory
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/librocksdb.so
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rocksdb/
+        ${CMAKE_BINARY_DIR}/
+        PATTERN "librocksdb.so*"
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rocksdb/librocksdb.so
+    COMMENT "Copying RocksDB library files to build directory"
+)
+
+add_custom_target(build_rocksdb
+    DEPENDS ${CMAKE_BINARY_DIR}/librocksdb.so
+)
+
 # Add common library
 add_library(pondhouse_common
     src/catalog/kv_catalog.cpp
@@ -204,6 +228,7 @@ target_include_directories(pondhouse_common PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party/rapidjson/include
     ${CMAKE_SOURCE_DIR}/third_party/sql-parser/src
+    ${CMAKE_SOURCE_DIR}/third_party/rocksdb/include
     ${Protobuf_INCLUDE_DIRS}
     ${PROTO_OUTPUT_DIR}
 )
@@ -219,10 +244,14 @@ target_link_libraries(pondhouse_common PUBLIC
     gRPC::grpc++_reflection
     ${ABSL_LIBS}
     ${CMAKE_BINARY_DIR}/libsqlparser.so
+    ${CMAKE_BINARY_DIR}/librocksdb.so
 )
 
 # Add dependency on sql-parser build
 add_dependencies(pondhouse_common build_sql_parser)
+
+# Add dependency on RocksDB build
+add_dependencies(pondhouse_common build_rocksdb)
 
 # Add dependency on protobuf generation
 add_dependencies(pondhouse_common generate_protos)
@@ -284,6 +313,9 @@ add_executable(
     tests/format/sstable/sstable_writer_test.cpp
     tests/format/sstable/sstable_format_test.cpp
     tests/format/sstable/sstable_filter_test.cpp
+    tests/rocksdb/rocksdb_basic_test.cpp
+    tests/rocksdb/rocksdb_options_test.cpp
+    tests/rocksdb/rocksdb_column_family_test.cpp
     tests/kv/compaction_metrics_test.cpp
     tests/kv/db_test.cpp
     tests/kv/kv_table_test.cpp
@@ -321,6 +353,7 @@ target_include_directories(unit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/tests
     ${CMAKE_SOURCE_DIR}/third_party/rapidjson/include
     ${CMAKE_SOURCE_DIR}/third_party/sql-parser/src
+    ${CMAKE_SOURCE_DIR}/third_party/rocksdb/include
     ${Protobuf_INCLUDE_DIRS}
     ${PROTO_OUTPUT_DIR}
 )
@@ -334,6 +367,7 @@ target_link_libraries(unit_tests
     Parquet::parquet_shared
     protobuf::libprotobuf
     ${CMAKE_BINARY_DIR}/libsqlparser.so
+    ${CMAKE_BINARY_DIR}/librocksdb.so
     ${ABSL_LIBS}
 )
 
