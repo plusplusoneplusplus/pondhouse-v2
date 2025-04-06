@@ -67,6 +67,7 @@ private:
 #define LOG_DEBUG(...) pond::common::Logger::instance().debug(__FILE__, __LINE__, __VA_ARGS__)
 #define LOG_VERBOSE(...) pond::common::Logger::instance().verbose(__FILE__, __LINE__, __VA_ARGS__)
 #define LOG_STATUS(...) pond::common::Logger::instance().status(__FILE__, __LINE__, __VA_ARGS__)
+#define LOG_INFO(...) pond::common::Logger::instance().status(__FILE__, __LINE__, __VA_ARGS__)
 #define LOG_WARNING(...) pond::common::Logger::instance().warning(__FILE__, __LINE__, __VA_ARGS__)
 #define LOG_ERROR(...) pond::common::Logger::instance().error(__FILE__, __LINE__, __VA_ARGS__)
 

@@ -228,6 +228,7 @@ add_library(pondhouse_common
     src/query/executor/sql_table_executor.cpp
     src/rsm/rsm.cpp
     src/rsm/snapshot_manager.cpp
+    src/rsm/mock_replication_oracle.cpp
     ${PROTO_SRCS}
     ${GRPC_SRCS}
 )
@@ -316,6 +317,7 @@ add_executable(
     tests/rsm/replication_test.cpp
     tests/rsm/replicated_state_machine_test.cpp
     tests/rsm/snapshot_manager_test.cpp
+    tests/rsm/mock_replication_oracle_test.cpp
     tests/format/parquet/parquet_test.cpp
     tests/format/parquet/schema_converter_test.cpp
     tests/format/sstable/sstable_reader_test.cpp
