@@ -11,6 +11,32 @@
 
 namespace pond::rsm {
 
+// Forward declaration
+class MockReplicationOracle;
+
+/**
+ * Interceptor that hooks into a ReplicatedStateMachine's Replicate method to propagate
+ * changes to secondaries via the MockReplicationOracle.
+ */
+class OracleReplicationInterceptor : public IReplicationInterceptor {
+public:
+    OracleReplicationInterceptor(std::shared_ptr<MockReplicationOracle> oracle) : oracle_(oracle) {}
+
+    /**
+     * Called by the primary ReplicatedStateMachine when it replicates data
+     * @param data The data being replicated
+     * @param primary_lsn The LSN assigned by the primary
+     * @param callback Function to call when operation completes on all secondaries
+     * @return Result containing success or error
+     */
+    common::Result<bool> OnPrimaryReplicate(const common::DataChunk& data,
+                                            uint64_t primary_lsn,
+                                            std::function<void()> callback = nullptr) override;
+
+private:
+    std::shared_ptr<MockReplicationOracle> oracle_;
+};
+
 /**
  * MockReplicationOracle manages multiple ReplicatedStateMachines, coordinating writes
  * between a primary and secondaries. It ensures that operations executed on the primary
@@ -18,7 +44,7 @@ namespace pond::rsm {
  *
  * This is a simplified implementation for testing purposes.
  */
-class MockReplicationOracle {
+class MockReplicationOracle : public std::enable_shared_from_this<MockReplicationOracle> {
 public:
     MockReplicationOracle() = default;
     ~MockReplicationOracle() = default;
@@ -50,12 +76,15 @@ public:
     common::Result<bool> UnregisterStateMachine(std::shared_ptr<ReplicatedStateMachine> state_machine);
 
     /**
-     * Replicates data to the primary and propagates to all secondaries
-     * @param data The data to replicate
-     * @param callback Function to call when operation completes on all nodes
-     * @return Result containing the operation LSN or error
+     * Intercepts a replication request from the primary and dispatches it to all secondaries
+     * @param data The data to replicate to secondaries
+     * @param primary_lsn The LSN assigned by the primary
+     * @param callback Function to call when operation completes on all secondaries
+     * @return Result containing success or error
      */
-    common::Result<uint64_t> Replicate(const common::DataChunk& data, std::function<void()> callback = nullptr);
+    common::Result<bool> PropagateToSecondaries(const common::DataChunk& data,
+                                                uint64_t primary_lsn,
+                                                std::function<void()> callback = nullptr);
 
     /**
      * Gets the number of registered secondaries
@@ -68,6 +97,11 @@ public:
      * @return Shared pointer to the primary state machine or nullptr if none
      */
     std::shared_ptr<ReplicatedStateMachine> GetPrimary() const;
+
+    /**
+     * Creates a new interceptor that can be attached to a ReplicatedStateMachine
+     */
+    std::shared_ptr<OracleReplicationInterceptor> CreateInterceptor();
 
 private:
     std::shared_ptr<ReplicatedStateMachine> primary_;

@@ -88,6 +88,15 @@ public:
      */
     Result<bool> Replicate(const DataChunk& data, std::function<void()> callback = nullptr);
 
+    /**
+     * Set a replication interceptor that will be called when Replicate is invoked
+     * @param interceptor The interceptor to use
+     */
+    void SetReplicationInterceptor(std::shared_ptr<IReplicationInterceptor> interceptor) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        replication_interceptor_ = interceptor;
+    }
+
     // IReplicatedStateMachine interface
     uint64_t GetLastExecutedLSN() const override;
     uint64_t GetLastPassedLSN() const override;
@@ -139,6 +148,9 @@ private:
     std::shared_ptr<ISnapshotManager> snapshot_manager_;
     SnapshotConfig snapshot_config_;
     SnapshotMetadata last_snapshot_metadata_;
+
+    // Replication interceptor
+    std::shared_ptr<IReplicationInterceptor> replication_interceptor_;
 };
 
 }  // namespace pond::rsm

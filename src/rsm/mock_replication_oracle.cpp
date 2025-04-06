@@ -7,6 +7,14 @@ namespace pond::rsm {
 
 using namespace common;
 
+// OracleReplicationInterceptor implementation
+Result<bool> OracleReplicationInterceptor::OnPrimaryReplicate(const DataChunk& data,
+                                                              uint64_t primary_lsn,
+                                                              std::function<void()> callback) {
+    return oracle_->PropagateToSecondaries(data, primary_lsn, callback);
+}
+
+// MockReplicationOracle implementation
 Result<bool> MockReplicationOracle::Initialize() {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -41,6 +49,11 @@ Result<bool> MockReplicationOracle::RegisterPrimary(std::shared_ptr<ReplicatedSt
     }
 
     primary_ = state_machine;
+
+    // Create and set interceptor
+    auto interceptor = std::make_shared<OracleReplicationInterceptor>(shared_from_this());
+    state_machine->SetReplicationInterceptor(interceptor);
+
     LOG_INFO("Registered primary state machine");
 
     return Result<bool>::success(true);
@@ -88,6 +101,8 @@ Result<bool> MockReplicationOracle::UnregisterStateMachine(std::shared_ptr<Repli
 
     // Check if it's the primary
     if (primary_ == state_machine) {
+        // Clear the interceptor
+        primary_->SetReplicationInterceptor(nullptr);
         primary_ = nullptr;
         LOG_INFO("Unregistered primary state machine");
         return Result<bool>::success(true);
@@ -105,30 +120,34 @@ Result<bool> MockReplicationOracle::UnregisterStateMachine(std::shared_ptr<Repli
     return Result<bool>::success(false);  // Not found
 }
 
-Result<uint64_t> MockReplicationOracle::Replicate(const DataChunk& data, std::function<void()> callback) {
-    std::shared_ptr<ReplicatedStateMachine> primary;
+Result<bool> MockReplicationOracle::PropagateToSecondaries(const DataChunk& data,
+                                                           uint64_t primary_lsn,
+                                                           std::function<void()> callback) {
     std::vector<std::shared_ptr<ReplicatedStateMachine>> secondaries_copy;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
         if (!initialized_) {
-            return Result<uint64_t>::failure(ErrorCode::InvalidOperation, "Oracle not initialized");
+            return Result<bool>::failure(ErrorCode::InvalidOperation, "Oracle not initialized");
         }
 
-        if (!primary_) {
-            return Result<uint64_t>::failure(ErrorCode::InvalidOperation, "No primary registered");
-        }
-
-        primary = primary_;
         secondaries_copy = secondaries_;
     }
 
-    // Acquire the global replication lock to serialize all operations
+    if (secondaries_copy.empty()) {
+        // No secondaries to propagate to
+        if (callback) {
+            callback();
+        }
+        return Result<bool>::success(true);
+    }
+
+    // Acquire the global replication lock to serialize all operations to secondaries
     std::lock_guard<std::mutex> replication_lock(replication_mutex_);
 
     // Keep track of total number of pending replication operations
-    size_t total_replicas = 1 + secondaries_copy.size();  // Primary + all secondaries
+    size_t total_replicas = secondaries_copy.size();
     size_t completed_replicas = 0;
     std::mutex completion_mutex;
     std::condition_variable completion_cv;
@@ -142,16 +161,7 @@ Result<uint64_t> MockReplicationOracle::Replicate(const DataChunk& data, std::fu
         }
     };
 
-    // First, replicate to the primary
-    uint64_t primary_lsn = INVALID_LSN;
-    auto primary_result = primary->Replicate(data, track_completion);
-
-    if (!primary_result.ok()) {
-        LOG_ERROR("Failed to replicate to primary: %s", primary_result.error().message().c_str());
-        return Result<uint64_t>::failure(primary_result.error());
-    }
-
-    // Now replicate to all secondaries
+    // Replicate to all secondaries
     bool any_failure = false;
 
     for (auto& secondary : secondaries_copy) {
@@ -175,16 +185,12 @@ Result<uint64_t> MockReplicationOracle::Replicate(const DataChunk& data, std::fu
         completion_cv.wait(lock, [&] { return completed_replicas == total_replicas; });
     }
 
-    // Now that all replications have completed, get the primary's LSN
-    primary_lsn = primary->GetLastExecutedLSN();
-
     // Call the callback after all replications are complete
     if (callback) {
         callback();
     }
 
-    // Return the primary's LSN
-    return Result<uint64_t>::success(primary_lsn);
+    return Result<bool>::success(!any_failure);
 }
 
 size_t MockReplicationOracle::GetSecondaryCount() const {
@@ -195,6 +201,10 @@ size_t MockReplicationOracle::GetSecondaryCount() const {
 std::shared_ptr<ReplicatedStateMachine> MockReplicationOracle::GetPrimary() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return primary_;
+}
+
+std::shared_ptr<OracleReplicationInterceptor> MockReplicationOracle::CreateInterceptor() {
+    return std::make_shared<OracleReplicationInterceptor>(shared_from_this());
 }
 
 }  // namespace pond::rsm

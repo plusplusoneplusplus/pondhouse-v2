@@ -116,7 +116,8 @@ TEST_F(MockReplicationOracleTest, BasicReplication) {
     std::condition_variable cv;
     bool completed = false;
 
-    auto replicate_result = oracle_->Replicate(set_cmd, [&mutex, &cv, &completed]() {
+    // Call Replicate directly on primary instead of going through the oracle
+    auto replicate_result = primary_sm_->Replicate(set_cmd, [&mutex, &cv, &completed]() {
         std::lock_guard<std::mutex> lock(mutex);
         completed = true;
         cv.notify_one();
@@ -139,7 +140,8 @@ TEST_F(MockReplicationOracleTest, BasicReplication) {
     auto add_cmd = IntegerCommand::Serialize(IntegerCommand::Op::Add, 10);
     completed = false;
 
-    replicate_result = oracle_->Replicate(add_cmd, [&]() {
+    // Call Replicate directly on primary
+    replicate_result = primary_sm_->Replicate(add_cmd, [&]() {
         std::lock_guard<std::mutex> lock(mutex);
         completed = true;
         cv.notify_one();
@@ -167,7 +169,8 @@ TEST_F(MockReplicationOracleTest, BasicReplication) {
     auto subtract_cmd = IntegerCommand::Serialize(IntegerCommand::Op::Subtract, 2);
     completed = false;
 
-    replicate_result = oracle_->Replicate(subtract_cmd, [&]() {
+    // Call Replicate directly on primary
+    replicate_result = primary_sm_->Replicate(subtract_cmd, [&]() {
         std::lock_guard<std::mutex> lock(mutex);
         completed = true;
         cv.notify_one();
@@ -199,25 +202,21 @@ TEST_F(MockReplicationOracleTest, ErrorHandling) {
     auto result = uninitialized_oracle.RegisterPrimary(primary_sm_);
     EXPECT_FALSE(result.ok()) << "Should fail to register primary with uninitialized oracle";
 
-    // 2. Test with no primary
-    auto replicate_result = oracle_->Replicate(IntegerCommand::Serialize(IntegerCommand::Op::Set, 10));
-    EXPECT_FALSE(replicate_result.ok()) << "Should fail to replicate with no primary";
-
-    // 3. Test registering same state machine as both primary and secondary
+    // 2. Test registering same state machine as both primary and secondary
     result = oracle_->RegisterPrimary(primary_sm_);
     VERIFY_RESULT_MSG(result, "Should register primary");
 
     result = oracle_->RegisterSecondary(primary_sm_);
     EXPECT_FALSE(result.ok()) << "Should fail to register primary as secondary";
 
-    // 4. Test registering secondary as primary
+    // 3. Test registering secondary as primary
     result = oracle_->RegisterSecondary(secondary1_sm_);
     VERIFY_RESULT_MSG(result, "Should register secondary");
 
     result = oracle_->RegisterPrimary(secondary1_sm_);
     EXPECT_FALSE(result.ok()) << "Should fail to register secondary as primary";
 
-    // 5. Test double primary registration
+    // 4. Test double primary registration
     SnapshotConfig primary2_snapshot_config;
     primary2_snapshot_config.snapshot_dir = "primary2/snapshots";
 
@@ -232,15 +231,29 @@ TEST_F(MockReplicationOracleTest, ErrorHandling) {
     result = oracle_->RegisterPrimary(primary2_sm);
     EXPECT_FALSE(result.ok()) << "Should fail to register second primary";
 
-    // 6. Test double secondary registration (should succeed but return false)
+    // 5. Test double secondary registration (should succeed but return false)
     result = oracle_->RegisterSecondary(secondary1_sm_);
     VERIFY_RESULT_MSG(result, "Should handle double secondary registration");
     EXPECT_FALSE(result.value()) << "Should return false for already registered secondary";
 
-    // 7. Test unregister non-existent state machine
+    // 6. Test unregister non-existent state machine
     result = oracle_->UnregisterStateMachine(primary2_sm);
     VERIFY_RESULT_MSG(result, "Should handle unregistering non-existent state machine");
     EXPECT_FALSE(result.value()) << "Should return false for non-existent state machine";
+
+    // 7. Test direct replication through primary propagates to secondaries
+    auto direct_cmd = IntegerCommand::Serialize(IntegerCommand::Op::Set, 123);
+
+    // Call Replicate directly on primary, which should trigger the interceptor
+    auto direct_result = primary_sm_->Replicate(direct_cmd);
+    VERIFY_RESULT_MSG(direct_result, "Should replicate directly through primary");
+
+    // Wait for execution to complete on all nodes
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Verify both primary and secondary received the update
+    EXPECT_EQ(123, primary_sm_->GetValue()) << "Primary should have value 123";
+    EXPECT_EQ(123, secondary1_sm_->GetValue()) << "Secondary should have value 123";
 }
 
 }  // namespace pond::test

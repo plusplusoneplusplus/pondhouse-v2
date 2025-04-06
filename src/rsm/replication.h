@@ -130,4 +130,25 @@ public:
     virtual void ResetIndex() = 0;
 };
 
+/**
+ * Interface for intercepting replication operations
+ * This allows for custom handling of replication events, such as propagating
+ * operations to secondary nodes in a distributed system.
+ */
+class IReplicationInterceptor {
+public:
+    virtual ~IReplicationInterceptor() = default;
+
+    /**
+     * Called when a primary node replicates data
+     * @param data The data being replicated
+     * @param primary_lsn The LSN assigned by the primary
+     * @param callback Function to call when operation completes on all targets
+     * @return Result containing success or error
+     */
+    virtual Result<bool> OnPrimaryReplicate(const DataChunk& data,
+                                            uint64_t primary_lsn,
+                                            std::function<void()> callback = nullptr) = 0;
+};
+
 }  // namespace pond::rsm

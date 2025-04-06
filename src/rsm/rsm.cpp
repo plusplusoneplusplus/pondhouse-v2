@@ -161,12 +161,28 @@ Result<bool> ReplicatedStateMachine::Replicate(const DataChunk& data, std::funct
     }
 
     // Push to execution queue
+    auto lsn = result.value();
+
+    // If there's an interceptor, propagate to secondaries
+    // This is done outside the lock to avoid deadlocks
+    std::shared_ptr<IReplicationInterceptor> interceptor;
     {
-        auto lsn = result.value();
+        std::lock_guard<std::mutex> lock(mutex_);
+        interceptor = replication_interceptor_;
+    }
+
+    if (interceptor) {
+        // We don't care about the result of OnPrimaryReplicate
+        // as this is the primary's perspective
+        interceptor->OnPrimaryReplicate(data, lsn);
+    }
+
+    {
         std::lock_guard<std::mutex> lock(mutex_);
         pending_entries_.emplace(lsn, data, callback);
         last_passed_lsn_.store(lsn);
     }
+
     cv_.notify_one();
 
     return Result<bool>::success(true);
