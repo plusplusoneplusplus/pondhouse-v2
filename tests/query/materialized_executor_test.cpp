@@ -1380,12 +1380,14 @@ TEST_F(MaterializedExecutorTest, HashJoinBasic) {
     EXPECT_EQ(batch->num_rows(), 3);
     EXPECT_EQ(batch->num_columns(), 5);
 
-    // Verify first row
-    auto id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
-    auto name_array = std::static_pointer_cast<arrow::StringArray>(batch->column(1));
-    auto order_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(2));
-    auto user_id_array = std::static_pointer_cast<arrow::Int32Array>(batch->column(3));
-    auto amount_array = std::static_pointer_cast<arrow::DoubleArray>(batch->column(4));
+    auto sorted_batch = ArrowUtil::SortBatch(batch, {"order_id"}).value();
+
+    // Verify first row in sorted batch
+    auto id_array = std::static_pointer_cast<arrow::Int32Array>(sorted_batch->column(0));
+    auto name_array = std::static_pointer_cast<arrow::StringArray>(sorted_batch->column(1));
+    auto order_array = std::static_pointer_cast<arrow::Int32Array>(sorted_batch->column(2));
+    auto user_id_array = std::static_pointer_cast<arrow::Int32Array>(sorted_batch->column(3));
+    auto amount_array = std::static_pointer_cast<arrow::DoubleArray>(sorted_batch->column(4));
 
     EXPECT_EQ(id_array->Value(0), 1);
     EXPECT_EQ(name_array->GetString(0), "Alice");

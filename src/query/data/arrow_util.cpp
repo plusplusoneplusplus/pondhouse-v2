@@ -1316,4 +1316,184 @@ size_t ArrowUtil::GetColumnWidth(const std::shared_ptr<arrow::Array>& array,
     return width;
 }
 
+common::Result<ArrowDataBatchSharedPtr> ArrowUtil::SortBatch(const ArrowDataBatchSharedPtr& batch,
+                                                             const std::vector<std::string>& sort_columns,
+                                                             const std::vector<bool>& sort_directions,
+                                                             bool nulls_first) {
+    using ReturnType = common::Result<ArrowDataBatchSharedPtr>;
+
+    // Validate inputs
+    if (!batch) {
+        return ReturnType::failure(common::ErrorCode::InvalidArgument, "Input batch is null");
+    }
+
+    if (sort_columns.empty()) {
+        return ReturnType::success(batch);
+    }
+
+    // If batch is empty, return it directly
+    if (batch->num_rows() == 0) {
+        return ReturnType::success(batch);
+    }
+
+    // Create normalized sort directions vector
+    std::vector<bool> directions = sort_directions;
+    if (directions.size() < sort_columns.size()) {
+        // Fill missing directions with true (ascending)
+        directions.resize(sort_columns.size(), true);
+    }
+
+    // Create a vector of indices for the rows
+    std::vector<int64_t> indices(batch->num_rows());
+    for (int64_t i = 0; i < batch->num_rows(); i++) {
+        indices[i] = i;
+    }
+
+    // Sort the indices based on the sort columns and directions
+    std::sort(indices.begin(), indices.end(), [&](int64_t a, int64_t b) {
+        for (size_t i = 0; i < sort_columns.size(); i++) {
+            const std::string& col_name = sort_columns[i];
+            bool ascending = directions[i];
+
+            // Get the column index
+            int col_idx = batch->schema()->GetFieldIndex(col_name);
+            if (col_idx < 0) {
+                // Column not found, skip it
+                continue;
+            }
+
+            auto array = batch->column(col_idx);
+
+            // Handle nulls
+            bool a_is_null = array->IsNull(a);
+            bool b_is_null = array->IsNull(b);
+
+            if (a_is_null && !b_is_null) {
+                return nulls_first ? true : false;
+            } else if (!a_is_null && b_is_null) {
+                return nulls_first ? false : true;
+            } else if (a_is_null && b_is_null) {
+                continue;  // Both null, move to next column
+            }
+
+            // Compare non-null values based on type
+            int comparison = 0;
+            switch (array->type_id()) {
+                case arrow::Type::INT32: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int32Array>(array);
+                    int32_t val_a = typed_array->Value(a);
+                    int32_t val_b = typed_array->Value(b);
+                    comparison = (val_a > val_b) ? 1 : ((val_a < val_b) ? -1 : 0);
+                    break;
+                }
+                case arrow::Type::INT64: {
+                    auto typed_array = std::static_pointer_cast<arrow::Int64Array>(array);
+                    int64_t val_a = typed_array->Value(a);
+                    int64_t val_b = typed_array->Value(b);
+                    comparison = (val_a > val_b) ? 1 : ((val_a < val_b) ? -1 : 0);
+                    break;
+                }
+                case arrow::Type::UINT32: {
+                    auto typed_array = std::static_pointer_cast<arrow::UInt32Array>(array);
+                    uint32_t val_a = typed_array->Value(a);
+                    uint32_t val_b = typed_array->Value(b);
+                    comparison = (val_a > val_b) ? 1 : ((val_a < val_b) ? -1 : 0);
+                    break;
+                }
+                case arrow::Type::UINT64: {
+                    auto typed_array = std::static_pointer_cast<arrow::UInt64Array>(array);
+                    uint64_t val_a = typed_array->Value(a);
+                    uint64_t val_b = typed_array->Value(b);
+                    comparison = (val_a > val_b) ? 1 : ((val_a < val_b) ? -1 : 0);
+                    break;
+                }
+                case arrow::Type::FLOAT: {
+                    auto typed_array = std::static_pointer_cast<arrow::FloatArray>(array);
+                    float val_a = typed_array->Value(a);
+                    float val_b = typed_array->Value(b);
+                    comparison = (val_a > val_b) ? 1 : ((val_a < val_b) ? -1 : 0);
+                    break;
+                }
+                case arrow::Type::DOUBLE: {
+                    auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(array);
+                    double val_a = typed_array->Value(a);
+                    double val_b = typed_array->Value(b);
+                    comparison = (val_a > val_b) ? 1 : ((val_a < val_b) ? -1 : 0);
+                    break;
+                }
+                case arrow::Type::STRING: {
+                    auto typed_array = std::static_pointer_cast<arrow::StringArray>(array);
+                    comparison = typed_array->GetString(a).compare(typed_array->GetString(b));
+                    break;
+                }
+                case arrow::Type::BOOL: {
+                    auto typed_array = std::static_pointer_cast<arrow::BooleanArray>(array);
+                    bool val_a = typed_array->Value(a);
+                    bool val_b = typed_array->Value(b);
+                    comparison = val_a - val_b;
+                    break;
+                }
+                case arrow::Type::TIMESTAMP: {
+                    auto typed_array = std::static_pointer_cast<arrow::TimestampArray>(array);
+                    int64_t val_a = typed_array->Value(a);
+                    int64_t val_b = typed_array->Value(b);
+                    comparison = (val_a > val_b) ? 1 : ((val_a < val_b) ? -1 : 0);
+                    break;
+                }
+                default:
+                    // Unsupported type, skip this column
+                    continue;
+            }
+
+            if (comparison != 0) {
+                return ascending ? (comparison < 0) : (comparison > 0);
+            }
+        }
+
+        // If all columns are equal, maintain original order by using indices
+        return a < b;
+    });
+
+    // Create a new batch with the sorted rows
+    std::vector<std::shared_ptr<arrow::Array>> sorted_arrays;
+    for (int col_idx = 0; col_idx < batch->num_columns(); col_idx++) {
+        auto input_array = batch->column(col_idx);
+        auto array_type = input_array->type();
+
+        auto column_type_result = format::SchemaConverter::FromArrowDataType(array_type);
+        if (!column_type_result.ok()) {
+            return ReturnType::failure(column_type_result.error());
+        }
+
+        // Create a builder for this column
+        auto builder_result = ArrowUtil::CreateArrayBuilder(column_type_result.value());
+        if (!builder_result.ok()) {
+            return ReturnType::failure(builder_result.error());
+        }
+        auto builder = builder_result.value();
+
+        // Append values in sorted order
+        for (int64_t idx : indices) {
+            auto result = ArrowUtil::AppendGroupValue(input_array, builder, idx);
+            if (!result.ok()) {
+                return ReturnType::failure(result.error());
+            }
+        }
+
+        // Finish the array
+        std::shared_ptr<arrow::Array> sorted_array;
+        auto status = builder->Finish(&sorted_array);
+        if (!status.ok()) {
+            return ReturnType::failure(
+                common::Error(common::ErrorCode::Failure, "Failed to finish array: " + status.ToString()));
+        }
+
+        sorted_arrays.push_back(sorted_array);
+    }
+
+    // Create the sorted batch
+    auto sorted_batch = arrow::RecordBatch::Make(batch->schema(), batch->num_rows(), sorted_arrays);
+    return ReturnType::success(sorted_batch);
+}
+
 }  // namespace pond::query

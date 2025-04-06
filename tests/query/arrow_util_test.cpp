@@ -7,6 +7,7 @@
 
 #include "common/result.h"
 #include "common/schema.h"
+#include "query/data/arrow_record_batch_builder.h"
 #include "test_helper.h"
 
 namespace pond::query {
@@ -1812,6 +1813,146 @@ TEST_F(ArrowUtilTest, HashAggregateWithOutputNames) {
     ASSERT_DOUBLE_EQ(sum_result->Value(0), 30.0);  // 10 + 20
     ASSERT_DOUBLE_EQ(sum_result->Value(1), 70.0);  // 30 + 40
     ASSERT_DOUBLE_EQ(sum_result->Value(2), 50.0);  // 50
+}
+
+//
+// Test Setup:
+//      Test sorting a batch by multiple columns with different directions
+// Test Result:
+//      Verify data is correctly sorted according to the specified columns and directions
+//
+TEST_F(ArrowUtilTest, SortBatchMultiColumn) {
+    // Create a batch with data for testing sort
+    auto batch_result = ArrowRecordBatchBuilder()
+                            .AddInt32Column("id", {1, 2, 3, 4, 5})
+                            .AddStringColumn("name", {"Bob", "Alice", "Charlie", "David", "Eve"})
+                            .AddInt32Column("age", {30, 30, 25, 25, 35})
+                            .AddDoubleColumn("salary", {100000, 90000, 80000, 70000, 60000})
+                            .Build();
+
+    VERIFY_RESULT(batch_result);
+    auto input_batch = batch_result.value();
+
+    // Sort by age ascending, then name descending
+    auto result = ArrowUtil::SortBatch(input_batch, {"age", "name"}, {true, false});
+    VERIFY_RESULT(result);
+
+    auto sorted_batch = result.value();
+    ASSERT_NE(sorted_batch, nullptr);
+
+    // Verify output has same schema and number of rows
+    ASSERT_EQ(sorted_batch->num_columns(), input_batch->num_columns());
+    ASSERT_EQ(sorted_batch->num_rows(), input_batch->num_rows());
+
+    // Get the sorted arrays
+    auto names = std::static_pointer_cast<arrow::StringArray>(sorted_batch->column(1));
+    auto ages = std::static_pointer_cast<arrow::Int32Array>(sorted_batch->column(2));
+
+    // First sort by age (25, 25, 30, 30, 35)
+    EXPECT_EQ(ages->Value(0), 25);
+    EXPECT_EQ(ages->Value(1), 25);
+    EXPECT_EQ(ages->Value(2), 30);
+    EXPECT_EQ(ages->Value(3), 30);
+    EXPECT_EQ(ages->Value(4), 35);
+
+    // Then sort names descending within same ages (25: David, Charlie; 30: Bob, Alice)
+    EXPECT_EQ(names->GetString(0), "David");  // 25 age, name descending
+    EXPECT_EQ(names->GetString(1), "Charlie");
+    EXPECT_EQ(names->GetString(2), "Bob");  // 30 age, name descending
+    EXPECT_EQ(names->GetString(3), "Alice");
+    EXPECT_EQ(names->GetString(4), "Eve");  // 35 age
+}
+
+//
+// Test Setup:
+//      Test sorting a batch with null values
+// Test Result:
+//      Verify nulls are handled correctly according to nulls_first parameter
+//
+TEST_F(ArrowUtilTest, SortBatchWithNulls) {
+    // Create a batch with null values
+    auto batch_result =
+        ArrowRecordBatchBuilder()
+            .AddInt32Column("id", {1, 2, 3, 4, 5})
+            .AddStringColumn("name", {"Alice", "Bob", "", "David", "Eve"}, {true, true, false, true, true})
+            .AddInt32Column("age", {25, -1, 35, -1, 45}, {true, false, true, false, true})
+            .Build();
+
+    VERIFY_RESULT(batch_result);
+    auto batch_with_nulls = batch_result.value();
+
+    // 1. Test nulls first (default behavior)
+    auto result1 = ArrowUtil::SortBatch(batch_with_nulls, {"age"}, {true}, true);
+    VERIFY_RESULT(result1);
+    auto sorted_batch1 = result1.value();
+
+    auto ages1 = std::static_pointer_cast<arrow::Int32Array>(sorted_batch1->column(2));
+    EXPECT_TRUE(ages1->IsNull(0));
+    EXPECT_TRUE(ages1->IsNull(1));
+    EXPECT_EQ(ages1->Value(2), 25);
+    EXPECT_EQ(ages1->Value(3), 35);
+    EXPECT_EQ(ages1->Value(4), 45);
+
+    // 2. Test nulls last
+    auto result2 = ArrowUtil::SortBatch(batch_with_nulls, {"age"}, {true}, false);
+    VERIFY_RESULT(result2);
+    auto sorted_batch2 = result2.value();
+
+    auto ages2 = std::static_pointer_cast<arrow::Int32Array>(sorted_batch2->column(2));
+    EXPECT_EQ(ages2->Value(0), 25);
+    EXPECT_EQ(ages2->Value(1), 35);
+    EXPECT_EQ(ages2->Value(2), 45);
+    EXPECT_TRUE(ages2->IsNull(3));
+    EXPECT_TRUE(ages2->IsNull(4));
+}
+
+//
+// Test Setup:
+//      Test edge cases: empty batch, empty sort columns, single column
+// Test Result:
+//      Verify function handles edge cases correctly
+//
+TEST_F(ArrowUtilTest, SortBatchEdgeCases) {
+    // Create a test batch
+    auto batch_result = ArrowRecordBatchBuilder()
+                            .AddInt32Column("id", {3, 1, 4, 2, 5})
+                            .AddStringColumn("name", {"Charlie", "Alice", "David", "Bob", "Eve"})
+                            .Build();
+    VERIFY_RESULT(batch_result);
+    auto test_batch = batch_result.value();
+
+    // 1. Test empty sort columns (should return original batch)
+    auto result1 = ArrowUtil::SortBatch(test_batch, {});
+    VERIFY_RESULT(result1);
+    EXPECT_EQ(result1.value(), test_batch);
+
+    // 2. Test sorting by a single column
+    auto result2 = ArrowUtil::SortBatch(test_batch, {"id"});
+    VERIFY_RESULT(result2);
+    auto sorted_batch = result2.value();
+
+    auto ids = std::static_pointer_cast<arrow::Int32Array>(sorted_batch->column(0));
+    auto names = std::static_pointer_cast<arrow::StringArray>(sorted_batch->column(1));
+
+    // Verify ids are sorted
+    for (int i = 1; i < ids->length(); i++) {
+        EXPECT_LE(ids->Value(i - 1), ids->Value(i));
+    }
+
+    // Verify first and last values
+    EXPECT_EQ(ids->Value(0), 1);
+    EXPECT_EQ(names->GetString(0), "Alice");
+    EXPECT_EQ(ids->Value(4), 5);
+    EXPECT_EQ(names->GetString(4), "Eve");
+
+    // 3. Test empty batch
+    auto empty_batch_result = ArrowRecordBatchBuilder().AddInt32Column("id", {}).AddStringColumn("name", {}).Build();
+    VERIFY_RESULT(empty_batch_result);
+    auto empty_batch = empty_batch_result.value();
+
+    auto result3 = ArrowUtil::SortBatch(empty_batch, {"id"});
+    VERIFY_RESULT(result3);
+    EXPECT_EQ(result3.value()->num_rows(), 0);
 }
 
 }  // namespace pond::query

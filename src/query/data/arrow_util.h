@@ -315,6 +315,25 @@ public:
         const std::vector<std::string>& output_columns_override = {});
 
     /**
+     * @brief Sort a record batch by column names with specified directions
+     * @param batch The record batch to sort
+     * @param sort_columns The column names to sort by
+     * @param sort_directions The sort directions for each column (true for ascending, false for descending)
+     * @param nulls_first Whether nulls should appear before non-null values (default true)
+     * @return Result containing the sorted record batch or an error
+     *
+     * Notes:
+     * - If sort_directions is empty, all columns are sorted in ascending order
+     * - If sort_directions has fewer elements than sort_columns, the remaining columns are sorted ascending
+     * - If a column name doesn't exist, it's skipped
+     * - Original row order is preserved for rows with equal sort key values
+     */
+    static common::Result<ArrowDataBatchSharedPtr> SortBatch(const ArrowDataBatchSharedPtr& batch,
+                                                             const std::vector<std::string>& sort_columns,
+                                                             const std::vector<bool>& sort_directions = {},
+                                                             bool nulls_first = true);
+
+    /**
      * @brief Convert a record batch to a human-readable string format
      * @param batch The record batch to format
      * @param max_rows Maximum number of rows to include (0 for all rows)
