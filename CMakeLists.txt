@@ -155,16 +155,25 @@ add_custom_command(
 # Add command to copy the RocksDB library to build directory
 add_custom_command(
     OUTPUT ${CMAKE_BINARY_DIR}/librocksdb.so
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rocksdb/
-        ${CMAKE_BINARY_DIR}/
-        PATTERN "librocksdb.so*"
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rocksdb/librocksdb.so
+        ${CMAKE_BINARY_DIR}/librocksdb.so
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rocksdb/librocksdb.so
-    COMMENT "Copying RocksDB library files to build directory"
+    COMMENT "Copying RocksDB library file to build directory"
+)
+
+# Add command to copy any versioned RocksDB library files
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/librocksdb.so.stamp
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying versioned RocksDB library files if they exist"
+    COMMAND bash -c "cp -f ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rocksdb/librocksdb.so.* ${CMAKE_BINARY_DIR}/ "
+    COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_BINARY_DIR}/librocksdb.so.stamp
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rocksdb/librocksdb.so
+    COMMENT "Copying versioned RocksDB library files to build directory"
 )
 
 add_custom_target(build_rocksdb
-    DEPENDS ${CMAKE_BINARY_DIR}/librocksdb.so
+    DEPENDS ${CMAKE_BINARY_DIR}/librocksdb.so ${CMAKE_BINARY_DIR}/librocksdb.so.stamp
 )
 
 # Add common library
