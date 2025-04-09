@@ -327,6 +327,7 @@ add_executable(
     tests/rocksdb/rocksdb_basic_test.cpp
     tests/rocksdb/rocksdb_options_test.cpp
     tests/rocksdb/rocksdb_column_family_test.cpp
+    tests/rocksdb/rocksdb_transaction_test.cpp
     tests/kv/compaction_metrics_test.cpp
     tests/kv/db_test.cpp
     tests/kv/kv_table_test.cpp
