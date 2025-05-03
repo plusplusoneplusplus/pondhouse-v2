@@ -209,6 +209,7 @@ add_library(pondhouse_common
     src/format/sstable/sstable_format.cpp
     src/format/parquet/schema_converter.cpp
     src/query/data/arrow_util.cpp
+    src/query/data/arrow_predicate.cpp
     src/query/data/arrow_record_batch_builder.cpp
     src/query/data/catalog_data_accessor.cpp
     src/query/planner/logical_optimizer.cpp
@@ -341,6 +342,7 @@ add_executable(
     tests/kv/versioned_value_test.cpp
     tests/main.cpp
     tests/query/arrow_util_test.cpp
+    tests/query/arrow_predicate_test.cpp
     tests/query/arrow_record_batch_builder_test.cpp
     tests/query/hash_join_test.cpp
     tests/query/data_accessor_test.cpp

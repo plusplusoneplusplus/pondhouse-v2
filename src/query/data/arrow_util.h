@@ -12,6 +12,7 @@
 #include "common/expression.h"
 #include "common/result.h"
 #include "common/schema.h"
+#include "query/data/arrow_predicate.h"
 
 namespace pond::query {
 
@@ -243,8 +244,10 @@ public:
      * @param predicate The filter expression
      * @return The filtered record batch
      */
-    static common::Result<ArrowDataBatchSharedPtr> ApplyPredicate(const ArrowDataBatchSharedPtr& batch,
-                                                                  const std::shared_ptr<common::Expression>& predicate);
+    static common::Result<ArrowDataBatchSharedPtr> ApplyPredicate(
+        const ArrowDataBatchSharedPtr& batch, const std::shared_ptr<common::Expression>& predicate) {
+        return ArrowPredicate::Apply(batch, predicate);
+    }
 
     /**
      * @brief Concatenate multiple record batches into a single batch

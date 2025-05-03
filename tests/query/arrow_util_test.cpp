@@ -109,68 +109,6 @@ TEST_F(ArrowUtilTest, CreateEmptyBatch) {
     }
 }
 
-TEST_F(ArrowUtilTest, ApplyPredicateEmptyBatch) {
-    // Create an empty batch first
-    auto batch_result = ArrowUtil::CreateEmptyBatch(schema_);
-    ASSERT_TRUE(batch_result.ok());
-    auto batch = batch_result.value();
-
-    // Create a simple predicate (int32_col > 5)
-    auto col_expr = common::MakeColumnExpression("", "int32_col");
-    auto const_expr = common::MakeIntegerConstant(5);
-    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, col_expr, const_expr);
-
-    // Apply predicate
-    auto result = ArrowUtil::ApplyPredicate(batch, predicate);
-    ASSERT_TRUE(result.ok()) << "Failed with error: " << result.error().message();
-
-    auto filtered_batch = result.value();
-    EXPECT_EQ(filtered_batch->num_rows(), 0);
-    EXPECT_EQ(filtered_batch->num_columns(), schema_.Fields().size());
-}
-
-TEST_F(ArrowUtilTest, ApplyPredicateNullPredicate) {
-    // Create an empty batch
-    auto batch_result = ArrowUtil::CreateEmptyBatch(schema_);
-    ASSERT_TRUE(batch_result.ok());
-    auto batch = batch_result.value();
-
-    // Apply null predicate (should return original batch)
-    auto result = ArrowUtil::ApplyPredicate(batch, nullptr);
-    ASSERT_TRUE(result.ok());
-    EXPECT_EQ(result.value(), batch);
-}
-
-TEST_F(ArrowUtilTest, ApplyPredicateInvalidColumn) {
-    // Create an empty batch
-    auto batch_result = ArrowUtil::CreateEmptyBatch(schema_);
-    ASSERT_TRUE(batch_result.ok());
-    auto batch = batch_result.value();
-
-    // Create predicate with non-existent column
-    auto col_expr = common::MakeColumnExpression("", "non_existent_col");
-    auto const_expr = common::MakeIntegerConstant(5);
-    auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, col_expr, const_expr);
-
-    // Apply predicate
-    auto result = ArrowUtil::ApplyPredicate(batch, predicate);
-    EXPECT_FALSE(result.ok());
-}
-
-TEST_F(ArrowUtilTest, ApplyPredicateUnsupportedExpression) {
-    // Create an empty batch
-    auto batch_result = ArrowUtil::CreateEmptyBatch(schema_);
-    ASSERT_TRUE(batch_result.ok());
-    auto batch = batch_result.value();
-
-    // Create an unsupported expression type (e.g., a star expression)
-    auto star_expr = common::MakeStarExpression();
-
-    // Apply predicate
-    auto result = ArrowUtil::ApplyPredicate(batch, star_expr);
-    EXPECT_FALSE(result.ok());
-}
-
 TEST_F(ArrowUtilTest, ConcatenateBatchesEmpty) {
     // Test with empty batch vector
     std::vector<std::shared_ptr<arrow::RecordBatch>> empty_batches;
