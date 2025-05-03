@@ -11,6 +11,7 @@
 #include "common/log.h"
 #include "format/parquet/parquet_reader.h"
 #include "format/parquet/schema_converter.h"
+#include "query/data/arrow_predicate.h"
 #include "query/data/arrow_util.h"
 #include "query/executor/executor_util.h"
 #include "query/planner/physical_plan_node.h"
@@ -134,7 +135,7 @@ void MaterializedExecutor::Visit(PhysicalSequentialScanNode& node) {
             if (batch->num_rows() > 0) {
                 // Apply predicate if present (predicate pushdown)
                 if (node.Predicate()) {
-                    auto filter_result = ArrowUtil::ApplyPredicate(batch, node.Predicate());
+                    auto filter_result = ArrowPredicate::Apply(batch, node.Predicate());
                     if (!filter_result.ok()) {
                         current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(filter_result.error());
                         return;
@@ -199,8 +200,8 @@ void MaterializedExecutor::Visit(PhysicalFilterNode& node) {
         return;
     }
 
-    // Apply the filter predicate using ArrowUtil
-    auto filter_result = ArrowUtil::ApplyPredicate(current_batch_, node.Predicate());
+    // Apply the filter predicate using ArrowPredicate
+    auto filter_result = ArrowPredicate::Apply(current_batch_, node.Predicate());
     if (!filter_result.ok()) {
         current_result_ = common::Result<ArrowDataBatchSharedPtr>::failure(filter_result.error());
         return;

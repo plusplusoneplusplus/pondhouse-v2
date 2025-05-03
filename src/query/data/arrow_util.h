@@ -12,7 +12,6 @@
 #include "common/expression.h"
 #include "common/result.h"
 #include "common/schema.h"
-#include "query/data/arrow_predicate.h"
 
 namespace pond::query {
 
@@ -238,16 +237,6 @@ public:
     static common::Result<void> AppendGroupKeyValue(const std::shared_ptr<arrow::Array>& array,
                                                     int row_idx,
                                                     std::string& group_key);
-    /**
-     * @brief Apply a filter expression to a record batch
-     * @param batch The record batch to filter
-     * @param predicate The filter expression
-     * @return The filtered record batch
-     */
-    static common::Result<ArrowDataBatchSharedPtr> ApplyPredicate(
-        const ArrowDataBatchSharedPtr& batch, const std::shared_ptr<common::Expression>& predicate) {
-        return ArrowPredicate::Apply(batch, predicate);
-    }
 
     /**
      * @brief Concatenate multiple record batches into a single batch

@@ -4,8 +4,11 @@
 #include <arrow/table.h>
 
 #include "common/error.h"
+#include "common/expression.h"
 #include "common/log.h"
+#include "query/data/arrow_predicate.h"
 #include "query/data/arrow_util.h"
+#include "query/executor/hash_join.h"
 
 namespace pond::query {
 
@@ -159,7 +162,7 @@ common::Result<std::shared_ptr<arrow::RecordBatch>> SequentialScanIterator::Appl
         return common::Result<std::shared_ptr<arrow::RecordBatch>>::success(batch);
     }
 
-    return ArrowUtil::ApplyPredicate(batch, predicate_);
+    return ArrowPredicate::Apply(batch, predicate_);
 }
 
 // FilterIterator implementation
@@ -208,7 +211,7 @@ common::Result<ArrowDataBatchSharedPtr> FilterIterator::Next() {
     }
 
     // Apply the filter predicate
-    auto filter_result = ArrowUtil::ApplyPredicate(batch, predicate_);
+    auto filter_result = ArrowPredicate::Apply(batch, predicate_);
     if (!filter_result.ok()) {
         return common::Result<ArrowDataBatchSharedPtr>::failure(filter_result.error());
     }

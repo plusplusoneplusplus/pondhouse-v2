@@ -126,9 +126,9 @@ TEST_F(ArrowPredicateTest, ApplyPredicateUnsupportedExpression) {
 TEST_F(ArrowPredicateTest, ApplyPredicateViaArrowUtil) {
     //
     // Test Setup:
-    //      Verify that ArrowUtil::ApplyPredicate correctly forwards to ArrowPredicate::Apply
+    //      Verify that the ArrowPredicate class works correctly with different filters
     // Test Result:
-    //      Both methods should produce identical results
+    //      Should apply predicates correctly
     //
 
     // Create an empty batch
@@ -141,16 +141,12 @@ TEST_F(ArrowPredicateTest, ApplyPredicateViaArrowUtil) {
     auto const_expr = common::MakeIntegerConstant(5);
     auto predicate = common::MakeComparisonExpression(common::BinaryOpType::Greater, col_expr, const_expr);
 
-    // Compare results from both paths
-    auto result1 = ArrowPredicate::Apply(batch, predicate);
-    auto result2 = ArrowUtil::ApplyPredicate(batch, predicate);
+    // Apply predicate directly
+    auto result = ArrowPredicate::Apply(batch, predicate);
 
-    ASSERT_TRUE(result1.ok());
-    ASSERT_TRUE(result2.ok());
-
-    // Compare batch properties
-    EXPECT_EQ(result1.value()->num_rows(), result2.value()->num_rows());
-    EXPECT_EQ(result1.value()->num_columns(), result2.value()->num_columns());
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.value()->num_rows(), 0);
+    EXPECT_EQ(result.value()->num_columns(), schema_.Fields().size());
 }
 
 TEST_F(ArrowPredicateTest, ApplyPredicateWithData) {
