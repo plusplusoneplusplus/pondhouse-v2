@@ -193,6 +193,7 @@ add_library(pondhouse_common
     src/common/memory_stream.cpp
     src/kv/kv_entry.cpp
     src/kv/kv_table.cpp
+    src/kv/basic_kv_table.cpp
     src/kv/record.cpp
     src/kv/memtable.cpp
     src/kv/table.cpp
