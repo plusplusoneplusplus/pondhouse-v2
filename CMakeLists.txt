@@ -200,6 +200,8 @@ add_library(pondhouse_common
     src/kv/sstable_manager.cpp
     src/kv/sstable_cache.cpp
     src/kv/db.cpp
+    src/kv/kv_table_iterator.cpp
+    src/kv/record_iterator.cpp
     src/format/parquet/append_only_input_stream.cpp
     src/format/parquet/append_only_output_stream.cpp
     src/format/parquet/parquet_reader.cpp

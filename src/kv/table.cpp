@@ -12,8 +12,8 @@ common::Result<void> Table::Put(const Key& key, std::unique_ptr<Record> record) 
     // Validate record schema
     if (*record->schema() != *schema_) {
         return common::Result<void>::failure(common::ErrorCode::SchemaMismatch,
-                                             "Schema mismatch. Record schema: " + record->schema()->ToString() +
-                                                 " != Table schema: " + schema_->ToString());
+                                             "Schema mismatch. Record schema: " + record->schema()->ToString()
+                                                 + " != Table schema: " + schema_->ToString());
     }
 
     if (key.empty()) {
