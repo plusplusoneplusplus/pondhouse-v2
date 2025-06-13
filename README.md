@@ -1,4 +1,6 @@
-# All Things About Database
+# Vibe Database
+
+A lake-house like system
 
 ** Only for Learning Purpose **
 
